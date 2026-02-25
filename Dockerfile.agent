@@ -1,13 +1,15 @@
-FROM node:22-slim
+FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates jq less vim-tiny procps \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
-
 RUN useradd -m agent
 USER agent
 WORKDIR /home/agent
+
+ENV PATH="/home/agent/.local/bin:${PATH}"
+
+RUN curl -fsSL https://claude.ai/install.sh | bash
 
 ENTRYPOINT ["sleep", "infinity"]
