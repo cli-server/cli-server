@@ -1,0 +1,52 @@
+replicaCount: 1
+
+image:
+  repository: registry.nj.cs.ac.cn/mryao/cli-server
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+password: "changeme"
+anthropicApiKey: ""
+anthropicBaseUrl: ""
+anthropicAuthToken: ""
+
+# Session backend: "docker" or "k8s"
+backend: "docker"
+
+agent:
+  image: registry.nj.cs.ac.cn/mryao/cli-server-agent:latest
+  memoryLimit: "2147483648"
+  nanoCpus: "2000000000"
+  pidsLimit: "256"
+  networkMode: "bridge"
+
+docker:
+  socketPath: /var/run/docker.sock
+
+sandbox:
+  namespace: "cli-server"
+
+agentSandbox:
+  # Set to false to skip installing the agent-sandbox controller (if already installed cluster-wide)
+  install: true
+  controllerImage: registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.1.1
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: nginx
+  host: cli-server.example.com
+  tls: false
+
+gateway:
+  enabled: false
+  # 关联的已有 Gateway 的名称和命名空间
+  parentRefs:
+    - name: cilium-gateway
+      namespace: cilium-gateway
+  host: cli-server.example.com

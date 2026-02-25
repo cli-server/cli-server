@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      {{- if eq .Values.backend "k8s" }}
+      serviceAccountName: {{ .Release.Name }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cli-server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "--password"
+            - "$(PASSWORD)"
+            - "--backend"
+            - "$(SANDBOX_BACKEND)"
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: password
+            - name: SANDBOX_BACKEND
+              value: {{ .Values.backend | quote }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: anthropic-api-key
+            - name: ANTHROPIC_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: anthropic-base-url
+            - name: ANTHROPIC_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: anthropic-auth-token
+            - name: AGENT_IMAGE
+              value: {{ .Values.agent.image | quote }}
+            {{- if eq .Values.backend "docker" }}
+            - name: AGENT_MEMORY_LIMIT
+              value: {{ .Values.agent.memoryLimit | quote }}
+            - name: AGENT_NANO_CPUS
+              value: {{ .Values.agent.nanoCpus | quote }}
+            - name: AGENT_PIDS_LIMIT
+              value: {{ .Values.agent.pidsLimit | quote }}
+            - name: AGENT_NETWORK_MODE
+              value: {{ .Values.agent.networkMode | quote }}
+            {{- end }}
+            {{- if eq .Values.backend "k8s" }}
+            - name: SANDBOX_NAMESPACE
+              value: {{ .Values.sandbox.namespace | quote }}
+            {{- if .Values.imagePullSecrets }}
+            - name: IMAGE_PULL_SECRET
+              value: {{ (index .Values.imagePullSecrets 0).name | quote }}
+            {{- end }}
+            {{- end }}
+          {{- if eq .Values.backend "docker" }}
+          volumeMounts:
+            - name: docker-socket
+              mountPath: {{ .Values.docker.socketPath }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+      {{- if eq .Values.backend "docker" }}
+      volumes:
+        - name: docker-socket
+          hostPath:
+            path: {{ .Values.docker.socketPath }}
+            type: Socket
+      {{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-secret
+type: Opaque
+stringData:
+  password: {{ .Values.password | quote }}
+  anthropic-api-key: {{ .Values.anthropicApiKey | quote }}
+  anthropic-base-url: {{ .Values.anthropicBaseUrl | quote }}
+  anthropic-auth-token: {{ .Values.anthropicAuthToken | quote }}

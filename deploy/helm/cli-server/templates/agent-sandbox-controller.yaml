@@ -1,0 +1,116 @@
+{{- if and (eq .Values.backend "k8s") .Values.agentSandbox.install }}
+---
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: agent-sandbox-system
+
+---
+
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+  labels:
+    app: agent-sandbox-controller
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-sandbox-controller
+subjects:
+- kind: ServiceAccount
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+roleRef:
+  kind: ClusterRole
+  name: agent-sandbox-controller
+  apiGroup: rbac.authorization.k8s.io
+
+---
+
+kind: Service
+apiVersion: v1
+metadata:
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+  labels:
+    app: agent-sandbox-controller
+spec:
+  selector:
+    app: agent-sandbox-controller
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+
+---
+
+kind: StatefulSet
+apiVersion: apps/v1
+metadata:
+  name: agent-sandbox-controller
+  namespace: agent-sandbox-system
+  labels:
+    app: agent-sandbox-controller
+spec:
+  serviceName: agent-sandbox-controller
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-sandbox-controller
+  template:
+    metadata:
+      labels:
+        app: agent-sandbox-controller
+    spec:
+      serviceAccountName: agent-sandbox-controller
+      containers:
+      - name: agent-sandbox-controller
+        image: {{ .Values.agentSandbox.controllerImage }}
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-sandbox-controller
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  - pods
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - agents.x-k8s.io
+  resources:
+  - sandboxes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - agents.x-k8s.io
+  resources:
+  - sandboxes/status
+  verbs:
+  - get
+  - patch
+  - update
+{{- end }}

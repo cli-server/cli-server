@@ -1,0 +1,44 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  IMAGE: registry.nj.cs.ac.cn/mryao/cli-server
+  AGENT_IMAGE: registry.nj.cs.ac.cn/mryao/cli-server-agent
+
+build-server:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  script:
+    - docker build -t $IMAGE:$CI_COMMIT_SHORT_SHA -t $IMAGE:latest .
+    - docker push $IMAGE:$CI_COMMIT_SHORT_SHA
+    - docker push $IMAGE:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+build-agent:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  script:
+    - docker build -f Dockerfile.agent -t $AGENT_IMAGE:$CI_COMMIT_SHORT_SHA -t $AGENT_IMAGE:latest .
+    - docker push $AGENT_IMAGE:$CI_COMMIT_SHORT_SHA
+    - docker push $AGENT_IMAGE:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+deploy:
+  stage: deploy
+  image: alpine/helm:3.17.3
+  script:
+    - helm upgrade --install cli-server ./deploy/helm/cli-server
+      --set image.repository=$IMAGE
+      --set image.tag=$CI_COMMIT_SHORT_SHA
+      --set agent.image=$AGENT_IMAGE:$CI_COMMIT_SHORT_SHA
+      --namespace cli-server
+      --create-namespace
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
