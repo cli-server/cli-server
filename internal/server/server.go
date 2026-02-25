@@ -141,7 +141,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	sess := s.Sessions.Create(id, req.Name)
 
 	// Start process with claude CLI
-	_, err := s.ProcessManager.Start(id, "claude", []string{}, []string{
+	_, err := s.ProcessManager.Start(id, "claude", []string{"--dangerously-skip-permissions"}, []string{
 		"TERM=xterm-256color",
 	})
 	if err != nil {
