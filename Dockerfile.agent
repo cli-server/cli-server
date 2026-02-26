@@ -4,6 +4,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates jq less vim-tiny procps \
     && rm -rf /var/lib/apt/lists/*
 
+# Add Node.js for agent server
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and build agent server
+COPY agent-server/ /opt/agent-server/
+RUN cd /opt/agent-server && npm install --production
+
 RUN useradd -m agent
 USER agent
 WORKDIR /home/agent
@@ -12,4 +21,5 @@ ENV PATH="/home/agent/.local/bin:${PATH}"
 
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
-ENTRYPOINT ["sleep", "infinity"]
+# Run agent server (stays alive, Claude CLI invoked on-demand by SDK)
+ENTRYPOINT ["node", "/opt/agent-server/dist/index.js"]
