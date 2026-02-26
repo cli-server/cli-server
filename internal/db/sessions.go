@@ -12,6 +12,7 @@ type Session struct {
 	Name           string
 	Status         string
 	SandboxName    sql.NullString
+	PodIP          sql.NullString
 	LastActivityAt sql.NullTime
 	CreatedAt      time.Time
 	PausedAt       sql.NullTime
@@ -32,10 +33,10 @@ func (db *DB) CreateSession(id, userID, name, sandboxName string) error {
 func (db *DB) GetSession(id string) (*Session, error) {
 	s := &Session{}
 	err := db.QueryRow(
-		`SELECT id, user_id, name, status, sandbox_name, last_activity_at, created_at, paused_at
+		`SELECT id, user_id, name, status, sandbox_name, pod_ip, last_activity_at, created_at, paused_at
 		 FROM sessions WHERE id = $1`,
 		id,
-	).Scan(&s.ID, &s.UserID, &s.Name, &s.Status, &s.SandboxName, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt)
+	).Scan(&s.ID, &s.UserID, &s.Name, &s.Status, &s.SandboxName, &s.PodIP, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -47,7 +48,7 @@ func (db *DB) GetSession(id string) (*Session, error) {
 
 func (db *DB) ListSessionsByUser(userID string) ([]*Session, error) {
 	rows, err := db.Query(
-		`SELECT id, user_id, name, status, sandbox_name, last_activity_at, created_at, paused_at
+		`SELECT id, user_id, name, status, sandbox_name, pod_ip, last_activity_at, created_at, paused_at
 		 FROM sessions WHERE user_id = $1 ORDER BY created_at ASC`,
 		userID,
 	)
@@ -59,7 +60,7 @@ func (db *DB) ListSessionsByUser(userID string) ([]*Session, error) {
 	var sessions []*Session
 	for rows.Next() {
 		s := &Session{}
-		if err := rows.Scan(&s.ID, &s.UserID, &s.Name, &s.Status, &s.SandboxName, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.UserID, &s.Name, &s.Status, &s.SandboxName, &s.PodIP, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt); err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
 		}
 		sessions = append(sessions, s)
@@ -102,7 +103,7 @@ func (db *DB) DeleteSession(id string) error {
 
 func (db *DB) ListIdleSessions(idleTimeout time.Duration) ([]*Session, error) {
 	rows, err := db.Query(
-		`SELECT id, user_id, name, status, sandbox_name, last_activity_at, created_at, paused_at
+		`SELECT id, user_id, name, status, sandbox_name, pod_ip, last_activity_at, created_at, paused_at
 		 FROM sessions
 		 WHERE status = 'running' AND last_activity_at < NOW() - $1::interval`,
 		fmt.Sprintf("%d seconds", int(idleTimeout.Seconds())),
@@ -115,7 +116,7 @@ func (db *DB) ListIdleSessions(idleTimeout time.Duration) ([]*Session, error) {
 	var sessions []*Session
 	for rows.Next() {
 		s := &Session{}
-		if err := rows.Scan(&s.ID, &s.UserID, &s.Name, &s.Status, &s.SandboxName, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.UserID, &s.Name, &s.Status, &s.SandboxName, &s.PodIP, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt); err != nil {
 			return nil, fmt.Errorf("scan idle session: %w", err)
 		}
 		sessions = append(sessions, s)
@@ -147,6 +148,14 @@ func (db *DB) UpdateSessionSandboxName(id, sandboxName string) error {
 	_, err := db.Exec("UPDATE sessions SET sandbox_name = $2 WHERE id = $1", id, sandboxName)
 	if err != nil {
 		return fmt.Errorf("update session sandbox name: %w", err)
+	}
+	return nil
+}
+
+func (db *DB) UpdateSessionPodIP(id, podIP string) error {
+	_, err := db.Exec("UPDATE sessions SET pod_ip = $2 WHERE id = $1", id, podIP)
+	if err != nil {
+		return fmt.Errorf("update session pod ip: %w", err)
 	}
 	return nil
 }

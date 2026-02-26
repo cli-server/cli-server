@@ -51,6 +51,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -58,6 +62,12 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build sidecar-ts
+        run: |
+          cd sidecar-ts
+          npm ci
+          npm run build
 
       - uses: docker/metadata-action@v5
         id: meta
@@ -72,7 +82,7 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: ./sidecar
+          context: ./sidecar-ts
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -83,6 +93,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build agent-server
+        run: |
+          cd agent-server
+          npm ci
+          npm run build
 
       - uses: docker/setup-buildx-action@v3
 

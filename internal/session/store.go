@@ -14,6 +14,7 @@ type Session struct {
 	Name           string     `json:"name"`
 	Status         string     `json:"status"`
 	SandboxName    string     `json:"sandboxName,omitempty"`
+	PodIP          string     `json:"podIp,omitempty"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	LastActivityAt *time.Time `json:"lastActivityAt,omitempty"`
 	PausedAt       *time.Time `json:"pausedAt,omitempty"`
@@ -150,6 +151,9 @@ func dbSessionToSession(ds *db.Session) *Session {
 	}
 	if ds.SandboxName.Valid {
 		sess.SandboxName = ds.SandboxName.String
+	}
+	if ds.PodIP.Valid {
+		sess.PodIP = ds.PodIP.String
 	}
 	if ds.LastActivityAt.Valid {
 		t := ds.LastActivityAt.Time

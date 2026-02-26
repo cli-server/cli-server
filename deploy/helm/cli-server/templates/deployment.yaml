@@ -161,8 +161,6 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secret
                   key: anthropic-base-url
-            - name: AGENT_IMAGE
-              value: {{ .Values.agent.image | quote }}
             - name: SANDBOX_BACKEND
               value: {{ .Values.backend | quote }}
           livenessProbe:

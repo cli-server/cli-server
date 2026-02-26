@@ -324,12 +324,32 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start container asynchronously (like pause/resume).
+	// Start container asynchronously.
 	go func() {
-		if err := s.ProcessManager.StartContainer(id, process.StartOptions{UserDrivePVC: userDrivePVC}); err != nil {
-			log.Printf("failed to start container for session %s: %v", id, err)
-			s.Sessions.Delete(id)
-			return
+		var podIP string
+		// Use StartContainerWithIP if available (K8s backend) to get the pod IP.
+		if sc, ok := s.ProcessManager.(interface {
+			StartContainerWithIP(string, process.StartOptions) (string, error)
+		}); ok {
+			var err error
+			podIP, err = sc.StartContainerWithIP(id, process.StartOptions{UserDrivePVC: userDrivePVC})
+			if err != nil {
+				log.Printf("failed to start container for session %s: %v", id, err)
+				s.Sessions.Delete(id)
+				return
+			}
+		} else {
+			if err := s.ProcessManager.StartContainer(id, process.StartOptions{UserDrivePVC: userDrivePVC}); err != nil {
+				log.Printf("failed to start container for session %s: %v", id, err)
+				s.Sessions.Delete(id)
+				return
+			}
+		}
+		if podIP != "" {
+			if err := s.DB.UpdateSessionPodIP(id, podIP); err != nil {
+				log.Printf("failed to update pod IP for session %s: %v", id, err)
+			}
+		}
 		}
 		s.Sessions.UpdateStatus(id, session.StatusRunning)
 	}()
@@ -437,9 +457,13 @@ func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
 	// Resume asynchronously.
 	go func() {
 		var err error
-		// Use ResumeContainer if available (K8s backend); it patches replicas
-		// back to 1 instead of creating a new sandbox CR.
-		if rc, ok := s.ProcessManager.(interface{ ResumeContainer(string) error }); ok {
+		var podIP string
+		// Use ResumeContainerWithIP if available (K8s backend).
+		if rc, ok := s.ProcessManager.(interface {
+			ResumeContainerWithIP(string) (string, error)
+		}); ok {
+			podIP, err = rc.ResumeContainerWithIP(id)
+		} else if rc, ok := s.ProcessManager.(interface{ ResumeContainer(string) error }); ok {
 			err = rc.ResumeContainer(id)
 		} else {
 			err = s.ProcessManager.StartContainer(id, process.StartOptions{})
@@ -448,6 +472,11 @@ func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
 			log.Printf("failed to resume session %s: %v", id, err)
 			s.Sessions.UpdateStatus(id, session.StatusPaused)
 			return
+		}
+		if podIP != "" {
+			if err := s.DB.UpdateSessionPodIP(id, podIP); err != nil {
+				log.Printf("failed to update pod IP for session %s: %v", id, err)
+			}
 		}
 		s.Sessions.UpdateStatus(id, session.StatusRunning)
 	}()
@@ -494,7 +523,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(messages)
 }
 
-// proxySidecar forwards requests to the Python sidecar, injecting session context.
+// proxySidecar forwards requests to the TypeScript sidecar, injecting session context.
 func (s *Server) proxySidecar(w http.ResponseWriter, r *http.Request, targetPath string) {
 	userID := auth.UserIDFromContext(r.Context())
 	id := chi.URLParam(r, "id")
@@ -510,6 +539,9 @@ func (s *Server) proxySidecar(w http.ResponseWriter, r *http.Request, targetPath
 	r.Header.Set("X-User-ID", userID)
 	if sess.SandboxName != "" {
 		r.Header.Set("X-Sandbox-Name", sess.SandboxName)
+	}
+	if sess.PodIP != "" {
+		r.Header.Set("X-Pod-IP", sess.PodIP)
 	}
 
 	s.SidecarProxy.ServeHTTP(w, r)

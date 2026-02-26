@@ -6,7 +6,7 @@ image:
   pullPolicy: Always
 
 sidecar:
-  image: ghcr.io/cli-server/sidecar:latest
+  image: ghcr.io/cli-server/sidecar-ts:latest
   pullPolicy: Always
 
 imagePullSecrets: []
