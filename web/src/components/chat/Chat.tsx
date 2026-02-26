@@ -251,12 +251,12 @@ export function Chat({ sessionId, status, onStatusChange }: ChatProps) {
   }
 
   // Transitional states
-  if (status === 'pausing' || status === 'resuming') {
+  if (status === 'pausing' || status === 'resuming' || status === 'creating') {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-3">
         <Loader2 size={24} className="animate-spin text-[var(--muted-foreground)]" />
         <p className="text-[var(--muted-foreground)]">
-          {status === 'pausing' ? 'Pausing session...' : 'Resuming session...'}
+          {status === 'pausing' ? 'Pausing session...' : status === 'resuming' ? 'Resuming session...' : 'Starting session...'}
         </p>
       </div>
     )

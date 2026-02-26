@@ -34,26 +34,21 @@ func NewStore(database *db.DB) *Store {
 	}
 }
 
-// Create inserts a new running session into the DB and creates an in-memory buffer.
+// Create inserts a new session into the DB with 'creating' status (no buffer yet).
 func (s *Store) Create(id, userID, name, sandboxName string) (*Session, error) {
 	if err := s.db.CreateSession(id, userID, name, sandboxName); err != nil {
 		return nil, err
 	}
-	buf := NewRingBuffer(ringBufferSize)
-	s.mu.Lock()
-	s.buffers[id] = buf
-	s.mu.Unlock()
 
 	now := time.Now()
 	return &Session{
 		ID:             id,
 		UserID:         userID,
 		Name:           name,
-		Status:         StatusRunning,
+		Status:         StatusCreating,
 		SandboxName:    sandboxName,
 		CreatedAt:      now,
 		LastActivityAt: &now,
-		Output:         buf,
 	}, nil
 }
 
