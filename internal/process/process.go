@@ -8,10 +8,20 @@ type Process interface {
 	Done() <-chan struct{}
 }
 
+// StartOptions holds optional parameters for starting a process.
+type StartOptions struct {
+	UserDrivePVC string // pre-existing PVC name for user drive mount
+}
+
 // Manager manages process lifecycles.
 type Manager interface {
-	Start(id, command string, args, env []string) (Process, error)
+	Start(id, command string, args, env []string, opts StartOptions) (Process, error)
+	// StartContainer creates/starts the container without exec-ing into it.
+	// Used by the chat flow where the sidecar handles exec via the SDK.
+	StartContainer(id string, opts StartOptions) error
 	Get(id string) (Process, bool)
 	Stop(id string) error
+	Pause(id string) error
+	Resume(id, sandboxName, command string, args []string) (Process, error)
 	Close() error
 }

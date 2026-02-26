@@ -1,13 +1,30 @@
 replicaCount: 1
 
 image:
-  repository: registry.nj.cs.ac.cn/mryao/cli-server
+  repository: ghcr.io/cli-server/cli-server
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
+
+sidecar:
+  image: ghcr.io/cli-server/sidecar:latest
+  pullPolicy: Always
 
 imagePullSecrets: []
 
-password: "changeme"
+redis:
+  url: "redis://redis:6379"
+
+database:
+  url: "postgres://user:pass@postgres:5432/cliserver?sslmode=disable"
+
+persistence:
+  sessionStorageSize: "5Gi"
+  userDriveSize: "10Gi"
+  storageClassName: ""  # empty = cluster default
+  userDriveStorageClassName: ""  # empty = falls back to storageClassName
+
+idleTimeout: "30m"
+
 anthropicApiKey: ""
 anthropicBaseUrl: ""
 anthropicAuthToken: ""
@@ -16,11 +33,12 @@ anthropicAuthToken: ""
 backend: "docker"
 
 agent:
-  image: registry.nj.cs.ac.cn/mryao/cli-server-agent:latest
+  image: ghcr.io/cli-server/agent:latest
   memoryLimit: "2147483648"
   nanoCpus: "2000000000"
   pidsLimit: "256"
   networkMode: "bridge"
+  runtimeClassName: ""  # e.g. "gvisor" to enable gVisor sandbox isolation
 
 docker:
   socketPath: /var/run/docker.sock
@@ -45,8 +63,19 @@ ingress:
 
 gateway:
   enabled: false
-  # 关联的已有 Gateway 的名称和命名空间
   parentRefs:
     - name: cilium-gateway
       namespace: cilium-gateway
   host: cli-server.example.com
+
+oidc:
+  redirectBaseUrl: ""
+  github:
+    enabled: false
+    clientId: ""
+    clientSecret: ""
+  generic:
+    enabled: false
+    issuerUrl: ""
+    clientId: ""
+    clientSecret: ""

@@ -26,21 +26,21 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - "--password"
-            - "$(PASSWORD)"
             - "--backend"
             - "$(SANDBOX_BACKEND)"
           ports:
             - containerPort: 8080
               protocol: TCP
           env:
-            - name: PASSWORD
+            - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secret
-                  key: password
+                  key: database-url
             - name: SANDBOX_BACKEND
               value: {{ .Values.backend | quote }}
+            - name: IDLE_TIMEOUT
+              value: {{ .Values.idleTimeout | quote }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -58,6 +58,22 @@ spec:
                   key: anthropic-auth-token
             - name: AGENT_IMAGE
               value: {{ .Values.agent.image | quote }}
+            - name: SIDECAR_URL
+              value: "http://localhost:8081"
+            - name: REDIS_URL
+              value: {{ .Values.redis.url | quote }}
+            - name: SESSION_STORAGE_SIZE
+              value: {{ .Values.persistence.sessionStorageSize | quote }}
+            - name: USER_DRIVE_SIZE
+              value: {{ .Values.persistence.userDriveSize | quote }}
+            {{- if .Values.persistence.storageClassName }}
+            - name: STORAGE_CLASS
+              value: {{ .Values.persistence.storageClassName | quote }}
+            {{- end }}
+            {{- if .Values.persistence.userDriveStorageClassName }}
+            - name: USER_DRIVE_STORAGE_CLASS
+              value: {{ .Values.persistence.userDriveStorageClassName | quote }}
+            {{- end }}
             {{- if eq .Values.backend "docker" }}
             - name: AGENT_MEMORY_LIMIT
               value: {{ .Values.agent.memoryLimit | quote }}
@@ -75,6 +91,34 @@ spec:
             - name: IMAGE_PULL_SECRET
               value: {{ (index .Values.imagePullSecrets 0).name | quote }}
             {{- end }}
+            {{- if .Values.agent.runtimeClassName }}
+            - name: RUNTIME_CLASS
+              value: {{ .Values.agent.runtimeClassName | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.oidc.redirectBaseUrl }}
+            - name: OIDC_REDIRECT_BASE_URL
+              value: {{ .Values.oidc.redirectBaseUrl | quote }}
+            {{- end }}
+            {{- if .Values.oidc.github.enabled }}
+            - name: GITHUB_CLIENT_ID
+              value: {{ .Values.oidc.github.clientId | quote }}
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: github-client-secret
+            {{- end }}
+            {{- if .Values.oidc.generic.enabled }}
+            - name: OIDC_ISSUER_URL
+              value: {{ .Values.oidc.generic.issuerUrl | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.oidc.generic.clientId | quote }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: oidc-client-secret
             {{- end }}
           {{- if eq .Values.backend "docker" }}
           volumeMounts:
@@ -93,6 +137,46 @@ spec:
               port: 8080
             initialDelaySeconds: 3
             periodSeconds: 5
+        - name: sidecar
+          image: "{{ .Values.sidecar.image }}"
+          imagePullPolicy: {{ .Values.sidecar.pullPolicy }}
+          ports:
+            - containerPort: 8081
+              protocol: TCP
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: database-url
+            - name: REDIS_URL
+              value: {{ .Values.redis.url | quote }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: anthropic-api-key
+            - name: ANTHROPIC_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: anthropic-base-url
+            - name: AGENT_IMAGE
+              value: {{ .Values.agent.image | quote }}
+            - name: SANDBOX_BACKEND
+              value: {{ .Values.backend | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 3
+            periodSeconds: 5
       {{- if eq .Values.backend "docker" }}
       volumes:
         - name: docker-socket
@@ -107,7 +191,13 @@ metadata:
   name: {{ .Release.Name }}-secret
 type: Opaque
 stringData:
-  password: {{ .Values.password | quote }}
+  database-url: {{ .Values.database.url | quote }}
   anthropic-api-key: {{ .Values.anthropicApiKey | quote }}
   anthropic-base-url: {{ .Values.anthropicBaseUrl | quote }}
   anthropic-auth-token: {{ .Values.anthropicAuthToken | quote }}
+  {{- if .Values.oidc.github.enabled }}
+  github-client-secret: {{ .Values.oidc.github.clientSecret | quote }}
+  {{- end }}
+  {{- if .Values.oidc.generic.enabled }}
+  oidc-client-secret: {{ .Values.oidc.generic.clientSecret | quote }}
+  {{- end }}

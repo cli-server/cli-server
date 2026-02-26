@@ -3,119 +3,166 @@ package session
 import (
 	"sync"
 	"time"
+
+	"github.com/imryao/cli-server/internal/db"
 )
 
-const ringBufferSize = 50 * 1024 // 50KB
-
-// RingBuffer is a fixed-size circular buffer for storing terminal output.
-type RingBuffer struct {
-	buf  []byte
-	size int
-	pos  int
-	full bool
-	mu   sync.Mutex
-}
-
-func NewRingBuffer(size int) *RingBuffer {
-	return &RingBuffer{buf: make([]byte, size), size: size}
-}
-
-func (r *RingBuffer) Write(p []byte) (int, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	n := len(p)
-	if n >= r.size {
-		copy(r.buf, p[n-r.size:])
-		r.pos = 0
-		r.full = true
-		return n, nil
-	}
-	if r.pos+n <= r.size {
-		copy(r.buf[r.pos:], p)
-	} else {
-		first := r.size - r.pos
-		copy(r.buf[r.pos:], p[:first])
-		copy(r.buf, p[first:])
-	}
-	r.pos = (r.pos + n) % r.size
-	if !r.full && r.pos < n {
-		r.full = true
-	}
-	return n, nil
-}
-
-func (r *RingBuffer) Bytes() []byte {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !r.full {
-		return append([]byte(nil), r.buf[:r.pos]...)
-	}
-	out := make([]byte, r.size)
-	copy(out, r.buf[r.pos:])
-	copy(out[r.size-r.pos:], r.buf[:r.pos])
-	return out
-}
-
+// Session represents a session with in-memory output buffer.
 type Session struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
-	Output    *RingBuffer `json:"-"`
+	ID             string     `json:"id"`
+	UserID         string     `json:"userId"`
+	Name           string     `json:"name"`
+	Status         string     `json:"status"`
+	SandboxName    string     `json:"sandboxName,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	LastActivityAt *time.Time `json:"lastActivityAt,omitempty"`
+	PausedAt       *time.Time `json:"pausedAt,omitempty"`
+	Output         *RingBuffer `json:"-"`
 }
 
+// Store manages sessions via PostgreSQL with in-memory ring buffers for active sessions.
 type Store struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-	order    []string
+	db      *db.DB
+	mu      sync.RWMutex
+	buffers map[string]*RingBuffer // session ID → ring buffer (only for running sessions)
 }
 
-func NewStore() *Store {
-	return &Store{sessions: make(map[string]*Session)}
+func NewStore(database *db.DB) *Store {
+	return &Store{
+		db:      database,
+		buffers: make(map[string]*RingBuffer),
+	}
 }
 
-func (s *Store) Create(id, name string) *Session {
+// Create inserts a new running session into the DB and creates an in-memory buffer.
+func (s *Store) Create(id, userID, name, sandboxName string) (*Session, error) {
+	if err := s.db.CreateSession(id, userID, name, sandboxName); err != nil {
+		return nil, err
+	}
+	buf := NewRingBuffer(ringBufferSize)
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess := &Session{
-		ID:        id,
-		Name:      name,
-		CreatedAt: time.Now(),
-		Output:    NewRingBuffer(ringBufferSize),
-	}
-	s.sessions[id] = sess
-	s.order = append(s.order, id)
-	return sess
+	s.buffers[id] = buf
+	s.mu.Unlock()
+
+	now := time.Now()
+	return &Session{
+		ID:             id,
+		UserID:         userID,
+		Name:           name,
+		Status:         StatusRunning,
+		SandboxName:    sandboxName,
+		CreatedAt:      now,
+		LastActivityAt: &now,
+		Output:         buf,
+	}, nil
 }
 
+// Get returns a session from DB with its in-memory buffer (if running).
 func (s *Store) Get(id string) (*Session, bool) {
+	dbSess, err := s.db.GetSession(id)
+	if err != nil || dbSess == nil {
+		return nil, false
+	}
+	sess := dbSessionToSession(dbSess)
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	sess, ok := s.sessions[id]
-	return sess, ok
+	if buf, ok := s.buffers[id]; ok {
+		sess.Output = buf
+	}
+	s.mu.RUnlock()
+	return sess, true
 }
 
-func (s *Store) List() []*Session {
+// GetBuffer returns the ring buffer for an active session.
+func (s *Store) GetBuffer(id string) (*RingBuffer, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make([]*Session, 0, len(s.order))
-	for _, id := range s.order {
-		out = append(out, s.sessions[id])
+	buf, ok := s.buffers[id]
+	return buf, ok
+}
+
+// List returns all sessions for a user from the database.
+func (s *Store) List(userID string) []*Session {
+	dbSessions, err := s.db.ListSessionsByUser(userID)
+	if err != nil {
+		return nil
 	}
+	out := make([]*Session, 0, len(dbSessions))
+	s.mu.RLock()
+	for _, ds := range dbSessions {
+		sess := dbSessionToSession(ds)
+		if buf, ok := s.buffers[ds.ID]; ok {
+			sess.Output = buf
+		}
+		out = append(out, sess)
+	}
+	s.mu.RUnlock()
 	return out
 }
 
-func (s *Store) Delete(id string) bool {
+// UpdateStatus transitions a session to a new status.
+func (s *Store) UpdateStatus(id, status string) error {
+	if err := s.db.UpdateSessionStatus(id, status); err != nil {
+		return err
+	}
+	// Manage buffer lifecycle based on status.
+	switch status {
+	case StatusPaused, StatusDeleting:
+		s.mu.Lock()
+		delete(s.buffers, id)
+		s.mu.Unlock()
+	case StatusRunning:
+		s.mu.Lock()
+		if _, ok := s.buffers[id]; !ok {
+			s.buffers[id] = NewRingBuffer(ringBufferSize)
+		}
+		s.mu.Unlock()
+	}
+	return nil
+}
+
+// Delete removes a session from the DB and its in-memory buffer.
+func (s *Store) Delete(id string) error {
+	s.mu.Lock()
+	delete(s.buffers, id)
+	s.mu.Unlock()
+	return s.db.DeleteSession(id)
+}
+
+// UpdateActivity records user activity on a session.
+func (s *Store) UpdateActivity(id string) {
+	s.db.UpdateSessionActivity(id)
+}
+
+// EnsureBuffer creates a ring buffer for a session if one doesn't exist.
+func (s *Store) EnsureBuffer(id string) *RingBuffer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.sessions[id]; !ok {
-		return false
+	if buf, ok := s.buffers[id]; ok {
+		return buf
 	}
-	delete(s.sessions, id)
-	for i, oid := range s.order {
-		if oid == id {
-			s.order = append(s.order[:i], s.order[i+1:]...)
-			break
-		}
+	buf := NewRingBuffer(ringBufferSize)
+	s.buffers[id] = buf
+	return buf
+}
+
+func dbSessionToSession(ds *db.Session) *Session {
+	sess := &Session{
+		ID:        ds.ID,
+		UserID:    ds.UserID,
+		Name:      ds.Name,
+		Status:    ds.Status,
+		CreatedAt: ds.CreatedAt,
 	}
-	return true
+	if ds.SandboxName.Valid {
+		sess.SandboxName = ds.SandboxName.String
+	}
+	if ds.LastActivityAt.Valid {
+		t := ds.LastActivityAt.Time
+		sess.LastActivityAt = &t
+	}
+	if ds.PausedAt.Valid {
+		t := ds.PausedAt.Time
+		sess.PausedAt = &t
+	}
+	return sess
 }

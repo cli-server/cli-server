@@ -2,3 +2,4 @@
 bin/
 web/node_modules/
 web/dist/
+*.tgz

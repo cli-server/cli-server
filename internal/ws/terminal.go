@@ -30,12 +30,18 @@ var upgrader = websocket.Upgrader{
 type Handler struct {
 	Sessions       *session.Store
 	ProcessManager process.Manager
+	OnActivity     func(sessionID string) // optional callback for activity tracking
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, sessionID string) {
 	sess, ok := h.Sessions.Get(sessionID)
 	if !ok {
 		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if sess.Status != session.StatusRunning {
+		http.Error(w, "session is not running", http.StatusConflict)
 		return
 	}
 
@@ -53,22 +59,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, sessionID st
 	defer conn.Close()
 
 	// Send buffered output for reconnection
-	buffered := sess.Output.Bytes()
-	if len(buffered) > 0 {
-		msg := append([]byte{MsgOutput}, buffered...)
-		conn.WriteMessage(websocket.BinaryMessage, msg)
+	buf, hasBuf := h.Sessions.GetBuffer(sessionID)
+	if hasBuf {
+		buffered := buf.Bytes()
+		if len(buffered) > 0 {
+			msg := append([]byte{MsgOutput}, buffered...)
+			conn.WriteMessage(websocket.BinaryMessage, msg)
+		}
 	}
 
 	// PTY → WebSocket
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		buf := make([]byte, 4096)
+		readBuf := make([]byte, 4096)
 		for {
-			n, err := p.Read(buf)
+			n, err := p.Read(readBuf)
 			if n > 0 {
-				data := buf[:n]
-				sess.Output.Write(data)
+				data := readBuf[:n]
+				if hasBuf {
+					buf.Write(data)
+				}
 				msg := append([]byte{MsgOutput}, data...)
 				if writeErr := conn.WriteMessage(websocket.BinaryMessage, msg); writeErr != nil {
 					return
@@ -99,6 +110,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, sessionID st
 			switch msgType {
 			case MsgInput:
 				p.Write(payload)
+				if h.OnActivity != nil {
+					h.OnActivity(sessionID)
+				}
 			case MsgResize:
 				if len(payload) >= 4 {
 					cols := binary.BigEndian.Uint16(payload[0:2])
@@ -107,6 +121,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, sessionID st
 				}
 			case MsgPing:
 				conn.WriteMessage(websocket.BinaryMessage, []byte{MsgPong})
+				if h.OnActivity != nil {
+					h.OnActivity(sessionID)
+				}
 			}
 		}
 	}()

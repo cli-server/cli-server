@@ -16,7 +16,7 @@ build-server:
     - docker push $IMAGE:$CI_COMMIT_SHORT_SHA
     - docker push $IMAGE:latest
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "master"
 
 build-agent:
   stage: build
@@ -28,7 +28,7 @@ build-agent:
     - docker push $AGENT_IMAGE:$CI_COMMIT_SHORT_SHA
     - docker push $AGENT_IMAGE:latest
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "master"
 
 deploy:
   stage: deploy
@@ -41,4 +41,4 @@ deploy:
       --namespace cli-server
       --create-namespace
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "master"

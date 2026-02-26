@@ -1,5 +1,5 @@
 # Stage 1: Build frontend
-FROM node:22-slim AS frontend
+FROM node:25-slim AS frontend
 RUN npm install -g pnpm
 WORKDIR /app/web
 COPY web/package.json web/pnpm-lock.yaml ./
@@ -8,7 +8,7 @@ COPY web/ ./
 RUN pnpm build
 
 # Stage 2: Build Go backend
-FROM golang:1.25-bookworm AS backend
+FROM golang:1.26-trixie AS backend
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -17,7 +17,7 @@ COPY --from=frontend /app/web/dist ./web/dist
 RUN CGO_ENABLED=0 go build -o cli-server .
 
 # Stage 3: Runtime image with Docker CLI (claude-code runs in agent containers)
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg \
     && install -m 0755 -d /etc/apt/keyrings \

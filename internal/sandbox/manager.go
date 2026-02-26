@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -26,12 +27,12 @@ import (
 )
 
 const (
-	labelManagedBy        = "managed-by"
-	labelValue            = "cli-server"
-	sandboxNameHashLabel  = "agents.x-k8s.io/sandbox-name-hash"
-	sandboxContainerName  = "agent"
-	pollInterval          = 2 * time.Second
-	pollTimeout           = 5 * time.Minute
+	labelManagedBy       = "managed-by"
+	labelValue           = "cli-server"
+	sandboxNameHashLabel = "agents.x-k8s.io/sandbox-name-hash"
+	sandboxContainerName = "agent"
+	pollInterval         = 2 * time.Second
+	pollTimeout          = 5 * time.Minute
 )
 
 // Compile-time interface check.
@@ -81,7 +82,6 @@ func NewManager(cfg Config) (*Manager, error) {
 		sessions:  make(map[string]*sessionEntry),
 	}
 
-	m.cleanOrphans()
 	return m, nil
 }
 
@@ -97,10 +97,15 @@ func buildRESTConfig() (*rest.Config, error) {
 	return clientcmd.BuildConfigFromFlags("", kubeconfig)
 }
 
-// cleanOrphans deletes Sandbox CRs labelled managed-by=cli-server from previous runs.
-func (m *Manager) cleanOrphans() {
+// CleanOrphans deletes Sandbox CRs labelled managed-by=cli-server that are NOT in the known set.
+func (m *Manager) CleanOrphans(knownSandboxNames []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	known := make(map[string]bool, len(knownSandboxNames))
+	for _, name := range knownSandboxNames {
+		known[name] = true
+	}
 
 	var list sandboxv1alpha1.SandboxList
 	if err := m.k8s.List(ctx, &list,
@@ -111,14 +116,18 @@ func (m *Manager) cleanOrphans() {
 		return
 	}
 	for i := range list.Items {
-		log.Printf("cleaning orphan sandbox %s", list.Items[i].Name)
+		name := list.Items[i].Name
+		if known[name] {
+			continue
+		}
+		log.Printf("cleaning orphan sandbox %s", name)
 		if err := m.k8s.Delete(ctx, &list.Items[i]); err != nil {
-			log.Printf("failed to delete orphan sandbox %s: %v", list.Items[i].Name, err)
+			log.Printf("failed to delete orphan sandbox %s: %v", name, err)
 		}
 	}
 }
 
-func (m *Manager) Start(id, command string, args, env []string) (process.Process, error) {
+func (m *Manager) Start(id, command string, args, env []string, opts process.StartOptions) (process.Process, error) {
 	ctx := context.Background()
 	sandboxName := "cli-session-" + shortID(id)
 
@@ -130,6 +139,77 @@ func (m *Manager) Start(id, command string, args, env []string) (process.Process
 		}
 	}
 
+	// Volume mounts for the main container.
+	volumeMounts := []corev1.VolumeMount{
+		{Name: "session-data", MountPath: "/home/agent"},
+	}
+	var volumes []corev1.Volume
+
+	// Mount user drive PVC if provided.
+	if opts.UserDrivePVC != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name: "user-drive", MountPath: "/data/disk0",
+		})
+		volumes = append(volumes, corev1.Volume{
+			Name: "user-drive",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: opts.UserDrivePVC,
+				},
+			},
+		})
+	}
+
+	// Init container: mount PVC at a temp path, seed it from the original home dir on first use, then fix ownership.
+	// This avoids the empty PVC overwriting the agent image's /home/agent (which has claude CLI, dotfiles, etc.).
+	initScript := `
+set -e
+# If the PVC is fresh (only has lost+found or is empty), seed it from the image's home dir.
+if [ ! -f /mnt/session-data/.initialized ]; then
+  echo "Seeding session PVC from /home/agent..."
+  cp -a /home/agent/. /mnt/session-data/ 2>/dev/null || true
+  touch /mnt/session-data/.initialized
+fi
+chown -R 1000:1000 /mnt/session-data
+mkdir -p /mnt/user-drive
+chown -R 1000:1000 /mnt/user-drive
+`
+	initContainers := []corev1.Container{{
+		Name:    "fix-perms",
+		Image:   m.cfg.Image,
+		Command: []string{"sh", "-c", initScript},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "session-data", MountPath: "/mnt/session-data"},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser: int64Ptr(0),
+		},
+	}}
+	// Also mount user drive in init container if present.
+	if opts.UserDrivePVC != "" {
+		initContainers[0].VolumeMounts = append(initContainers[0].VolumeMounts,
+			corev1.VolumeMount{Name: "user-drive", MountPath: "/mnt/user-drive"},
+		)
+	}
+
+	// Build VolumeClaimTemplates for session data.
+	storageSize := resource.MustParse(m.cfg.SessionStorageSize)
+	vctMeta := sandboxv1alpha1.EmbeddedObjectMetadata{Name: "session-data"}
+	vcts := []sandboxv1alpha1.PersistentVolumeClaimTemplate{{
+		EmbeddedObjectMetadata: vctMeta,
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceStorage: storageSize},
+			},
+		},
+	}}
+
+	// Set storage class if configured.
+	if m.cfg.StorageClassName != "" {
+		vcts[0].Spec.StorageClassName = &m.cfg.StorageClassName
+	}
+
 	// Create the Sandbox CR.
 	sb := &sandboxv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
@@ -138,13 +218,16 @@ func (m *Manager) Start(id, command string, args, env []string) (process.Process
 			Labels:    map[string]string{labelManagedBy: labelValue},
 		},
 		Spec: sandboxv1alpha1.SandboxSpec{
+			VolumeClaimTemplates: vcts,
 			PodTemplate: sandboxv1alpha1.PodTemplate{
 				Spec: corev1.PodSpec{
+					InitContainers: initContainers,
 					Containers: []corev1.Container{{
-						Name:    sandboxContainerName,
-						Image:   m.cfg.Image,
-						Command: []string{"sleep", "infinity"},
-						Env:     containerEnv,
+						Name:         sandboxContainerName,
+						Image:        m.cfg.Image,
+						Command:      []string{"sleep", "infinity"},
+						Env:          containerEnv,
+						VolumeMounts: volumeMounts,
 						Resources: corev1.ResourceRequirements{
 							Limits: corev1.ResourceList{
 								corev1.ResourceMemory: resource.MustParse(m.cfg.MemoryLimit),
@@ -152,7 +235,9 @@ func (m *Manager) Start(id, command string, args, env []string) (process.Process
 							},
 						},
 					}},
+					Volumes:          volumes,
 					ImagePullSecrets: m.imagePullSecrets(),
+					RuntimeClassName: m.runtimeClassName(),
 					RestartPolicy:    corev1.RestartPolicyNever,
 				},
 			},
@@ -166,7 +251,6 @@ func (m *Manager) Start(id, command string, args, env []string) (process.Process
 	// Wait for sandbox to become ready.
 	podName, err := m.waitForReady(ctx, sandboxName)
 	if err != nil {
-		// Cleanup on failure.
 		_ = m.k8s.Delete(ctx, sb)
 		return nil, fmt.Errorf("sandbox not ready: %w", err)
 	}
@@ -179,6 +263,106 @@ func (m *Manager) Start(id, command string, args, env []string) (process.Process
 	if err != nil {
 		_ = m.k8s.Delete(ctx, sb)
 		return nil, fmt.Errorf("exec into sandbox: %w", err)
+	}
+
+	m.mu.Lock()
+	m.sessions[id] = &sessionEntry{proc: proc, sandboxName: sandboxName}
+	m.mu.Unlock()
+
+	return proc, nil
+}
+
+// StartContainer for K8s sandbox delegates to Start — the sandbox CR always
+// starts with `sleep infinity` and exec happens separately.
+func (m *Manager) StartContainer(id string, opts process.StartOptions) error {
+	_, err := m.Start(id, "sleep", []string{"infinity"}, nil, opts)
+	return err
+}
+
+// ResumeContainer scales a paused sandbox back to 1 replica and waits for it
+// to be ready, without starting an exec session (the sidecar handles exec).
+func (m *Manager) ResumeContainer(id string) error {
+	sandboxName := "cli-session-" + shortID(id)
+	ctx := context.Background()
+
+	// Patch sandbox replicas to 1.
+	patch := []byte(`{"spec":{"replicas":1}}`)
+	sb := &sandboxv1alpha1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      sandboxName,
+			Namespace: m.cfg.Namespace,
+		},
+	}
+	if err := m.k8s.Patch(ctx, sb, client.RawPatch(types.MergePatchType, patch)); err != nil {
+		return fmt.Errorf("patch sandbox replicas to 1: %w", err)
+	}
+
+	// Wait for pod to be ready.
+	if _, err := m.waitForReady(ctx, sandboxName); err != nil {
+		return fmt.Errorf("sandbox not ready after resume: %w", err)
+	}
+	return nil
+}
+
+// Pause scales the sandbox to 0 replicas. Pod goes away, PVC stays.
+func (m *Manager) Pause(id string) error {
+	m.mu.Lock()
+	entry, ok := m.sessions[id]
+	if ok {
+		delete(m.sessions, id)
+	}
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("session %s not found in active sessions", id)
+	}
+
+	// Close exec stream.
+	entry.proc.close()
+
+	// Patch sandbox replicas to 0.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	patch := []byte(`{"spec":{"replicas":0}}`)
+	sb := &sandboxv1alpha1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      entry.sandboxName,
+			Namespace: m.cfg.Namespace,
+		},
+	}
+	if err := m.k8s.Patch(ctx, sb, client.RawPatch(types.MergePatchType, patch)); err != nil {
+		return fmt.Errorf("patch sandbox replicas to 0: %w", err)
+	}
+	return nil
+}
+
+// Resume scales the sandbox back to 1, waits for ready, and starts a new exec.
+func (m *Manager) Resume(id, sandboxName, command string, args []string) (process.Process, error) {
+	ctx := context.Background()
+
+	// Patch sandbox replicas to 1.
+	patch := []byte(`{"spec":{"replicas":1}}`)
+	sb := &sandboxv1alpha1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      sandboxName,
+			Namespace: m.cfg.Namespace,
+		},
+	}
+	if err := m.k8s.Patch(ctx, sb, client.RawPatch(types.MergePatchType, patch)); err != nil {
+		return nil, fmt.Errorf("patch sandbox replicas to 1: %w", err)
+	}
+
+	// Wait for pod to be ready.
+	podName, err := m.waitForReady(ctx, sandboxName)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox not ready after resume: %w", err)
+	}
+
+	// Start remotecommand exec.
+	fullCmd := append([]string{command}, args...)
+	proc, err := startExec(m.restCfg, m.clientset, m.cfg.Namespace, podName, sandboxContainerName, fullCmd)
+	if err != nil {
+		return nil, fmt.Errorf("exec into resumed sandbox: %w", err)
 	}
 
 	m.mu.Lock()
@@ -202,7 +386,6 @@ func (m *Manager) waitForReady(ctx context.Context, sandboxName string) (string,
 		}
 
 		if isSandboxReady(&sb) {
-			// Resolve the pod via label selector.
 			podList, err := m.clientset.CoreV1().Pods(m.cfg.Namespace).List(ctx, metav1.ListOptions{
 				LabelSelector: sandboxNameHashLabel + "=" + nameHash,
 			})
@@ -230,7 +413,6 @@ func isSandboxReady(sb *sandboxv1alpha1.Sandbox) bool {
 	return false
 }
 
-// nameHash replicates the agent-sandbox controller's FNV-1a hash for label selectors.
 func nameHash(name string) string {
 	h := fnv.New32a()
 	h.Write([]byte(name))
@@ -242,6 +424,16 @@ func shortID(id string) string {
 		return id[:8]
 	}
 	return id
+}
+
+func strPtr(s string) *string   { return &s }
+func int64Ptr(i int64) *int64   { return &i }
+
+func (m *Manager) runtimeClassName() *string {
+	if m.cfg.RuntimeClassName == "" {
+		return nil
+	}
+	return strPtr(m.cfg.RuntimeClassName)
 }
 
 func (m *Manager) imagePullSecrets() []corev1.LocalObjectReference {
@@ -272,10 +464,8 @@ func (m *Manager) Stop(id string) error {
 		return nil
 	}
 
-	// Terminate the exec stream.
 	entry.proc.close()
 
-	// Delete the Sandbox CR (controller cascade-deletes the pod).
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -289,6 +479,20 @@ func (m *Manager) Stop(id string) error {
 		log.Printf("failed to delete sandbox %s: %v", entry.sandboxName, err)
 	}
 	return nil
+}
+
+// StopBySandboxName deletes a Sandbox CR by its name (for paused sessions with no active process).
+func (m *Manager) StopBySandboxName(sandboxName string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sb := &sandboxv1alpha1.Sandbox{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      sandboxName,
+			Namespace: m.cfg.Namespace,
+		},
+	}
+	return m.k8s.Delete(ctx, sb)
 }
 
 func (m *Manager) Close() error {

@@ -1,6 +1,19 @@
 apiVersion: v2
 name: cli-server
-description: Cloud-hosted Claude Code terminal server
+description: Run Claude Code in the browser — a cloud-hosted terminal server for Claude Code CLI
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+home: https://github.com/cli-server/cli-server
+sources:
+  - https://github.com/cli-server/cli-server
+maintainers:
+  - name: cli-server
+    url: https://github.com/cli-server
+keywords:
+  - claude
+  - claude-code
+  - ai
+  - terminal
+  - code-server
+icon: https://raw.githubusercontent.com/cli-server/cli-server/main/docs/icon.png
