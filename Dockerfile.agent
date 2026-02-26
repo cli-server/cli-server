@@ -7,11 +7,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Add Node.js for agent server
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable && corepack prepare pnpm@9.15.0 --activate
 
 # Copy and build agent server
 COPY agent-server/ /opt/agent-server/
-RUN cd /opt/agent-server && npm install --production
+RUN cd /opt/agent-server && pnpm install --prod
 
 RUN useradd -m agent
 USER agent

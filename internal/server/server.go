@@ -350,7 +350,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				log.Printf("failed to update pod IP for session %s: %v", id, err)
 			}
 		}
-		}
 		s.Sessions.UpdateStatus(id, session.StatusRunning)
 	}()
 
