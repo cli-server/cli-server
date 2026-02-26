@@ -30,6 +30,7 @@ function StatusDot({ status }: { status: string }) {
       return <span className="inline-block h-2 w-2 rounded-full bg-yellow-500" title="Paused" />
     case 'pausing':
     case 'resuming':
+    case 'creating':
       return <Loader2 size={10} className="animate-spin text-[var(--muted-foreground)]" />
     default:
       return <span className="inline-block h-2 w-2 rounded-full bg-gray-500" />
@@ -65,7 +66,7 @@ export function SessionList({ sessions, setSessions, activeId, onSelect, onRefre
   // Poll when any session is in a transitional state.
   useEffect(() => {
     const hasTransitional = sessions.some(
-      (s) => s.status === 'pausing' || s.status === 'resuming'
+      (s) => s.status === 'pausing' || s.status === 'resuming' || s.status === 'creating'
     )
     if (hasTransitional) {
       if (!pollRef.current) {

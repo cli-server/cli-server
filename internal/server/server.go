@@ -324,13 +324,15 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start container (the sidecar will exec claude via SDK)
-	if err := s.ProcessManager.StartContainer(id, process.StartOptions{UserDrivePVC: userDrivePVC}); err != nil {
-		s.Sessions.Delete(id)
-		log.Printf("failed to start container: %v", err)
-		http.Error(w, "failed to start session: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	// Start container asynchronously (like pause/resume).
+	go func() {
+		if err := s.ProcessManager.StartContainer(id, process.StartOptions{UserDrivePVC: userDrivePVC}); err != nil {
+			log.Printf("failed to start container for session %s: %v", id, err)
+			s.Sessions.Delete(id)
+			return
+		}
+		s.Sessions.UpdateStatus(id, session.StatusRunning)
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

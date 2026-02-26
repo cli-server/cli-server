@@ -20,7 +20,7 @@ type Session struct {
 func (db *DB) CreateSession(id, userID, name, sandboxName string) error {
 	_, err := db.Exec(
 		`INSERT INTO sessions (id, user_id, name, status, sandbox_name, last_activity_at)
-		 VALUES ($1, $2, $3, 'running', $4, NOW())`,
+		 VALUES ($1, $2, $3, 'creating', $4, NOW())`,
 		id, userID, name, sandboxName,
 	)
 	if err != nil {
