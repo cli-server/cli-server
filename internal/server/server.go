@@ -10,7 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
-	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,8 +35,8 @@ type Server struct {
 	WSHandler      *ws.Handler
 	StaticFS       fs.FS
 	SidecarProxy   *httputil.ReverseProxy
-	OpencodeWebURL string                   // URL of the shared opencode-web pod (e.g. "http://opencode-web:4096")
-	ocWebProxy     *httputil.ReverseProxy   // reverse proxy to opencode-web pod
+	BaseDomain     string // e.g. "cli.cs.ac.cn" — used for subdomain routing
+	BaseScheme     string // e.g. "https" — scheme for generated URLs
 	// activityThrottle prevents excessive DB writes for activity tracking.
 	activityMu     sync.Mutex
 	activityLast   map[string]time.Time
@@ -52,7 +52,16 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sessionStore 
 	// Allow SSE streaming: disable response buffering.
 	proxy.FlushInterval = -1
 
-	opencodeWebURL := os.Getenv("OPENCODE_WEB_URL")
+	baseDomain := os.Getenv("BASE_DOMAIN")
+	baseScheme := os.Getenv("BASE_SCHEME")
+	if baseScheme == "" {
+		baseScheme = "https"
+	}
+
+	// Set auth cookie domain so cookies are shared across subdomains.
+	if baseDomain != "" {
+		auth.CookieDomain = "." + baseDomain
+	}
 
 	s := &Server{
 		Auth:           a,
@@ -63,13 +72,9 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sessionStore 
 		DriveManager:   driveManager,
 		StaticFS:       staticFS,
 		SidecarProxy:   proxy,
-		OpencodeWebURL: opencodeWebURL,
+		BaseDomain:     baseDomain,
+		BaseScheme:     baseScheme,
 		activityLast:   make(map[string]time.Time),
-	}
-
-	// Initialize opencode-web reverse proxy if configured.
-	if opencodeWebURL != "" {
-		s.ocWebProxy = s.opencodeWebProxy()
 	}
 
 	s.WSHandler = &ws.Handler{
@@ -98,6 +103,30 @@ func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+
+	// Subdomain middleware: if the Host matches oc-{sessionID}.{baseDomain},
+	// proxy the entire request to the session pod and skip all other routes.
+	if s.BaseDomain != "" {
+		r.Use(func(next http.Handler) http.Handler {
+			suffix := "." + s.BaseDomain
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				host := r.Host
+				// Strip port if present.
+				if idx := strings.LastIndex(host, ":"); idx != -1 {
+					host = host[:idx]
+				}
+				if strings.HasSuffix(host, suffix) {
+					sub := strings.TrimSuffix(host, suffix)
+					if strings.HasPrefix(sub, "oc-") {
+						sessionID := sub[3:] // strip "oc-" prefix
+						s.handleSubdomainProxy(w, r, sessionID)
+						return
+					}
+				}
+				next.ServeHTTP(w, r)
+			})
+		})
+	}
 
 	// Health endpoint (no auth required, for K8s probes)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -146,39 +175,6 @@ func (s *Server) Router() http.Handler {
 	// WebSocket (auth checked inside)
 	r.Get("/ws/terminal/{id}", s.handleWebSocket)
 
-	// OpenCode routes (only when opencode-web pod is configured).
-	if s.ocWebProxy != nil {
-		// Entry point: sets session cookie and serves opencode UI.
-		r.Group(func(r chi.Router) {
-			r.Use(s.Auth.Middleware)
-			r.Get("/oc/{sessionID}", s.handleOpencodeEntry)
-			r.Get("/oc/{sessionID}/", s.handleOpencodeEntry)
-		})
-
-		// Static assets from opencode-web pod (shared, no auth needed for assets).
-		r.Get("/assets/*", s.handleOpencodeAssets)
-		r.Get("/favicon.ico", s.handleOpencodeFavicon)
-		r.Get("/favicon.svg", s.handleOpencodeFavicon)
-
-		// OpenCode API routes — proxied to per-session pod via cookie.
-		// These require auth + a valid X-OC-Session cookie.
-		r.Group(func(r chi.Router) {
-			r.Use(s.Auth.Middleware)
-			r.HandleFunc("/session", s.opencodeAPIProxy)
-			r.HandleFunc("/session/*", s.opencodeAPIProxy)
-			r.HandleFunc("/event", s.opencodeAPIProxy)
-			r.HandleFunc("/provider", s.opencodeAPIProxy)
-			r.HandleFunc("/provider/*", s.opencodeAPIProxy)
-			r.HandleFunc("/config", s.opencodeAPIProxy)
-			r.HandleFunc("/config/*", s.opencodeAPIProxy)
-			r.HandleFunc("/agent", s.opencodeAPIProxy)
-			r.HandleFunc("/skill", s.opencodeAPIProxy)
-			r.HandleFunc("/doc", s.opencodeAPIProxy)
-			r.HandleFunc("/path", s.opencodeAPIProxy)
-			r.HandleFunc("/vcs", s.opencodeAPIProxy)
-		})
-	}
-
 	// Static files
 	if s.StaticFS != nil {
 		fileServer := http.FileServer(http.FS(s.StaticFS))
@@ -188,14 +184,6 @@ func (s *Server) Router() http.Handler {
 				upath = "/index.html"
 			}
 			if _, err := fs.Stat(s.StaticFS, upath[1:]); err != nil {
-				// File not in cli-server's static assets.
-				// If it looks like a static file (has extension) and opencode-web
-				// proxy is configured, proxy to opencode-web pod instead of
-				// returning the SPA index.html (which causes MIME type mismatch).
-				if s.ocWebProxy != nil && path.Ext(upath) != "" {
-					s.ocWebProxy.ServeHTTP(w, r)
-					return
-				}
 				// SPA fallback: serve index.html for client-side routes.
 				r.URL.Path = "/"
 			}
@@ -276,6 +264,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Name:     "cli-server-token",
 		Value:    "",
 		Path:     "/",
+		Domain:   auth.CookieDomain,
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -310,13 +299,17 @@ type sessionResponse struct {
 	PausedAt       *string `json:"pausedAt"`
 }
 
-func toSessionResponse(sess *session.Session) sessionResponse {
+func (s *Server) toSessionResponse(sess *session.Session) sessionResponse {
+	var opencodeURL string
+	if s.BaseDomain != "" {
+		opencodeURL = s.BaseScheme + "://oc-" + sess.ID + "." + s.BaseDomain + "/"
+	}
 	resp := sessionResponse{
 		ID:          sess.ID,
 		Name:        sess.Name,
 		Status:      sess.Status,
 		SandboxName: sess.SandboxName,
-		OpencodeURL: "/oc/" + sess.ID + "/",
+		OpencodeURL: opencodeURL,
 		CreatedAt:   sess.CreatedAt.Format(time.RFC3339),
 	}
 	if sess.LastActivityAt != nil {
@@ -335,7 +328,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	sessions := s.Sessions.List(userID)
 	resp := make([]sessionResponse, len(sessions))
 	for i, sess := range sessions {
-		resp[i] = toSessionResponse(sess)
+		resp[i] = s.toSessionResponse(sess)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -350,7 +343,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toSessionResponse(sess))
+	json.NewEncoder(w).Encode(s.toSessionResponse(sess))
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -419,7 +412,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(toSessionResponse(sess))
+	json.NewEncoder(w).Encode(s.toSessionResponse(sess))
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {

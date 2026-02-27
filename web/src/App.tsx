@@ -75,7 +75,7 @@ export default function App() {
     )
   } else if (activeSession && activeSessionData) {
     const isRunning = activeSessionData.status === 'running'
-    const opencodeUrl = activeSessionData.opencodeUrl || `/oc/${activeSession}/`
+    const opencodeUrl = activeSessionData.opencodeUrl
     mainContent = (
       <div className="flex flex-col items-center gap-6 w-full max-w-md px-6">
         <div className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] p-6">
@@ -112,7 +112,7 @@ export default function App() {
             )}
           </div>
         </div>
-        {isRunning ? (
+        {isRunning && opencodeUrl ? (
           <a
             href={opencodeUrl}
             target="_blank"
@@ -124,7 +124,7 @@ export default function App() {
           </a>
         ) : (
           <span className="text-sm text-[var(--muted-foreground)]">
-            Session must be running to open OpenCode
+            {isRunning ? 'OpenCode URL not configured' : 'Session must be running to open OpenCode'}
           </span>
         )}
       </div>

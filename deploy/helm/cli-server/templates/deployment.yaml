@@ -58,9 +58,11 @@ spec:
                   key: anthropic-auth-token
             - name: AGENT_IMAGE
               value: {{ .Values.opencode.image | default .Values.agent.image | quote }}
-            {{- if .Values.opencode.web.enabled }}
-            - name: OPENCODE_WEB_URL
-              value: "http://opencode-web:4096"
+            {{- if .Values.baseDomain }}
+            - name: BASE_DOMAIN
+              value: {{ .Values.baseDomain | quote }}
+            - name: BASE_SCHEME
+              value: {{ .Values.baseScheme | default "https" | quote }}
             {{- end }}
             - name: SIDECAR_URL
               value: "http://localhost:8081"

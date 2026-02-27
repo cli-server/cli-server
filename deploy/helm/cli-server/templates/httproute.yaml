@@ -8,6 +8,9 @@ spec:
     {{- toYaml .Values.gateway.parentRefs | nindent 4 }}
   hostnames:
     - {{ .Values.gateway.host | quote }}
+    {{- if .Values.baseDomain }}
+    - {{ printf "*.%s" .Values.baseDomain | quote }}
+    {{- end }}
   rules:
     - matches:
         - path:

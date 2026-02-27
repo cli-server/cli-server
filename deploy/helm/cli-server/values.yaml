@@ -41,12 +41,13 @@ agent:
   runtimeClassName: ""  # e.g. "gvisor" to enable gVisor sandbox isolation
 
 opencode:
-  # Image for the opencode agent (used by both workspace sandbox pods and the shared opencode-web pod).
+  # Image for the opencode agent (used by workspace sandbox pods).
   image: ghcr.io/cli-server/opencode-agent:latest
-  # Deploy a shared opencode-web pod for serving static assets (HTML/JS/CSS).
-  web:
-    enabled: true
-    replicas: 1
+
+# Base domain for subdomain-based opencode routing (e.g. "cli.cs.ac.cn").
+# Each session gets a subdomain: oc-{sessionID}.{baseDomain}
+baseDomain: ""
+baseScheme: "https"
 
 # Resource limits for workspace pods running opencode serve.
 workspace:
