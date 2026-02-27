@@ -138,7 +138,7 @@ func (m *Manager) Start(id, command string, args, env []string, opts process.Sta
 	// instead of the real Anthropic API key.
 	proxyBaseURL := os.Getenv("ANTHROPIC_PROXY_URL")
 	if proxyBaseURL == "" {
-		proxyBaseURL = "http://cli-server." + m.cfg.Namespace + ".svc.cluster.local:8080/proxy/anthropic"
+		proxyBaseURL = "http://cli-server." + m.cfg.Namespace + ".svc.cluster.local:8080/proxy/anthropic/v1"
 	}
 	if opts.ProxyToken != "" {
 		containerEnv = append(containerEnv,
@@ -300,7 +300,7 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 	// instead of the real Anthropic API key.
 	proxyBaseURL := os.Getenv("ANTHROPIC_PROXY_URL")
 	if proxyBaseURL == "" {
-		proxyBaseURL = "http://cli-server." + m.cfg.Namespace + ".svc.cluster.local:8080/proxy/anthropic"
+		proxyBaseURL = "http://cli-server." + m.cfg.Namespace + ".svc.cluster.local:8080/proxy/anthropic/v1"
 	}
 	if opts.ProxyToken != "" {
 		containerEnv = append(containerEnv,

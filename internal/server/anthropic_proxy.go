@@ -46,9 +46,10 @@ func (s *Server) handleAnthropicProxy(w http.ResponseWriter, r *http.Request) {
 		baseURL = "https://api.anthropic.com"
 	}
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		log.Printf("anthropic proxy: ANTHROPIC_API_KEY not configured")
-		http.Error(w, "API key not configured", http.StatusInternalServerError)
+	authToken := os.Getenv("ANTHROPIC_AUTH_TOKEN")
+	if apiKey == "" && authToken == "" {
+		log.Printf("anthropic proxy: neither ANTHROPIC_API_KEY nor ANTHROPIC_AUTH_TOKEN configured")
+		http.Error(w, "API credentials not configured", http.StatusInternalServerError)
 		return
 	}
 
@@ -76,8 +77,13 @@ func (s *Server) handleAnthropicProxy(w http.ResponseWriter, r *http.Request) {
 			req.URL.RawQuery = r.URL.RawQuery
 			req.Host = target.Host
 
-			// Replace the proxy token with the real API key.
-			req.Header.Set("x-api-key", apiKey)
+			// Inject real credentials for the upstream API.
+			if apiKey != "" {
+				req.Header.Set("x-api-key", apiKey)
+			}
+			if authToken != "" {
+				req.Header.Set("Authorization", "Bearer "+authToken)
+			}
 
 			// Ensure anthropic-version header is set.
 			if req.Header.Get("anthropic-version") == "" {
