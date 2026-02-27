@@ -128,6 +128,9 @@ func (s *Server) Router() http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	// Anthropic API proxy for sandboxes (auth via proxy token in x-api-key header).
+	r.HandleFunc("/proxy/anthropic/*", s.handleAnthropicProxy)
+
 	// Auth endpoints (no auth required)
 	r.Post("/api/auth/login", s.handleLogin)
 	r.Post("/api/auth/register", s.handleRegister)
@@ -374,8 +377,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	// Generate random password for opencode server auth.
 	opencodePassword := generatePassword()
+	// Generate random token for Anthropic API proxy auth.
+	proxyToken := generatePassword()
 
-	sess, err := s.Sessions.Create(id, userID, req.Name, sandboxName, opencodePassword)
+	sess, err := s.Sessions.Create(id, userID, req.Name, sandboxName, opencodePassword, proxyToken)
 	if err != nil {
 		log.Printf("failed to create session: %v", err)
 		http.Error(w, "failed to create session", http.StatusInternalServerError)
@@ -393,6 +398,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			podIP, err = sc.StartContainerWithIP(id, process.StartOptions{
 				UserDrivePVC:     userDrivePVC,
 				OpencodePassword: opencodePassword,
+				ProxyToken:       proxyToken,
 			})
 			if err != nil {
 				log.Printf("failed to start container for session %s: %v", id, err)
@@ -400,7 +406,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			if err := s.ProcessManager.StartContainer(id, process.StartOptions{UserDrivePVC: userDrivePVC}); err != nil {
+			if err := s.ProcessManager.StartContainer(id, process.StartOptions{
+				UserDrivePVC:     userDrivePVC,
+				OpencodePassword: opencodePassword,
+				ProxyToken:       proxyToken,
+			}); err != nil {
 				log.Printf("failed to start container for session %s: %v", id, err)
 				s.Sessions.Delete(id)
 				return

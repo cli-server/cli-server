@@ -133,10 +133,18 @@ func (m *Manager) Start(id, command string, args, env []string, opts process.Sta
 
 	// Build environment variables for the sandbox pod.
 	containerEnv := []corev1.EnvVar{{Name: "TERM", Value: "xterm-256color"}}
-	for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"} {
-		if v := os.Getenv(key); v != "" {
-			containerEnv = append(containerEnv, corev1.EnvVar{Name: key, Value: v})
-		}
+
+	// Inject proxy URL and token so the sandbox uses the cli-server proxy
+	// instead of the real Anthropic API key.
+	proxyBaseURL := os.Getenv("ANTHROPIC_PROXY_URL")
+	if proxyBaseURL == "" {
+		proxyBaseURL = "http://cli-server." + m.cfg.Namespace + ".svc.cluster.local:8080/proxy/anthropic"
+	}
+	if opts.ProxyToken != "" {
+		containerEnv = append(containerEnv,
+			corev1.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: proxyBaseURL},
+			corev1.EnvVar{Name: "ANTHROPIC_API_KEY", Value: opts.ProxyToken},
+		)
 	}
 
 	// Volume mounts for the main container.
@@ -287,10 +295,18 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 
 	// Build environment variables for the sandbox pod.
 	containerEnv := []corev1.EnvVar{{Name: "TERM", Value: "xterm-256color"}}
-	for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"} {
-		if v := os.Getenv(key); v != "" {
-			containerEnv = append(containerEnv, corev1.EnvVar{Name: key, Value: v})
-		}
+
+	// Inject proxy URL and token so the sandbox uses the cli-server proxy
+	// instead of the real Anthropic API key.
+	proxyBaseURL := os.Getenv("ANTHROPIC_PROXY_URL")
+	if proxyBaseURL == "" {
+		proxyBaseURL = "http://cli-server." + m.cfg.Namespace + ".svc.cluster.local:8080/proxy/anthropic"
+	}
+	if opts.ProxyToken != "" {
+		containerEnv = append(containerEnv,
+			corev1.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: proxyBaseURL},
+			corev1.EnvVar{Name: "ANTHROPIC_API_KEY", Value: opts.ProxyToken},
+		)
 	}
 
 	// Set opencode server password for per-session auth.

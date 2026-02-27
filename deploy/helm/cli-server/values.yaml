@@ -28,6 +28,9 @@ idleTimeout: "30m"
 anthropicApiKey: ""
 anthropicBaseUrl: ""
 anthropicAuthToken: ""
+# URL that sandbox pods use to reach the Anthropic API proxy on cli-server.
+# If empty, defaults to http://cli-server.<namespace>.svc.cluster.local:8080/proxy/anthropic
+anthropicProxyUrl: ""
 
 # Session backend: "docker" or "k8s"
 backend: "docker"

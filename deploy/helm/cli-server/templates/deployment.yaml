@@ -56,6 +56,10 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secret
                   key: anthropic-auth-token
+            {{- if .Values.anthropicProxyUrl }}
+            - name: ANTHROPIC_PROXY_URL
+              value: {{ .Values.anthropicProxyUrl | quote }}
+            {{- end }}
             - name: AGENT_IMAGE
               value: {{ .Values.opencode.image | default .Values.agent.image | quote }}
             {{- if .Values.baseDomain }}

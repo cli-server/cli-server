@@ -12,6 +12,7 @@ type Process interface {
 type StartOptions struct {
 	UserDrivePVC     string // pre-existing PVC name for user drive mount
 	OpencodePassword string // per-session password for opencode server auth
+	ProxyToken       string // per-session token for Anthropic API proxy auth
 }
 
 // Manager manages process lifecycles.
