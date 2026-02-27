@@ -5,14 +5,7 @@ image:
   tag: latest
   pullPolicy: Always
 
-sidecar:
-  image: ghcr.io/cli-server/sidecar-ts:latest
-  pullPolicy: Always
-
 imagePullSecrets: []
-
-redis:
-  url: "redis://redis:6379"
 
 database:
   url: "postgres://user:pass@postgres:5432/cliserver?sslmode=disable"

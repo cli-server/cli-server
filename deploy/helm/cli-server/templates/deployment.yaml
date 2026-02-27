@@ -68,10 +68,6 @@ spec:
             - name: BASE_SCHEME
               value: {{ .Values.baseScheme | default "https" | quote }}
             {{- end }}
-            - name: SIDECAR_URL
-              value: "http://localhost:8081"
-            - name: REDIS_URL
-              value: {{ .Values.redis.url | quote }}
             - name: SESSION_STORAGE_SIZE
               value: {{ .Values.persistence.sessionStorageSize | quote }}
             - name: USER_DRIVE_SIZE
@@ -145,44 +141,6 @@ spec:
             httpGet:
               path: /healthz
               port: 8080
-            initialDelaySeconds: 3
-            periodSeconds: 5
-        - name: sidecar
-          image: "{{ .Values.sidecar.image }}"
-          imagePullPolicy: {{ .Values.sidecar.pullPolicy }}
-          ports:
-            - containerPort: 8081
-              protocol: TCP
-          env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-secret
-                  key: database-url
-            - name: REDIS_URL
-              value: {{ .Values.redis.url | quote }}
-            - name: ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-secret
-                  key: anthropic-api-key
-            - name: ANTHROPIC_BASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-secret
-                  key: anthropic-base-url
-            - name: SANDBOX_BACKEND
-              value: {{ .Values.backend | quote }}
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8081
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8081
             initialDelaySeconds: 3
             periodSeconds: 5
       {{- if eq .Values.backend "docker" }}

@@ -10,28 +10,6 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-
-  sidecar:
-    build:
-      context: ./sidecar
-    ports:
-      - "8081:8081"
-    environment:
-      DATABASE_URL: "postgresql+asyncpg://cliserver:cliserver@postgres:5432/cliserver"
-      REDIS_URL: "redis://redis:6379"
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
-      ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
-      AGENT_IMAGE: "${AGENT_IMAGE:-cli-server-agent:latest}"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      - postgres
-      - redis
-
   server:
     build:
       context: .
@@ -39,7 +17,6 @@ services:
       - "8080:8080"
     environment:
       DATABASE_URL: "postgres://cliserver:cliserver@postgres:5432/cliserver?sslmode=disable"
-      SIDECAR_URL: "http://sidecar:8081"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
       AGENT_IMAGE: "${AGENT_IMAGE:-cli-server-agent:latest}"
@@ -47,8 +24,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - postgres
-      - redis
-      - sidecar
 
 volumes:
   pgdata:

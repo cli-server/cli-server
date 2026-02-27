@@ -7,8 +7,6 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -34,7 +32,6 @@ type Server struct {
 	DriveManager   storage.DriveManager
 	WSHandler      *ws.Handler
 	StaticFS       fs.FS
-	SidecarProxy   *httputil.ReverseProxy
 	BaseDomain     string // e.g. "cli.cs.ac.cn" — used for subdomain routing
 	BaseScheme     string // e.g. "https" — scheme for generated URLs
 	// activityThrottle prevents excessive DB writes for activity tracking.
@@ -43,15 +40,6 @@ type Server struct {
 }
 
 func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sessionStore *session.Store, processManager process.Manager, driveManager storage.DriveManager, staticFS fs.FS) *Server {
-	sidecarURL := os.Getenv("SIDECAR_URL")
-	if sidecarURL == "" {
-		sidecarURL = "http://localhost:8081"
-	}
-	target, _ := url.Parse(sidecarURL)
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	// Allow SSE streaming: disable response buffering.
-	proxy.FlushInterval = -1
-
 	baseDomain := os.Getenv("BASE_DOMAIN")
 	baseScheme := os.Getenv("BASE_SCHEME")
 	if baseScheme == "" {
@@ -66,7 +54,6 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sessionStore 
 		ProcessManager: processManager,
 		DriveManager:   driveManager,
 		StaticFS:       staticFS,
-		SidecarProxy:   proxy,
 		BaseDomain:     baseDomain,
 		BaseScheme:     baseScheme,
 		activityLast:   make(map[string]time.Time),
@@ -160,14 +147,6 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/api/sessions/{id}", s.handleDeleteSession)
 		r.Post("/api/sessions/{id}/pause", s.handlePauseSession)
 		r.Post("/api/sessions/{id}/resume", s.handleResumeSession)
-
-		// Messages endpoint (reads from shared DB)
-		r.Get("/api/sessions/{id}/messages", s.handleListMessages)
-
-		// Chat proxy to Python sidecar
-		r.Post("/api/sessions/{id}/chat", s.handleChatProxy)
-		r.Get("/api/sessions/{id}/stream", s.handleStreamProxy)
-		r.Delete("/api/sessions/{id}/stream", s.handleStreamDeleteProxy)
 	})
 
 	// WebSocket (auth checked inside)
@@ -571,64 +550,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.WSHandler.ServeHTTP(w, r, id)
-}
-
-func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
-	userID := auth.UserIDFromContext(r.Context())
-	id := chi.URLParam(r, "id")
-
-	sess, ok := s.Sessions.Get(id)
-	if !ok || sess.UserID != userID {
-		http.Error(w, "session not found", http.StatusNotFound)
-		return
-	}
-
-	messages, err := s.DB.ListMessages(id)
-	if err != nil {
-		log.Printf("failed to list messages for session %s: %v", id, err)
-		http.Error(w, "failed to list messages", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(messages)
-}
-
-// proxySidecar forwards requests to the TypeScript sidecar, injecting session context.
-func (s *Server) proxySidecar(w http.ResponseWriter, r *http.Request, targetPath string) {
-	userID := auth.UserIDFromContext(r.Context())
-	id := chi.URLParam(r, "id")
-
-	sess, ok := s.Sessions.Get(id)
-	if !ok || sess.UserID != userID {
-		http.Error(w, "session not found", http.StatusNotFound)
-		return
-	}
-
-	r.URL.Path = targetPath
-	r.Header.Set("X-Session-ID", id)
-	r.Header.Set("X-User-ID", userID)
-	if sess.SandboxName != "" {
-		r.Header.Set("X-Sandbox-Name", sess.SandboxName)
-	}
-	if sess.PodIP != "" {
-		r.Header.Set("X-Pod-IP", sess.PodIP)
-	}
-
-	s.SidecarProxy.ServeHTTP(w, r)
-}
-
-func (s *Server) handleChatProxy(w http.ResponseWriter, r *http.Request) {
-	s.proxySidecar(w, r, "/chat")
-}
-
-func (s *Server) handleStreamProxy(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	s.proxySidecar(w, r, "/stream/"+id)
-}
-
-func (s *Server) handleStreamDeleteProxy(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	s.proxySidecar(w, r, "/stream/"+id)
 }
 
 func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
