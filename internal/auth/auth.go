@@ -16,11 +16,6 @@ const (
 	tokenTTL   = 7 * 24 * time.Hour
 )
 
-// CookieDomain is the domain attribute for auth cookies (e.g. ".cli.cs.ac.cn").
-// When set, cookies are shared across subdomains (e.g. oc-xxx.cli.cs.ac.cn).
-// Initialized by main from the BASE_DOMAIN environment variable.
-var CookieDomain string
-
 type contextKey string
 
 const userIDKey contextKey = "userID"
@@ -134,7 +129,6 @@ func SetTokenCookie(w http.ResponseWriter, token string) {
 		Name:     cookieName,
 		Value:    token,
 		Path:     "/",
-		Domain:   CookieDomain,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(tokenTTL.Seconds()),

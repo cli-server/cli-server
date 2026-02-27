@@ -58,11 +58,6 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sessionStore 
 		baseScheme = "https"
 	}
 
-	// Set auth cookie domain so cookies are shared across subdomains.
-	if baseDomain != "" {
-		auth.CookieDomain = "." + baseDomain
-	}
-
 	s := &Server{
 		Auth:           a,
 		OIDC:           oidcMgr,
@@ -264,7 +259,6 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Name:     "cli-server-token",
 		Value:    "",
 		Path:     "/",
-		Domain:   auth.CookieDomain,
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -299,10 +293,10 @@ type sessionResponse struct {
 	PausedAt       *string `json:"pausedAt"`
 }
 
-func (s *Server) toSessionResponse(sess *session.Session) sessionResponse {
+func (s *Server) toSessionResponse(sess *session.Session, authToken string) sessionResponse {
 	var opencodeURL string
 	if s.BaseDomain != "" {
-		opencodeURL = s.BaseScheme + "://oc-" + sess.ID + "." + s.BaseDomain + "/"
+		opencodeURL = s.BaseScheme + "://oc-" + sess.ID + "." + s.BaseDomain + "/auth?token=" + authToken
 	}
 	resp := sessionResponse{
 		ID:          sess.ID,
@@ -323,12 +317,22 @@ func (s *Server) toSessionResponse(sess *session.Session) sessionResponse {
 	return resp
 }
 
+// authTokenFromRequest extracts the raw auth token from the request cookie.
+func authTokenFromRequest(r *http.Request) string {
+	c, err := r.Cookie("cli-server-token")
+	if err != nil {
+		return ""
+	}
+	return c.Value
+}
+
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 	sessions := s.Sessions.List(userID)
+	token := authTokenFromRequest(r)
 	resp := make([]sessionResponse, len(sessions))
 	for i, sess := range sessions {
-		resp[i] = s.toSessionResponse(sess)
+		resp[i] = s.toSessionResponse(sess, token)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -343,7 +347,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.toSessionResponse(sess))
+	json.NewEncoder(w).Encode(s.toSessionResponse(sess, authTokenFromRequest(r)))
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -412,7 +416,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(s.toSessionResponse(sess))
+	json.NewEncoder(w).Encode(s.toSessionResponse(sess, authTokenFromRequest(r)))
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {

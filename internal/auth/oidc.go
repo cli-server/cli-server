@@ -84,7 +84,6 @@ func (m *OIDCManager) HandleLogin(w http.ResponseWriter, r *http.Request, provid
 		Name:     stateCookieName,
 		Value:    state,
 		Path:     "/",
-		Domain:   CookieDomain,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(stateCookieTTL.Seconds()),
@@ -117,7 +116,6 @@ func (m *OIDCManager) HandleCallback(w http.ResponseWriter, r *http.Request, pro
 		Name:     stateCookieName,
 		Value:    "",
 		Path:     "/",
-		Domain:   CookieDomain,
 		MaxAge:   -1,
 		HttpOnly: true,
 	})

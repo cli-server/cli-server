@@ -6,19 +6,63 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"time"
 )
 
-const opencodePort = "4096"
+const (
+	opencodePort       = "4096"
+	subdomainCookieKey = "oc-token"
+)
 
-// handleSubdomainProxy validates auth and session ownership, then reverse-proxies
-// the entire request to the session's pod. Used for subdomain-based opencode routing
-// (e.g. oc-{sessionID}.cli.cs.ac.cn → pod:4096).
+// handleSubdomainProxy handles all requests on oc-{sessionID}.{baseDomain}.
+//
+// Auth flow:
+//  1. GET /auth?token=xxx — validates the main-site token, sets a per-subdomain
+//     cookie, and redirects to /.
+//  2. All other requests — validated via the per-subdomain cookie, then proxied
+//     to the session pod.
 func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sessionID string) {
-	// Validate auth cookie.
-	userID, ok := s.Auth.ValidateRequest(r)
+	// Step 1: handle /auth?token=xxx — exchange main-site token for subdomain cookie.
+	if r.URL.Path == "/auth" {
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			http.Error(w, "missing token", http.StatusBadRequest)
+			return
+		}
+		userID, ok := s.Auth.ValidateToken(token)
+		if !ok {
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
+		// Verify session ownership.
+		sess, found := s.Sessions.Get(sessionID)
+		if !found || sess.UserID != userID {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		// Set a per-subdomain auth cookie (no Domain attr — scoped to this subdomain only).
+		http.SetCookie(w, &http.Cookie{
+			Name:     subdomainCookieKey,
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int((7 * 24 * time.Hour).Seconds()),
+		})
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+
+	// Step 2: validate per-subdomain cookie for all other requests.
+	cookie, err := r.Cookie(subdomainCookieKey)
+	if err != nil {
+		// No subdomain cookie — redirect to main site login.
+		loginURL := s.BaseScheme + "://" + s.BaseDomain + "/"
+		http.Redirect(w, r, loginURL, http.StatusFound)
+		return
+	}
+	userID, ok := s.Auth.ValidateToken(cookie.Value)
 	if !ok {
-		// Redirect to main site login page; after re-login the cookie will have
-		// the correct Domain attribute and work across subdomains.
 		loginURL := s.BaseScheme + "://" + s.BaseDomain + "/"
 		http.Redirect(w, r, loginURL, http.StatusFound)
 		return
