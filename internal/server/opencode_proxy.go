@@ -17,13 +17,22 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, se
 	// Validate auth cookie.
 	userID, ok := s.Auth.ValidateRequest(r)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		// Redirect to main site login page; after re-login the cookie will have
+		// the correct Domain attribute and work across subdomains.
+		loginURL := s.BaseScheme + "://" + s.BaseDomain + "/"
+		http.Redirect(w, r, loginURL, http.StatusFound)
 		return
 	}
 
 	// Validate session ownership.
 	sess, found := s.Sessions.Get(sessionID)
-	if !found || sess.UserID != userID {
+	if !found {
+		log.Printf("subdomain proxy: session %s not found in store", sessionID)
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if sess.UserID != userID {
+		log.Printf("subdomain proxy: session %s owned by %s, but request from %s", sessionID, sess.UserID, userID)
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
