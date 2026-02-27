@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Trash2, Pause, Play, Loader2, LogOut, ExternalLink } from 'lucide-react'
+import { Plus, Trash2, Pause, Play, Loader2, LogOut } from 'lucide-react'
 import {
   type Session,
   createSession,
@@ -176,25 +176,13 @@ export function SessionList({ sessions, setSessions, activeId, onSelect, onRefre
             <span className="flex-1 truncate">{sess.name}</span>
             <div className="hidden gap-0.5 group-hover:flex">
               {sess.status === 'running' && (
-                <>
-                  <a
-                    href={sess.opencodeUrl || `/oc/${sess.id}/`}
-                    onClick={(e) => e.stopPropagation()}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded p-1 hover:bg-[var(--muted-foreground)]/20"
-                    title="Open in OpenCode"
-                  >
-                    <ExternalLink size={12} />
-                  </a>
-                  <button
-                    onClick={(e) => handlePause(sess.id, e)}
-                    className="rounded p-1 hover:bg-[var(--muted-foreground)]/20"
-                    title="Pause session"
-                  >
-                    <Pause size={12} />
-                  </button>
-                </>
+                <button
+                  onClick={(e) => handlePause(sess.id, e)}
+                  className="rounded p-1 hover:bg-[var(--muted-foreground)]/20"
+                  title="Pause session"
+                >
+                  <Pause size={12} />
+                </button>
               )}
               {sess.status === 'paused' && (
                 <button
