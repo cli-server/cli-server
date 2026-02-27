@@ -223,11 +223,12 @@ chown -R 1000:1000 /mnt/user-drive
 				Spec: corev1.PodSpec{
 					InitContainers: initContainers,
 					Containers: []corev1.Container{{
-						Name:         sandboxContainerName,
-						Image:        m.cfg.Image,
-						Command:      []string{"sleep", "infinity"},
-						Env:          containerEnv,
-						VolumeMounts: volumeMounts,
+						Name:            sandboxContainerName,
+						Image:           m.cfg.Image,
+						Command:         []string{"sleep", "infinity"},
+						Env:             containerEnv,
+						VolumeMounts:    volumeMounts,
+						ImagePullPolicy: corev1.PullAlways,
 						Resources: corev1.ResourceRequirements{
 							Limits: corev1.ResourceList{
 								corev1.ResourceMemory: resource.MustParse(m.cfg.MemoryLimit),
@@ -368,10 +369,11 @@ chown -R 1000:1000 /mnt/user-drive
 				Spec: corev1.PodSpec{
 					InitContainers: initContainers,
 					Containers: []corev1.Container{{
-						Name:         sandboxContainerName,
-						Image:        m.cfg.Image,
-						Env:          containerEnv,
-						VolumeMounts: volumeMounts,
+						Name:            sandboxContainerName,
+						Image:           m.cfg.Image,
+						Env:             containerEnv,
+						VolumeMounts:    volumeMounts,
+						ImagePullPolicy: corev1.PullAlways,
 						Resources: corev1.ResourceRequirements{
 							Limits: corev1.ResourceList{
 								corev1.ResourceMemory: resource.MustParse(m.cfg.MemoryLimit),
