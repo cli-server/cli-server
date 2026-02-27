@@ -1,4 +1,4 @@
-import { query, type Message } from "@anthropic-ai/claude-code-sdk";
+import { query, type Message } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentEvent, ToolPayload, QueryRequest } from "./types.js";
 
 const MAX_DESC_LEN = 60;

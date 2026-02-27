@@ -1,4 +1,4 @@
-import type Redis from "ioredis";
+import type { RedisClient } from "../redis.js";
 
 import { createMessage, getEventsAfter, getPodIp } from "../db/messages.js";
 import { REDIS_CHANNEL_PREFIX, createRedis } from "../redis.js";
@@ -7,10 +7,10 @@ import { ChatStreamRuntime } from "./stream-runtime.js";
 import type { ChatStreamRequest } from "./types.js";
 
 export class ChatService {
-  private redis: Redis;
+  private redis: RedisClient;
   private runtime: ChatStreamRuntime;
 
-  constructor(redis: Redis, runtime: ChatStreamRuntime) {
+  constructor(redis: RedisClient, runtime: ChatStreamRuntime) {
     this.redis = redis;
     this.runtime = runtime;
   }

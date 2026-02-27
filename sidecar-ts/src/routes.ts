@@ -45,7 +45,7 @@ export function createRoutes(chatService: ChatService): Router {
   });
 
   router.get("/stream/:sessionId", async (req: Request, res: Response) => {
-    const { sessionId } = req.params;
+    const sessionId = req.params.sessionId as string;
     const afterSeq = parseInt(req.query.after_seq as string, 10) || 0;
 
     res.setHeader("Content-Type", "text/event-stream");
@@ -71,7 +71,7 @@ export function createRoutes(chatService: ChatService): Router {
   });
 
   router.delete("/stream/:sessionId", async (req: Request, res: Response) => {
-    const { sessionId } = req.params;
+    const sessionId = req.params.sessionId as string;
     try {
       await chatService.stopStream(sessionId);
       res.status(204).end();

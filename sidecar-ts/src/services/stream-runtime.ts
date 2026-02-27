@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type Redis from "ioredis";
+import type { RedisClient } from "../redis.js";
 
 import {
   appendEvent,
@@ -41,10 +41,10 @@ interface StreamContext {
 }
 
 export class ChatStreamRuntime {
-  private redis: Redis;
+  private redis: RedisClient;
   private activeTasks = new Set<string>();
 
-  constructor(redis: Redis) {
+  constructor(redis: RedisClient) {
     this.redis = redis;
   }
 
