@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path"
 	"sync"
 	"time"
 
@@ -182,11 +183,20 @@ func (s *Server) Router() http.Handler {
 	if s.StaticFS != nil {
 		fileServer := http.FileServer(http.FS(s.StaticFS))
 		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
-			path := r.URL.Path
-			if path == "/" {
-				path = "/index.html"
+			upath := r.URL.Path
+			if upath == "/" {
+				upath = "/index.html"
 			}
-			if _, err := fs.Stat(s.StaticFS, path[1:]); err != nil {
+			if _, err := fs.Stat(s.StaticFS, upath[1:]); err != nil {
+				// File not in cli-server's static assets.
+				// If it looks like a static file (has extension) and opencode-web
+				// proxy is configured, proxy to opencode-web pod instead of
+				// returning the SPA index.html (which causes MIME type mismatch).
+				if s.ocWebProxy != nil && path.Ext(upath) != "" {
+					s.ocWebProxy.ServeHTTP(w, r)
+					return
+				}
+				// SPA fallback: serve index.html for client-side routes.
 				r.URL.Path = "/"
 			}
 			fileServer.ServeHTTP(w, r)
