@@ -148,8 +148,9 @@ jobs:
 
       - name: Download opencode binary
         run: |
-          OPENCODE_VERSION="latest"
-          curl -fsSL -o opencode "https://github.com/nicepkg/opencode/releases/${OPENCODE_VERSION}/download/opencode-linux-x64-musl"
+          TAG=$(curl -fsSL https://api.github.com/repos/opencode-ai/opencode/releases/latest | jq -r .tag_name)
+          curl -fsSL -o opencode.tar.gz "https://github.com/opencode-ai/opencode/releases/download/${TAG}/opencode-linux-x86_64.tar.gz"
+          tar xzf opencode.tar.gz
           chmod +x opencode
 
       - uses: docker/setup-buildx-action@v3

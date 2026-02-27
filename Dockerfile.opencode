@@ -1,13 +1,15 @@
-FROM alpine:latest
+FROM debian:trixie-slim
 
 ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
 
-RUN apk add --no-cache libgcc libstdc++ ripgrep git
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ripgrep git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY opencode /usr/local/bin/opencode
 
-RUN adduser -D -h /home/agent agent
+RUN useradd -m -d /home/agent agent
 USER agent
 WORKDIR /home/agent
 
