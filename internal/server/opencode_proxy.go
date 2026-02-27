@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/base64"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -53,8 +54,17 @@ func (s *Server) handleOpencodeEntry(w http.ResponseWriter, r *http.Request) {
 	s.ocWebProxy.ServeHTTP(w, r)
 }
 
-// handleOpencodeAssets proxies static asset requests (/assets/*) to the opencode-web pod.
+// handleOpencodeAssets serves static asset requests (/assets/*).
+// It first checks the embedded cli-server frontend assets; if the file exists
+// there it is served directly. Otherwise the request is proxied to the opencode-web pod.
 func (s *Server) handleOpencodeAssets(w http.ResponseWriter, r *http.Request) {
+	if s.StaticFS != nil {
+		// Strip the leading slash to get the fs path (e.g. "assets/index-xxx.js").
+		if _, err := fs.Stat(s.StaticFS, r.URL.Path[1:]); err == nil {
+			http.FileServer(http.FS(s.StaticFS)).ServeHTTP(w, r)
+			return
+		}
+	}
 	s.ocWebProxy.ServeHTTP(w, r)
 }
 
