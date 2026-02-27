@@ -97,9 +97,9 @@ spec:
             - name: IMAGE_PULL_SECRET
               value: {{ (index .Values.imagePullSecrets 0).name | quote }}
             {{- end }}
-            {{- if .Values.agent.runtimeClassName }}
+            {{- if or .Values.opencode.runtimeClassName .Values.agent.runtimeClassName }}
             - name: RUNTIME_CLASS
-              value: {{ .Values.agent.runtimeClassName | quote }}
+              value: {{ .Values.opencode.runtimeClassName | default .Values.agent.runtimeClassName | quote }}
             {{- end }}
             {{- end }}
             {{- if .Values.oidc.redirectBaseUrl }}

@@ -39,6 +39,8 @@ agent:
 opencode:
   # Image for the opencode agent (used by workspace sandbox pods).
   image: ghcr.io/cli-server/opencode-agent:latest
+  # RuntimeClass for sandbox pods (e.g. "gvisor" for gVisor isolation).
+  runtimeClassName: ""
 
 # Base domain for subdomain-based opencode routing (e.g. "cli.cs.ac.cn").
 # Each session gets a subdomain: oc-{sessionID}.{baseDomain}
