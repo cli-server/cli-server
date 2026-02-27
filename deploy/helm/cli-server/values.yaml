@@ -41,12 +41,22 @@ agent:
   runtimeClassName: ""  # e.g. "gvisor" to enable gVisor sandbox isolation
 
 opencode:
-  # Image for the opencode agent (used by both session pods and the shared opencode-web pod).
+  # Image for the opencode agent (used by both workspace sandbox pods and the shared opencode-web pod).
   image: ghcr.io/cli-server/opencode-agent:latest
   # Deploy a shared opencode-web pod for serving static assets (HTML/JS/CSS).
   web:
     enabled: true
     replicas: 1
+
+# Resource limits for workspace pods running opencode serve.
+workspace:
+  resources:
+    limits:
+      memory: "1Gi"
+      cpu: "1"
+    requests:
+      memory: "512Mi"
+      cpu: "100m"
 
 docker:
   socketPath: /var/run/docker.sock
