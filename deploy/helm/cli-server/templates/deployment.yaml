@@ -58,6 +58,10 @@ spec:
                   key: anthropic-auth-token
             - name: AGENT_IMAGE
               value: {{ .Values.agent.image | quote }}
+            {{- if .Values.opencode.web.enabled }}
+            - name: OPENCODE_WEB_URL
+              value: "http://opencode-web:4096"
+            {{- end }}
             - name: SIDECAR_URL
               value: "http://localhost:8081"
             - name: REDIS_URL

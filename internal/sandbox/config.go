@@ -12,6 +12,7 @@ type Config struct {
 	SessionStorageSize string
 	StorageClassName   string
 	RuntimeClassName   string
+	OpencodePort       int
 }
 
 // DefaultConfig returns a Config populated from environment variables with sensible defaults.
@@ -25,6 +26,7 @@ func DefaultConfig() Config {
 		SessionStorageSize: envOrDefault("SESSION_STORAGE_SIZE", "5Gi"),
 		StorageClassName:   os.Getenv("STORAGE_CLASS"),
 		RuntimeClassName:   os.Getenv("RUNTIME_CLASS"),
+		OpencodePort:       4096,
 	}
 }
 

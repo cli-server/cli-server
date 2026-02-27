@@ -40,6 +40,14 @@ agent:
   networkMode: "bridge"
   runtimeClassName: ""  # e.g. "gvisor" to enable gVisor sandbox isolation
 
+opencode:
+  # Image for the opencode agent (used by both session pods and the shared opencode-web pod).
+  image: ghcr.io/cli-server/opencode-agent:latest
+  # Deploy a shared opencode-web pod for serving static assets (HTML/JS/CSS).
+  web:
+    enabled: true
+    replicas: 1
+
 docker:
   socketPath: /var/run/docker.sock
 

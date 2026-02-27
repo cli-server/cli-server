@@ -293,6 +293,11 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 		}
 	}
 
+	// Set opencode server password for per-session auth.
+	if opts.OpencodePassword != "" {
+		containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", Value: opts.OpencodePassword})
+	}
+
 	// Volume mounts for the main container.
 	volumeMounts := []corev1.VolumeMount{
 		{Name: "session-data", MountPath: "/home/agent"},
@@ -357,6 +362,12 @@ chown -R 1000:1000 /mnt/user-drive
 		vcts[0].Spec.StorageClassName = &m.cfg.StorageClassName
 	}
 
+	// Use opencode serve as entrypoint: container runs opencode serve on port 4096.
+	opencodePort := m.cfg.OpencodePort
+	if opencodePort == 0 {
+		opencodePort = 4096
+	}
+
 	sb := &sandboxv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxName,
@@ -374,6 +385,10 @@ chown -R 1000:1000 /mnt/user-drive
 						Env:             containerEnv,
 						VolumeMounts:    volumeMounts,
 						ImagePullPolicy: corev1.PullAlways,
+						Ports: []corev1.ContainerPort{{
+							ContainerPort: int32(opencodePort),
+							Protocol:      corev1.ProtocolTCP,
+						}},
 						Resources: corev1.ResourceRequirements{
 							Limits: corev1.ResourceList{
 								corev1.ResourceMemory: resource.MustParse(m.cfg.MemoryLimit),

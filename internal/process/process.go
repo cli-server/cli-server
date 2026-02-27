@@ -10,7 +10,8 @@ type Process interface {
 
 // StartOptions holds optional parameters for starting a process.
 type StartOptions struct {
-	UserDrivePVC string // pre-existing PVC name for user drive mount
+	UserDrivePVC     string // pre-existing PVC name for user drive mount
+	OpencodePassword string // per-session password for opencode server auth
 }
 
 // Manager manages process lifecycles.

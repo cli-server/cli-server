@@ -9,16 +9,17 @@ import (
 
 // Session represents a session with in-memory output buffer.
 type Session struct {
-	ID             string     `json:"id"`
-	UserID         string     `json:"userId"`
-	Name           string     `json:"name"`
-	Status         string     `json:"status"`
-	SandboxName    string     `json:"sandboxName,omitempty"`
-	PodIP          string     `json:"podIp,omitempty"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	LastActivityAt *time.Time `json:"lastActivityAt,omitempty"`
-	PausedAt       *time.Time `json:"pausedAt,omitempty"`
-	Output         *RingBuffer `json:"-"`
+	ID               string     `json:"id"`
+	UserID           string     `json:"userId"`
+	Name             string     `json:"name"`
+	Status           string     `json:"status"`
+	SandboxName      string     `json:"sandboxName,omitempty"`
+	PodIP            string     `json:"podIp,omitempty"`
+	OpencodePassword string     `json:"-"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	LastActivityAt   *time.Time `json:"lastActivityAt,omitempty"`
+	PausedAt         *time.Time `json:"pausedAt,omitempty"`
+	Output           *RingBuffer `json:"-"`
 }
 
 // Store manages sessions via PostgreSQL with in-memory ring buffers for active sessions.
@@ -36,20 +37,21 @@ func NewStore(database *db.DB) *Store {
 }
 
 // Create inserts a new session into the DB with 'creating' status (no buffer yet).
-func (s *Store) Create(id, userID, name, sandboxName string) (*Session, error) {
-	if err := s.db.CreateSession(id, userID, name, sandboxName); err != nil {
+func (s *Store) Create(id, userID, name, sandboxName, opencodePassword string) (*Session, error) {
+	if err := s.db.CreateSession(id, userID, name, sandboxName, opencodePassword); err != nil {
 		return nil, err
 	}
 
 	now := time.Now()
 	return &Session{
-		ID:             id,
-		UserID:         userID,
-		Name:           name,
-		Status:         StatusCreating,
-		SandboxName:    sandboxName,
-		CreatedAt:      now,
-		LastActivityAt: &now,
+		ID:               id,
+		UserID:           userID,
+		Name:             name,
+		Status:           StatusCreating,
+		SandboxName:      sandboxName,
+		OpencodePassword: opencodePassword,
+		CreatedAt:        now,
+		LastActivityAt:   &now,
 	}, nil
 }
 
@@ -154,6 +156,9 @@ func dbSessionToSession(ds *db.Session) *Session {
 	}
 	if ds.PodIP.Valid {
 		sess.PodIP = ds.PodIP.String
+	}
+	if ds.OpencodePassword.Valid {
+		sess.OpencodePassword = ds.OpencodePassword.String
 	}
 	if ds.LastActivityAt.Valid {
 		t := ds.LastActivityAt.Time

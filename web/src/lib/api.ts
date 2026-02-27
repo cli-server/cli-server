@@ -4,6 +4,7 @@ export interface Session {
   id: string
   name: string
   status: SessionStatus
+  opencodeUrl?: string
   createdAt: string
   lastActivityAt: string | null
   pausedAt: string | null

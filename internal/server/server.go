@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"log"
@@ -32,6 +34,8 @@ type Server struct {
 	WSHandler      *ws.Handler
 	StaticFS       fs.FS
 	SidecarProxy   *httputil.ReverseProxy
+	OpencodeWebURL string                   // URL of the shared opencode-web pod (e.g. "http://opencode-web:4096")
+	ocWebProxy     *httputil.ReverseProxy   // reverse proxy to opencode-web pod
 	// activityThrottle prevents excessive DB writes for activity tracking.
 	activityMu     sync.Mutex
 	activityLast   map[string]time.Time
@@ -47,6 +51,8 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sessionStore 
 	// Allow SSE streaming: disable response buffering.
 	proxy.FlushInterval = -1
 
+	opencodeWebURL := os.Getenv("OPENCODE_WEB_URL")
+
 	s := &Server{
 		Auth:           a,
 		OIDC:           oidcMgr,
@@ -56,8 +62,15 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sessionStore 
 		DriveManager:   driveManager,
 		StaticFS:       staticFS,
 		SidecarProxy:   proxy,
+		OpencodeWebURL: opencodeWebURL,
 		activityLast:   make(map[string]time.Time),
 	}
+
+	// Initialize opencode-web reverse proxy if configured.
+	if opencodeWebURL != "" {
+		s.ocWebProxy = s.opencodeWebProxy()
+	}
+
 	s.WSHandler = &ws.Handler{
 		Sessions:       sessionStore,
 		ProcessManager: processManager,
@@ -131,6 +144,39 @@ func (s *Server) Router() http.Handler {
 
 	// WebSocket (auth checked inside)
 	r.Get("/ws/terminal/{id}", s.handleWebSocket)
+
+	// OpenCode routes (only when opencode-web pod is configured).
+	if s.ocWebProxy != nil {
+		// Entry point: sets session cookie and serves opencode UI.
+		r.Group(func(r chi.Router) {
+			r.Use(s.Auth.Middleware)
+			r.Get("/oc/{sessionID}", s.handleOpencodeEntry)
+			r.Get("/oc/{sessionID}/", s.handleOpencodeEntry)
+		})
+
+		// Static assets from opencode-web pod (shared, no auth needed for assets).
+		r.Get("/assets/*", s.handleOpencodeAssets)
+		r.Get("/favicon.ico", s.handleOpencodeFavicon)
+		r.Get("/favicon.svg", s.handleOpencodeFavicon)
+
+		// OpenCode API routes — proxied to per-session pod via cookie.
+		// These require auth + a valid X-OC-Session cookie.
+		r.Group(func(r chi.Router) {
+			r.Use(s.Auth.Middleware)
+			r.HandleFunc("/session", s.opencodeAPIProxy)
+			r.HandleFunc("/session/*", s.opencodeAPIProxy)
+			r.HandleFunc("/event", s.opencodeAPIProxy)
+			r.HandleFunc("/provider", s.opencodeAPIProxy)
+			r.HandleFunc("/provider/*", s.opencodeAPIProxy)
+			r.HandleFunc("/config", s.opencodeAPIProxy)
+			r.HandleFunc("/config/*", s.opencodeAPIProxy)
+			r.HandleFunc("/agent", s.opencodeAPIProxy)
+			r.HandleFunc("/skill", s.opencodeAPIProxy)
+			r.HandleFunc("/doc", s.opencodeAPIProxy)
+			r.HandleFunc("/path", s.opencodeAPIProxy)
+			r.HandleFunc("/vcs", s.opencodeAPIProxy)
+		})
+	}
 
 	// Static files
 	if s.StaticFS != nil {
@@ -248,6 +294,7 @@ type sessionResponse struct {
 	Name           string  `json:"name"`
 	Status         string  `json:"status"`
 	SandboxName    string  `json:"sandboxName,omitempty"`
+	OpencodeURL    string  `json:"opencodeUrl,omitempty"`
 	CreatedAt      string  `json:"createdAt"`
 	LastActivityAt *string `json:"lastActivityAt"`
 	PausedAt       *string `json:"pausedAt"`
@@ -259,6 +306,7 @@ func toSessionResponse(sess *session.Session) sessionResponse {
 		Name:        sess.Name,
 		Status:      sess.Status,
 		SandboxName: sess.SandboxName,
+		OpencodeURL: "/oc/" + sess.ID + "/",
 		CreatedAt:   sess.CreatedAt.Format(time.RFC3339),
 	}
 	if sess.LastActivityAt != nil {
@@ -317,7 +365,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	id := uuid.New().String()
 	sandboxName := "cli-session-" + shortID(id)
 
-	sess, err := s.Sessions.Create(id, userID, req.Name, sandboxName)
+	// Generate random password for opencode server auth.
+	opencodePassword := generatePassword()
+
+	sess, err := s.Sessions.Create(id, userID, req.Name, sandboxName, opencodePassword)
 	if err != nil {
 		log.Printf("failed to create session: %v", err)
 		http.Error(w, "failed to create session", http.StatusInternalServerError)
@@ -332,7 +383,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			StartContainerWithIP(string, process.StartOptions) (string, error)
 		}); ok {
 			var err error
-			podIP, err = sc.StartContainerWithIP(id, process.StartOptions{UserDrivePVC: userDrivePVC})
+			podIP, err = sc.StartContainerWithIP(id, process.StartOptions{
+				UserDrivePVC:     userDrivePVC,
+				OpencodePassword: opencodePassword,
+			})
 			if err != nil {
 				log.Printf("failed to start container for session %s: %v", id, err)
 				s.Sessions.Delete(id)
@@ -575,4 +629,14 @@ func shortID(id string) string {
 		return id[:8]
 	}
 	return id
+}
+
+// generatePassword creates a random 32-character hex password for opencode server auth.
+func generatePassword() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: use UUID if crypto/rand fails (should not happen).
+		return uuid.New().String()
+	}
+	return hex.EncodeToString(b)
 }

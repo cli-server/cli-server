@@ -1,0 +1,59 @@
+{{- if .Values.opencode.web.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencode-web
+  labels:
+    app: opencode-web
+spec:
+  replicas: {{ .Values.opencode.web.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: opencode-web
+  template:
+    metadata:
+      labels:
+        app: opencode-web
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: opencode
+          image: "{{ .Values.opencode.image }}"
+          ports:
+            - containerPort: 4096
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 4096
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 4096
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opencode-web
+spec:
+  selector:
+    app: opencode-web
+  ports:
+    - port: 4096
+      targetPort: 4096
+      protocol: TCP
+{{- end }}

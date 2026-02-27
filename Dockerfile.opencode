@@ -1,0 +1,16 @@
+FROM alpine:latest
+
+ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
+ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
+
+RUN apk add --no-cache libgcc libstdc++ ripgrep git
+
+COPY opencode /usr/local/bin/opencode
+
+RUN adduser -D -h /home/agent agent
+USER agent
+WORKDIR /home/agent
+
+EXPOSE 4096
+
+ENTRYPOINT ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096"]
