@@ -1,5 +1,7 @@
 .idea/
 bin/
-web/node_modules/
+node_modules/
 web/dist/
+sidecar-ts/dist/
+agent-server/dist/
 *.tgz

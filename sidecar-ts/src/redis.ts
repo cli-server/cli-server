@@ -1,7 +1,7 @@
-import Redis from "ioredis";
+import { Redis } from "ioredis";
 import { config } from "./config.js";
 
-export type RedisClient = InstanceType<typeof Redis>;
+export type RedisClient = Redis;
 
 export const REDIS_CHANNEL_PREFIX = "chat:stream:live:";
 

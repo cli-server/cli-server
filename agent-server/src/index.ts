@@ -50,8 +50,8 @@ app.post("/query", async (req, res) => {
  * POST /interrupt
  * Cancel current generation.
  */
-app.post("/interrupt", (_req, res) => {
-  const interrupted = interruptQuery();
+app.post("/interrupt", async (_req, res) => {
+  const interrupted = await interruptQuery();
   res.json({ interrupted });
 });
 

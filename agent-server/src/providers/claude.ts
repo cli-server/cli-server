@@ -1,4 +1,12 @@
-import { query, type Message } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type SDKMessage,
+  type SDKAssistantMessage,
+  type SDKUserMessage,
+  type SDKResultMessage,
+  type SDKSystemMessage,
+  type Query,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { AgentEvent, ToolPayload, QueryRequest } from "./types.js";
 
 const MAX_DESC_LEN = 60;
@@ -68,6 +76,7 @@ interface ActiveTool {
 /**
  * Active query handle, allowing interruption.
  */
+let activeQuery: Query | null = null;
 let activeAbortController: AbortController | null = null;
 
 /**
@@ -76,10 +85,6 @@ let activeAbortController: AbortController | null = null;
 export async function* runQuery(
   req: QueryRequest,
 ): AsyncGenerator<AgentEvent> {
-  const env: Record<string, string> = {};
-  if (process.env.ANTHROPIC_API_KEY) env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-  if (process.env.ANTHROPIC_BASE_URL) env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
-
   const abortController = new AbortController();
   activeAbortController = abortController;
 
@@ -91,15 +96,16 @@ export async function* runQuery(
     const conversation = query({
       prompt: req.prompt,
       options: {
+        abortController,
         allowedTools: ["*"],
         permissionMode: "bypassPermissions",
         cwd: "/home/agent",
         systemPrompt: "claude_code",
         model: process.env.MODEL || undefined,
+        ...(req.resume ? { resume: req.sessionId } : {}),
       },
-      ...(req.resume ? { resume: req.sessionId } : {}),
-      abortController,
     });
+    activeQuery = conversation;
 
     for await (const message of conversation) {
       if (abortController.signal.aborted) break;
@@ -108,14 +114,13 @@ export async function* runQuery(
 
       // Accumulate cost/usage from result messages
       if (message.type === "result") {
-        const resultMsg = message as Message & {
-          cost_usd?: number;
-          usage?: Record<string, unknown>;
-          costUSD?: number;
-        };
-        if (resultMsg.cost_usd != null) totalCostUsd += resultMsg.cost_usd;
-        if (resultMsg.costUSD != null) totalCostUsd += resultMsg.costUSD;
-        if (resultMsg.usage) usage = resultMsg.usage;
+        const resultMsg = message as SDKResultMessage;
+        if ("total_cost_usd" in resultMsg) {
+          totalCostUsd += (resultMsg as { total_cost_usd: number }).total_cost_usd;
+        }
+        if ("usage" in resultMsg) {
+          usage = resultMsg.usage as Record<string, unknown>;
+        }
       }
 
       for (const event of events) {
@@ -124,32 +129,38 @@ export async function* runQuery(
     }
 
     // Emit completion event
-    const completePayload: AgentEvent = {
+    const completePayload: Record<string, unknown> = {
       type: "complete",
       total_cost_usd: totalCostUsd,
     };
     if (Object.keys(usage).length > 0) {
-      (completePayload as { usage: Record<string, unknown> }).usage = usage;
+      completePayload.usage = usage;
     }
-    yield completePayload;
+    yield completePayload as AgentEvent;
   } catch (err: unknown) {
     if (abortController.signal.aborted) {
-      // Interrupted — don't yield error, the interrupt handler sends cancelled
       return;
     }
-    const message = err instanceof Error ? err.message : String(err);
-    yield { type: "error", message };
+    const errMessage = err instanceof Error ? err.message : String(err);
+    yield { type: "error", message: errMessage };
   } finally {
-    if (activeAbortController === abortController) {
-      activeAbortController = null;
-    }
+    activeQuery = null;
+    activeAbortController = null;
   }
 }
 
 /**
  * Interrupt the currently running query.
  */
-export function interruptQuery(): boolean {
+export async function interruptQuery(): Promise<boolean> {
+  if (activeQuery) {
+    try {
+      await activeQuery.interrupt();
+    } catch {
+      // Best effort
+    }
+    activeQuery = null;
+  }
   if (activeAbortController) {
     activeAbortController.abort();
     activeAbortController = null;
@@ -162,20 +173,24 @@ export function interruptQuery(): boolean {
  * Process a single SDK message into zero or more AgentEvents.
  */
 function processMessage(
-  message: Message,
+  message: SDKMessage,
   activeTools: Map<string, ActiveTool>,
 ): AgentEvent[] {
   const events: AgentEvent[] = [];
 
   switch (message.type) {
-    case "system":
-      events.push({ type: "system", data: { subtype: "session_init" } });
+    case "system": {
+      const sysMsg = message as SDKSystemMessage;
+      if (sysMsg.subtype === "init") {
+        events.push({ type: "system", data: { subtype: "session_init" } });
+      }
       break;
+    }
 
     case "assistant": {
-      const content = (message as Message & { content?: unknown[] }).content;
-      const parentToolId =
-        ((message as Record<string, unknown>).parent_tool_use_id as string) ?? null;
+      const asstMsg = message as SDKAssistantMessage;
+      const parentToolId = asstMsg.parent_tool_use_id ?? null;
+      const content = asstMsg.message?.content;
       if (Array.isArray(content)) {
         for (const block of content) {
           events.push(...processBlock(block, parentToolId, activeTools));
@@ -185,9 +200,10 @@ function processMessage(
     }
 
     case "user": {
-      const content = (message as Message & { content?: unknown[] }).content;
+      const userMsg = message as SDKUserMessage;
+      const content = userMsg.message?.content;
       if (Array.isArray(content)) {
-        for (const block of content) {
+        for (const block of content as unknown[]) {
           if (isTextBlock(block)) {
             let text = block.text ?? String(block);
             const match = LOCAL_COMMAND_STDOUT_RE.exec(text);
@@ -203,6 +219,10 @@ function processMessage(
 
     case "result":
       // Cost/usage accumulated in the caller
+      break;
+
+    default:
+      // Ignore other message types (status, hooks, etc.)
       break;
   }
 
@@ -337,26 +357,10 @@ function normalizeResultToString(result: unknown): string {
 }
 
 // Type guards for SDK message content blocks
-interface TextBlock {
-  type: "text";
-  text: string;
-}
-interface ThinkingBlock {
-  type: "thinking";
-  thinking: string;
-}
-interface ToolUseBlock {
-  type: "tool_use";
-  id: string;
-  name: string;
-  input?: unknown;
-}
-interface ToolResultBlock {
-  type: "tool_result";
-  tool_use_id?: string;
-  is_error?: boolean;
-  content?: unknown;
-}
+interface TextBlock { type: "text"; text: string }
+interface ThinkingBlock { type: "thinking"; thinking: string }
+interface ToolUseBlock { type: "tool_use"; id: string; name: string; input?: unknown }
+interface ToolResultBlock { type: "tool_result"; tool_use_id?: string; is_error?: boolean; content?: unknown }
 
 function isTextBlock(block: unknown): block is TextBlock {
   return typeof block === "object" && block !== null && (block as { type: string }).type === "text";
