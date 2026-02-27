@@ -2,8 +2,8 @@ apiVersion: v2
 name: cli-server
 description: Run Claude Code in the browser — a cloud-hosted terminal server for Claude Code CLI
 type: application
-version: 0.3.1
-appVersion: "0.3.1"
+version: 0.3.2
+appVersion: "0.3.2"
 home: https://github.com/cli-server/cli-server
 sources:
   - https://github.com/cli-server/cli-server
