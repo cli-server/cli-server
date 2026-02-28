@@ -470,6 +470,10 @@ func (s *Server) handlePauseSession(w http.ResponseWriter, r *http.Request) {
 			s.Sessions.UpdateStatus(id, session.StatusRunning)
 			return
 		}
+		// Clear pod IP so the proxy won't connect to a stale address.
+		if err := s.DB.UpdateSessionPodIP(id, ""); err != nil {
+			log.Printf("failed to clear pod IP for session %s: %v", id, err)
+		}
 		s.Sessions.UpdateStatus(id, session.StatusPaused)
 	}()
 

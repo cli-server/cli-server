@@ -155,7 +155,12 @@ func (db *DB) UpdateSessionSandboxName(id, sandboxName string) error {
 }
 
 func (db *DB) UpdateSessionPodIP(id, podIP string) error {
-	_, err := db.Exec("UPDATE sessions SET pod_ip = $2 WHERE id = $1", id, podIP)
+	var err error
+	if podIP == "" {
+		_, err = db.Exec("UPDATE sessions SET pod_ip = NULL WHERE id = $1", id)
+	} else {
+		_, err = db.Exec("UPDATE sessions SET pod_ip = $2 WHERE id = $1", id, podIP)
+	}
 	if err != nil {
 		return fmt.Errorf("update session pod ip: %w", err)
 	}

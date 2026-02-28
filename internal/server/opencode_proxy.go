@@ -81,6 +81,11 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 
+	if sess.Status != "running" {
+		http.Error(w, "session is not running", http.StatusServiceUnavailable)
+		return
+	}
+
 	if sess.PodIP == "" {
 		http.Error(w, "session pod not ready", http.StatusServiceUnavailable)
 		return

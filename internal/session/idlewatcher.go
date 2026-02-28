@@ -76,6 +76,11 @@ func (w *IdleWatcher) check() {
 			continue
 		}
 
+		// Clear pod IP so the proxy won't connect to a stale address.
+		if err := w.db.UpdateSessionPodIP(sess.ID, ""); err != nil {
+			log.Printf("idle watcher: failed to clear pod IP for %s: %v", sess.ID, err)
+		}
+
 		// Transition to paused.
 		if err := w.store.UpdateStatus(sess.ID, StatusPaused); err != nil {
 			log.Printf("idle watcher: failed to set paused status for %s: %v", sess.ID, err)
