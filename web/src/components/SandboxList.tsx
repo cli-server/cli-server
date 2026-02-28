@@ -13,6 +13,7 @@ import {
 } from '../lib/api'
 import type { UserInfo } from '../App'
 import { CreateSandboxModal } from './CreateSandboxModal'
+import { ConfirmModal, PromptModal } from './Modals'
 
 interface SandboxListProps {
   workspaces: Workspace[]
@@ -73,6 +74,10 @@ export function SandboxList({
   const [menuOpen, setMenuOpen] = useState(false)
   const [wsDropdownOpen, setWsDropdownOpen] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null)
+  const [confirmPause, setConfirmPause] = useState<{ id: string; name: string } | null>(null)
+  const [confirmDeleteWs, setConfirmDeleteWs] = useState<{ id: string; name: string } | null>(null)
+  const [showCreateWs, setShowCreateWs] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const wsDropdownRef = useRef<HTMLDivElement>(null)
 
@@ -136,6 +141,12 @@ export function SandboxList({
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
+    const sbx = sandboxes.find((s) => s.id === id)
+    setConfirmDelete({ id, name: sbx?.name || 'this sandbox' })
+  }
+
+  const doDelete = async (id: string) => {
+    setConfirmDelete(null)
     try {
       await deleteSandbox(id)
       setSandboxes((prev) => prev.filter((s) => s.id !== id))
@@ -149,6 +160,12 @@ export function SandboxList({
 
   const handlePause = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
+    const sbx = sandboxes.find((s) => s.id === id)
+    setConfirmPause({ id, name: sbx?.name || 'this sandbox' })
+  }
+
+  const doPause = async (id: string) => {
+    setConfirmPause(null)
     try {
       await pauseSandbox(id)
       setSandboxes((prev) =>
@@ -173,8 +190,13 @@ export function SandboxList({
 
   const handleCreateWorkspace = async () => {
     setWsDropdownOpen(false)
+    setShowCreateWs(true)
+  }
+
+  const doCreateWorkspace = async (name: string) => {
+    setShowCreateWs(false)
     try {
-      const ws = await createWorkspace()
+      const ws = await createWorkspace(name)
       setWorkspaces((prev) => [...prev, ws])
       onSelectWorkspace(ws.id)
     } catch {
@@ -185,6 +207,12 @@ export function SandboxList({
   const handleDeleteWorkspace = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
     setWsDropdownOpen(false)
+    const ws = workspaces.find((w) => w.id === id)
+    setConfirmDeleteWs({ id, name: ws?.name || 'this workspace' })
+  }
+
+  const doDeleteWorkspace = async (id: string) => {
+    setConfirmDeleteWs(null)
     try {
       await deleteWorkspace(id)
       setWorkspaces((prev) => prev.filter((w) => w.id !== id))
@@ -357,6 +385,49 @@ export function SandboxList({
           onClose={() => setShowCreateModal(false)}
           onCreate={handleCreateSandbox}
           creating={creating}
+        />
+      )}
+
+      {confirmDelete && (
+        <ConfirmModal
+          title="Delete Sandbox"
+          message={`Are you sure you want to delete "${confirmDelete.name}"? This action cannot be undone.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={() => doDelete(confirmDelete.id)}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
+      {confirmPause && (
+        <ConfirmModal
+          title="Pause Sandbox"
+          message={`Are you sure you want to pause "${confirmPause.name}"?`}
+          confirmLabel="Pause"
+          onConfirm={() => doPause(confirmPause.id)}
+          onCancel={() => setConfirmPause(null)}
+        />
+      )}
+
+      {confirmDeleteWs && (
+        <ConfirmModal
+          title="Delete Workspace"
+          message={`Are you sure you want to delete workspace "${confirmDeleteWs.name}"? All sandboxes in this workspace will be stopped and removed.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={() => doDeleteWorkspace(confirmDeleteWs.id)}
+          onCancel={() => setConfirmDeleteWs(null)}
+        />
+      )}
+
+      {showCreateWs && (
+        <PromptModal
+          title="New Workspace"
+          label="Workspace name"
+          defaultValue="New Workspace"
+          confirmLabel="Create"
+          onConfirm={doCreateWorkspace}
+          onCancel={() => setShowCreateWs(false)}
         />
       )}
     </div>
