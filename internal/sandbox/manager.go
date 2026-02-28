@@ -327,7 +327,7 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 			containerPort = 18789
 		}
 		// Build openclaw config JSON with gateway settings and Anthropic proxy.
-		openclawCfg := buildOpenclawConfig(proxyBaseURL, opts.ProxyToken)
+		openclawCfg := BuildOpenclawConfig(proxyBaseURL, opts.ProxyToken)
 		containerCmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
 ` + openclawCfg + `
 CFGEOF

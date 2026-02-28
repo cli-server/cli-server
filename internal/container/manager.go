@@ -15,6 +15,7 @@ import (
 	dockermount "github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 	"github.com/imryao/cli-server/internal/process"
+	"github.com/imryao/cli-server/internal/sandbox"
 )
 
 const labelManagedBy = "managed-by"
@@ -191,14 +192,7 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 		Labels: map[string]string{labelManagedBy: labelValue},
 	}
 	if opts.SandboxType == "openclaw" {
-		// Build openclaw config JSON with gateway settings and Anthropic proxy.
-		anthropicBaseURL := os.Getenv("ANTHROPIC_BASE_URL")
-		anthropicAPIKey := os.Getenv("ANTHROPIC_API_KEY")
-		openclawCfg := `{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}`
-		if anthropicBaseURL != "" && anthropicAPIKey != "" {
-			openclawCfg += `,"models":{"providers":{"anthropic":{"baseUrl":"` + anthropicBaseURL + `","apiKey":"` + anthropicAPIKey + `","api":"anthropic-messages"}}}`
-		}
-		openclawCfg += `}`
+		openclawCfg := sandbox.BuildOpenclawConfig(os.Getenv("ANTHROPIC_BASE_URL"), os.Getenv("ANTHROPIC_API_KEY"))
 		containerConfig.Cmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
 ` + openclawCfg + `
 CFGEOF

@@ -39,12 +39,12 @@ func envOrDefault(key, def string) string {
 	return def
 }
 
-// buildOpenclawConfig returns the openclaw.json content with gateway settings
+// BuildOpenclawConfig returns the openclaw.json content with gateway settings
 // and optional Anthropic proxy credentials.
-func buildOpenclawConfig(proxyBaseURL, proxyToken string) string {
+func BuildOpenclawConfig(proxyBaseURL, proxyToken string) string {
 	cfg := `{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}`
 	if proxyBaseURL != "" && proxyToken != "" {
-		cfg += `,"models":{"providers":{"anthropic":{"baseUrl":"` + proxyBaseURL + `","apiKey":"` + proxyToken + `","api":"anthropic-messages"}}}}`
+		cfg += `,"models":{"providers":{"anthropic":{"baseUrl":"` + proxyBaseURL + `","apiKey":"` + proxyToken + `","api":"anthropic-messages","models":["claude-opus-4-6","claude-opus-4-5","claude-sonnet-4-6","claude-sonnet-4-5","claude-haiku-4-5"]}}}}`
 	} else {
 		cfg += `}`
 	}
