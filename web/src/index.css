@@ -2,6 +2,24 @@
 @plugin "@tailwindcss/typography";
 
 :root {
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+  --card: #f4f4f5;
+  --card-foreground: #0a0a0a;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --destructive: #ef4444;
+  --ring: #d4d4d8;
+  --radius: 0.5rem;
+}
+
+.dark {
   --background: #0a0a0a;
   --foreground: #fafafa;
   --card: #111111;

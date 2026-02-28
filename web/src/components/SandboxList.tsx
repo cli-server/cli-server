@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Trash2, Pause, Play, Loader2, LogOut, ChevronDown } from 'lucide-react'
+import { Plus, Trash2, Pause, Play, Loader2, LogOut, ChevronDown, Sun, Moon, Monitor } from 'lucide-react'
 import {
   type Workspace,
   type Sandbox,
@@ -78,8 +78,23 @@ export function SandboxList({
   const [confirmPause, setConfirmPause] = useState<{ id: string; name: string } | null>(null)
   const [confirmDeleteWs, setConfirmDeleteWs] = useState<{ id: string; name: string } | null>(null)
   const [showCreateWs, setShowCreateWs] = useState(false)
+  const [theme, setThemeState] = useState<'system' | 'light' | 'dark'>(() => {
+    return (localStorage.getItem('theme') as 'light' | 'dark') || 'system'
+  })
   const menuRef = useRef<HTMLDivElement>(null)
   const wsDropdownRef = useRef<HTMLDivElement>(null)
+
+  const setTheme = (t: 'system' | 'light' | 'dark') => {
+    setThemeState(t)
+    if (t === 'system') {
+      localStorage.removeItem('theme')
+      const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
+      document.documentElement.classList.toggle('dark', dark)
+    } else {
+      localStorage.setItem('theme', t)
+      document.documentElement.classList.toggle('dark', t === 'dark')
+    }
+  }
 
   // Close menu on outside click
   useEffect(() => {
@@ -361,6 +376,32 @@ export function SandboxList({
       <div className="relative border-t border-[var(--border)]" ref={menuRef}>
         {menuOpen && (
           <div className="absolute bottom-full left-0 right-0 mb-1 mx-2 overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card)] shadow-lg">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
+              <span className="text-xs text-[var(--muted-foreground)]">Theme</span>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setTheme('system')}
+                  className={`rounded p-1 ${theme === 'system' ? 'bg-[var(--secondary)] text-[var(--foreground)]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}`}
+                  title="System"
+                >
+                  <Monitor size={14} />
+                </button>
+                <button
+                  onClick={() => setTheme('light')}
+                  className={`rounded p-1 ${theme === 'light' ? 'bg-[var(--secondary)] text-[var(--foreground)]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}`}
+                  title="Light"
+                >
+                  <Sun size={14} />
+                </button>
+                <button
+                  onClick={() => setTheme('dark')}
+                  className={`rounded p-1 ${theme === 'dark' ? 'bg-[var(--secondary)] text-[var(--foreground)]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}`}
+                  title="Dark"
+                >
+                  <Moon size={14} />
+                </button>
+              </div>
+            </div>
             <button
               onClick={handleLogout}
               className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[var(--foreground)] hover:bg-[var(--secondary)]"
