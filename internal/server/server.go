@@ -820,6 +820,7 @@ func (s *Server) handleResumeSandbox(w http.ResponseWriter, r *http.Request) {
 				log.Printf("failed to update pod IP for sandbox %s: %v", id, err)
 			}
 		}
+		s.Sandboxes.UpdateActivity(id)
 		s.Sandboxes.UpdateStatus(id, sbxstore.StatusRunning)
 	}()
 

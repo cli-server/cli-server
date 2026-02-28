@@ -103,6 +103,9 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 		r.Header.Set("Authorization", "Basic "+cred)
 	}
 
+	// Track activity for idle watcher.
+	s.throttledActivity(sandboxID)
+
 	// Reverse proxy to the sandbox pod.
 	target := &url.URL{
 		Scheme: "http",
