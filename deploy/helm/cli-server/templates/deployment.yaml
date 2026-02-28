@@ -62,6 +62,10 @@ spec:
             {{- end }}
             - name: AGENT_IMAGE
               value: {{ .Values.opencode.image | default .Values.agent.image | quote }}
+            {{- if .Values.openclaw.image }}
+            - name: OPENCLAW_IMAGE
+              value: {{ .Values.openclaw.image | quote }}
+            {{- end }}
             {{- if .Values.baseDomain }}
             - name: BASE_DOMAIN
               value: {{ .Values.baseDomain | quote }}

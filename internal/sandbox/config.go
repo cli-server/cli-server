@@ -13,6 +13,8 @@ type Config struct {
 	StorageClassName   string
 	RuntimeClassName   string
 	OpencodePort       int
+	OpenclawImage      string
+	OpenclawPort       int
 }
 
 // DefaultConfig returns a Config populated from environment variables with sensible defaults.
@@ -27,6 +29,8 @@ func DefaultConfig() Config {
 		StorageClassName:   os.Getenv("STORAGE_CLASS"),
 		RuntimeClassName:   os.Getenv("RUNTIME_CLASS"),
 		OpencodePort:       4096,
+		OpenclawImage:      os.Getenv("OPENCLAW_IMAGE"),
+		OpenclawPort:       18789,
 	}
 }
 

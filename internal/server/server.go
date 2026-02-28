@@ -96,6 +96,11 @@ func (s *Server) Router() http.Handler {
 						s.handleSubdomainProxy(w, r, sandboxID)
 						return
 					}
+					if strings.HasPrefix(sub, "claw-") {
+						sandboxID := sub[5:] // strip "claw-" prefix
+						s.handleOpenclawSubdomainProxy(w, r, sandboxID)
+						return
+					}
 				}
 				next.ServeHTTP(w, r)
 			})
@@ -290,6 +295,7 @@ type sandboxResponse struct {
 	Type           string  `json:"type"`
 	Status         string  `json:"status"`
 	OpencodeURL    string  `json:"opencodeUrl,omitempty"`
+	OpenclawURL    string  `json:"openclawUrl,omitempty"`
 	CreatedAt      string  `json:"createdAt"`
 	LastActivityAt *string `json:"lastActivityAt"`
 	PausedAt       *string `json:"pausedAt"`
@@ -309,18 +315,21 @@ func (s *Server) toWorkspaceResponse(ws *db.Workspace) workspaceResponse {
 }
 
 func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sandboxResponse {
-	var opencodeURL string
-	if s.BaseDomain != "" {
-		opencodeURL = s.BaseScheme + "://oc-" + sbx.ID + "." + s.BaseDomain + "/auth?token=" + authToken
-	}
 	resp := sandboxResponse{
 		ID:          sbx.ID,
 		WorkspaceID: sbx.WorkspaceID,
 		Name:        sbx.Name,
 		Type:        sbx.Type,
 		Status:      sbx.Status,
-		OpencodeURL: opencodeURL,
 		CreatedAt:   sbx.CreatedAt.Format(time.RFC3339),
+	}
+	if s.BaseDomain != "" {
+		switch sbx.Type {
+		case "openclaw":
+			resp.OpenclawURL = s.BaseScheme + "://claw-" + sbx.ID + "." + s.BaseDomain + "/auth?token=" + authToken
+		default: // "opencode"
+			resp.OpencodeURL = s.BaseScheme + "://oc-" + sbx.ID + "." + s.BaseDomain + "/auth?token=" + authToken
+		}
 	}
 	if sbx.LastActivityAt != nil {
 		s := sbx.LastActivityAt.Format(time.RFC3339)
@@ -613,13 +622,23 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name string `json:"name"`
+		Name             string `json:"name"`
+		Type             string `json:"type"`
+		TelegramBotToken string `json:"telegramBotToken"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		req.Name = "New Sandbox"
 	}
 	if req.Name == "" {
 		req.Name = "New Sandbox"
+	}
+	sandboxType := req.Type
+	if sandboxType == "" {
+		sandboxType = "opencode"
+	}
+	if sandboxType != "opencode" && sandboxType != "openclaw" {
+		http.Error(w, "invalid sandbox type: must be opencode or openclaw", http.StatusBadRequest)
+		return
 	}
 
 	// Ensure workspace drive exists.
@@ -632,12 +651,17 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	id := uuid.New().String()
 	sandboxName := "cli-sandbox-" + shortID(id)
 
-	// Generate random password for opencode server auth.
-	opencodePassword := generatePassword()
-	// Generate random token for Anthropic API proxy auth.
+	// Generate auth credentials based on sandbox type.
+	var opencodePassword, gatewayToken string
 	proxyToken := generatePassword()
+	switch sandboxType {
+	case "openclaw":
+		gatewayToken = generatePassword()
+	default: // "opencode"
+		opencodePassword = generatePassword()
+	}
 
-	sbx, err := s.Sandboxes.Create(id, wsID, req.Name, "opencode", sandboxName, opencodePassword, proxyToken)
+	sbx, err := s.Sandboxes.Create(id, wsID, req.Name, sandboxType, sandboxName, opencodePassword, proxyToken, req.TelegramBotToken, gatewayToken)
 	if err != nil {
 		log.Printf("failed to create sandbox: %v", err)
 		http.Error(w, "failed to create sandbox", http.StatusInternalServerError)
@@ -656,6 +680,9 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 				WorkspaceDiskPVC: workspaceDiskPVC,
 				OpencodePassword: opencodePassword,
 				ProxyToken:       proxyToken,
+				SandboxType:      sandboxType,
+				TelegramBotToken: req.TelegramBotToken,
+				GatewayToken:     gatewayToken,
 			})
 			if err != nil {
 				log.Printf("failed to start container for sandbox %s: %v", id, err)
@@ -667,6 +694,9 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 				WorkspaceDiskPVC: workspaceDiskPVC,
 				OpencodePassword: opencodePassword,
 				ProxyToken:       proxyToken,
+				SandboxType:      sandboxType,
+				TelegramBotToken: req.TelegramBotToken,
+				GatewayToken:     gatewayToken,
 			}); err != nil {
 				log.Printf("failed to start container for sandbox %s: %v", id, err)
 				s.Sandboxes.Delete(id)

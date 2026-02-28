@@ -16,16 +16,18 @@ type Sandbox struct {
 	PodIP            sql.NullString
 	OpencodePassword sql.NullString
 	ProxyToken       sql.NullString
+	TelegramBotToken sql.NullString
+	GatewayToken     sql.NullString
 	LastActivityAt   sql.NullTime
 	CreatedAt        time.Time
 	PausedAt         sql.NullTime
 }
 
-func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken string) error {
+func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken string) error {
 	_, err := db.Exec(
-		`INSERT INTO sandboxes (id, workspace_id, name, type, status, sandbox_name, opencode_password, proxy_token, last_activity_at)
-		 VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, NOW())`,
-		id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken,
+		`INSERT INTO sandboxes (id, workspace_id, name, type, status, sandbox_name, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at)
+		 VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, NOW())`,
+		id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, nullIfEmpty(telegramBotToken), nullIfEmpty(gatewayToken),
 	)
 	if err != nil {
 		return fmt.Errorf("create sandbox: %w", err)
@@ -36,10 +38,10 @@ func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, ope
 func (db *DB) GetSandbox(id string) (*Sandbox, error) {
 	s := &Sandbox{}
 	err := db.QueryRow(
-		`SELECT id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, last_activity_at, created_at, paused_at
+		`SELECT id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at
 		 FROM sandboxes WHERE id = $1`,
 		id,
-	).Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt)
+	).Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -51,7 +53,7 @@ func (db *DB) GetSandbox(id string) (*Sandbox, error) {
 
 func (db *DB) ListSandboxesByWorkspace(workspaceID string) ([]*Sandbox, error) {
 	rows, err := db.Query(
-		`SELECT id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, last_activity_at, created_at, paused_at
+		`SELECT id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at
 		 FROM sandboxes WHERE workspace_id = $1 ORDER BY created_at ASC`,
 		workspaceID,
 	)
@@ -63,7 +65,7 @@ func (db *DB) ListSandboxesByWorkspace(workspaceID string) ([]*Sandbox, error) {
 	var sandboxes []*Sandbox
 	for rows.Next() {
 		s := &Sandbox{}
-		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt); err != nil {
 			return nil, fmt.Errorf("scan sandbox: %w", err)
 		}
 		sandboxes = append(sandboxes, s)
@@ -127,7 +129,7 @@ func (db *DB) UpdateSandboxSandboxName(id, sandboxName string) error {
 
 func (db *DB) ListIdleSandboxes(idleTimeout time.Duration) ([]*Sandbox, error) {
 	rows, err := db.Query(
-		`SELECT id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, last_activity_at, created_at, paused_at
+		`SELECT id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at
 		 FROM sandboxes
 		 WHERE status = 'running' AND last_activity_at < NOW() - $1::interval`,
 		fmt.Sprintf("%d seconds", int(idleTimeout.Seconds())),
@@ -140,7 +142,7 @@ func (db *DB) ListIdleSandboxes(idleTimeout time.Duration) ([]*Sandbox, error) {
 	var sandboxes []*Sandbox
 	for rows.Next() {
 		s := &Sandbox{}
-		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt); err != nil {
 			return nil, fmt.Errorf("scan idle sandbox: %w", err)
 		}
 		sandboxes = append(sandboxes, s)
@@ -171,10 +173,10 @@ func (db *DB) ListAllActiveSandboxNames() ([]string, error) {
 func (db *DB) GetSandboxByProxyToken(proxyToken string) (*Sandbox, error) {
 	s := &Sandbox{}
 	err := db.QueryRow(
-		`SELECT id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, last_activity_at, created_at, paused_at
+		`SELECT id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at
 		 FROM sandboxes WHERE proxy_token = $1`,
 		proxyToken,
-	).Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt)
+	).Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -182,4 +184,11 @@ func (db *DB) GetSandboxByProxyToken(proxyToken string) (*Sandbox, error) {
 		return nil, fmt.Errorf("get sandbox by proxy token: %w", err)
 	}
 	return s, nil
+}
+
+func nullIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }

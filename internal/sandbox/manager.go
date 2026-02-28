@@ -309,9 +309,34 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 		)
 	}
 
-	// Set opencode server password for per-sandbox auth.
-	if opts.OpencodePassword != "" {
-		containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", Value: opts.OpencodePassword})
+	// Select image, port, and command based on sandbox type.
+	sandboxImage := m.cfg.Image
+	containerPort := m.cfg.OpencodePort
+	if containerPort == 0 {
+		containerPort = 4096
+	}
+	var containerCmd []string
+
+	switch opts.SandboxType {
+	case "openclaw":
+		if m.cfg.OpenclawImage != "" {
+			sandboxImage = m.cfg.OpenclawImage
+		}
+		containerPort = m.cfg.OpenclawPort
+		if containerPort == 0 {
+			containerPort = 18789
+		}
+		containerCmd = []string{"node", "openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"}
+		if opts.GatewayToken != "" {
+			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: opts.GatewayToken})
+		}
+		if opts.TelegramBotToken != "" {
+			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TELEGRAM_BOT_TOKEN", Value: opts.TelegramBotToken})
+		}
+	default: // "opencode"
+		if opts.OpencodePassword != "" {
+			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", Value: opts.OpencodePassword})
+		}
 	}
 
 	// Volume mounts for the main container.
@@ -348,7 +373,7 @@ chown -R 1000:1000 /mnt/workspace-drive
 `
 	initContainers := []corev1.Container{{
 		Name:    "fix-perms",
-		Image:   m.cfg.Image,
+		Image:   sandboxImage,
 		Command: []string{"sh", "-c", initScript},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "session-data", MountPath: "/mnt/session-data"},
@@ -378,10 +403,25 @@ chown -R 1000:1000 /mnt/workspace-drive
 		vcts[0].Spec.StorageClassName = &m.cfg.StorageClassName
 	}
 
-	// Use opencode serve as entrypoint: container runs opencode serve on port 4096.
-	opencodePort := m.cfg.OpencodePort
-	if opencodePort == 0 {
-		opencodePort = 4096
+	mainContainer := corev1.Container{
+		Name:            sandboxContainerName,
+		Image:           sandboxImage,
+		Env:             containerEnv,
+		VolumeMounts:    volumeMounts,
+		ImagePullPolicy: corev1.PullAlways,
+		Ports: []corev1.ContainerPort{{
+			ContainerPort: int32(containerPort),
+			Protocol:      corev1.ProtocolTCP,
+		}},
+		Resources: corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse(m.cfg.MemoryLimit),
+				corev1.ResourceCPU:    resource.MustParse(m.cfg.CPULimit),
+			},
+		},
+	}
+	if len(containerCmd) > 0 {
+		mainContainer.Command = containerCmd
 	}
 
 	sb := &sandboxv1alpha1.Sandbox{
@@ -394,24 +434,8 @@ chown -R 1000:1000 /mnt/workspace-drive
 			VolumeClaimTemplates: vcts,
 			PodTemplate: sandboxv1alpha1.PodTemplate{
 				Spec: corev1.PodSpec{
-					InitContainers: initContainers,
-					Containers: []corev1.Container{{
-						Name:            sandboxContainerName,
-						Image:           m.cfg.Image,
-						Env:             containerEnv,
-						VolumeMounts:    volumeMounts,
-						ImagePullPolicy: corev1.PullAlways,
-						Ports: []corev1.ContainerPort{{
-							ContainerPort: int32(opencodePort),
-							Protocol:      corev1.ProtocolTCP,
-						}},
-						Resources: corev1.ResourceRequirements{
-							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse(m.cfg.MemoryLimit),
-								corev1.ResourceCPU:    resource.MustParse(m.cfg.CPULimit),
-							},
-						},
-					}},
+					InitContainers:   initContainers,
+					Containers:       []corev1.Container{mainContainer},
 					Volumes:          volumes,
 					ImagePullSecrets: m.imagePullSecrets(),
 					RuntimeClassName: m.runtimeClassName(),

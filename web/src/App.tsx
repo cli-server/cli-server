@@ -106,7 +106,10 @@ export default function App() {
     )
   } else if (activeSandboxId && activeSandboxData) {
     const isRunning = activeSandboxData.status === 'running'
-    const opencodeUrl = activeSandboxData.opencodeUrl
+    const isOpenClaw = activeSandboxData.type === 'openclaw'
+    const sandboxUrl = isOpenClaw ? activeSandboxData.openclawUrl : activeSandboxData.opencodeUrl
+    const buttonLabel = isOpenClaw ? 'Open OpenClaw' : 'Open OpenCode'
+    const fallbackLabel = isOpenClaw ? 'OpenClaw' : 'OpenCode'
     mainContent = (
       <div className="flex flex-col items-center gap-6 w-full max-w-md px-6">
         <div className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] p-6">
@@ -143,19 +146,19 @@ export default function App() {
             )}
           </div>
         </div>
-        {isRunning && opencodeUrl ? (
+        {isRunning && sandboxUrl ? (
           <a
-            href={opencodeUrl}
+            href={sandboxUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90 transition-opacity"
           >
             <ExternalLink size={16} />
-            Open OpenCode
+            {buttonLabel}
           </a>
         ) : (
           <span className="text-sm text-[var(--muted-foreground)]">
-            {isRunning ? 'OpenCode URL not configured' : 'Sandbox must be running to open OpenCode'}
+            {isRunning ? `${fallbackLabel} URL not configured` : `Sandbox must be running to open ${fallbackLabel}`}
           </span>
         )}
       </div>

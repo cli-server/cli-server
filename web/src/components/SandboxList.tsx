@@ -12,6 +12,7 @@ import {
   logout,
 } from '../lib/api'
 import type { UserInfo } from '../App'
+import { CreateSandboxModal } from './CreateSandboxModal'
 
 interface SandboxListProps {
   workspaces: Workspace[]
@@ -71,6 +72,7 @@ export function SandboxList({
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [wsDropdownOpen, setWsDropdownOpen] = useState(false)
+  const [showCreateModal, setShowCreateModal] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const wsDropdownRef = useRef<HTMLDivElement>(null)
 
@@ -112,12 +114,17 @@ export function SandboxList({
     }
   }, [sandboxes, onRefreshSandboxes])
 
-  const handleCreateSandbox = async () => {
+  const handleCreateSandbox = async (
+    name: string,
+    type: 'opencode' | 'openclaw',
+    telegramBotToken?: string
+  ) => {
     if (creating || !selectedWorkspaceId) return
     setCreating(true)
+    setShowCreateModal(false)
     onSelectSandbox('')
     try {
-      const sbx = await createSandbox(selectedWorkspaceId)
+      const sbx = await createSandbox(selectedWorkspaceId, name, type, telegramBotToken)
       setSandboxes((prev) => [...prev, sbx])
       onSelectSandbox(sbx.id)
     } catch {
@@ -251,7 +258,7 @@ export function SandboxList({
       <div className="flex items-center justify-between border-b border-[var(--border)] p-3">
         <span className="text-sm font-medium">Sandboxes</span>
         <button
-          onClick={handleCreateSandbox}
+          onClick={() => setShowCreateModal(true)}
           disabled={creating || !selectedWorkspaceId}
           className="rounded p-1 hover:bg-[var(--secondary)] disabled:opacity-50"
           title="New sandbox"
@@ -272,6 +279,11 @@ export function SandboxList({
           >
             <StatusDot status={sbx.status} />
             <span className="flex-1 truncate">{sbx.name}</span>
+            {sbx.type === 'openclaw' && (
+              <span className="shrink-0 rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-medium text-purple-400">
+                claw
+              </span>
+            )}
             <div className="hidden gap-0.5 group-hover:flex">
               {sbx.status === 'running' && (
                 <button
@@ -339,6 +351,14 @@ export function SandboxList({
           </div>
         </button>
       </div>
+
+      {showCreateModal && (
+        <CreateSandboxModal
+          onClose={() => setShowCreateModal(false)}
+          onCreate={handleCreateSandbox}
+          creating={creating}
+        />
+      )}
     </div>
   )
 }

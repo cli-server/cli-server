@@ -17,6 +17,8 @@ type Sandbox struct {
 	PodIP            string     `json:"podIp,omitempty"`
 	OpencodePassword string     `json:"-"`
 	ProxyToken       string     `json:"-"`
+	TelegramBotToken string     `json:"-"`
+	GatewayToken     string     `json:"-"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	LastActivityAt   *time.Time `json:"lastActivityAt,omitempty"`
 	PausedAt         *time.Time `json:"pausedAt,omitempty"`
@@ -32,8 +34,8 @@ func NewStore(database *db.DB) *Store {
 }
 
 // Create inserts a new sandbox into the DB with 'creating' status.
-func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken string) (*Sandbox, error) {
-	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken); err != nil {
+func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken string) (*Sandbox, error) {
+	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken); err != nil {
 		return nil, err
 	}
 
@@ -47,6 +49,8 @@ func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencode
 		SandboxName:      sandboxName,
 		OpencodePassword: opencodePassword,
 		ProxyToken:       proxyToken,
+		TelegramBotToken: telegramBotToken,
+		GatewayToken:     gatewayToken,
 		CreatedAt:        now,
 		LastActivityAt:   &now,
 	}, nil
@@ -109,6 +113,12 @@ func dbSandboxToSandbox(ds *db.Sandbox) *Sandbox {
 	}
 	if ds.ProxyToken.Valid {
 		sbx.ProxyToken = ds.ProxyToken.String
+	}
+	if ds.TelegramBotToken.Valid {
+		sbx.TelegramBotToken = ds.TelegramBotToken.String
+	}
+	if ds.GatewayToken.Valid {
+		sbx.GatewayToken = ds.GatewayToken.String
 	}
 	if ds.LastActivityAt.Valid {
 		t := ds.LastActivityAt.Time

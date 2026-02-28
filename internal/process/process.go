@@ -13,6 +13,9 @@ type StartOptions struct {
 	WorkspaceDiskPVC string // pre-existing PVC name for workspace drive mount
 	OpencodePassword string // per-sandbox password for opencode server auth
 	ProxyToken       string // per-sandbox token for Anthropic API proxy auth
+	SandboxType      string // "opencode" or "openclaw"
+	TelegramBotToken string // openclaw only: Telegram bot token
+	GatewayToken     string // openclaw only: gateway auth token
 }
 
 // Manager manages process lifecycles.

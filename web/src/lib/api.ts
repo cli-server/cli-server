@@ -22,6 +22,7 @@ export interface Sandbox {
   type: string
   status: SandboxStatus
   opencodeUrl?: string
+  openclawUrl?: string
   createdAt: string
   lastActivityAt: string | null
   pausedAt: string | null
@@ -136,11 +137,20 @@ export async function listSandboxes(workspaceId: string): Promise<Sandbox[]> {
   return res.json()
 }
 
-export async function createSandbox(workspaceId: string, name?: string): Promise<Sandbox> {
+export async function createSandbox(
+  workspaceId: string,
+  name?: string,
+  type?: 'opencode' | 'openclaw',
+  telegramBotToken?: string
+): Promise<Sandbox> {
   const res = await fetch(`/api/workspaces/${workspaceId}/sandboxes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: name || 'New Sandbox' }),
+    body: JSON.stringify({
+      name: name || 'New Sandbox',
+      type: type || 'opencode',
+      ...(telegramBotToken ? { telegramBotToken } : {}),
+    }),
   })
   if (!res.ok) throw new Error('Failed to create sandbox')
   return res.json()

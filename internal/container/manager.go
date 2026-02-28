@@ -149,6 +149,25 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 		}
 	}
 
+	// Select image and set env vars based on sandbox type.
+	containerImage := m.cfg.Image
+	switch opts.SandboxType {
+	case "openclaw":
+		if m.cfg.OpenclawImage != "" {
+			containerImage = m.cfg.OpenclawImage
+		}
+		if opts.GatewayToken != "" {
+			containerEnv = append(containerEnv, "OPENCLAW_GATEWAY_TOKEN="+opts.GatewayToken)
+		}
+		if opts.TelegramBotToken != "" {
+			containerEnv = append(containerEnv, "TELEGRAM_BOT_TOKEN="+opts.TelegramBotToken)
+		}
+	default: // "opencode"
+		if opts.OpencodePassword != "" {
+			containerEnv = append(containerEnv, "OPENCODE_SERVER_PASSWORD="+opts.OpencodePassword)
+		}
+	}
+
 	// Volume mounts for persistence.
 	mounts := []dockermount.Mount{
 		{
@@ -168,7 +187,7 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 	pidsLimit := m.cfg.PidsLimit
 	resp, err := m.cli.ContainerCreate(ctx,
 		&container.Config{
-			Image:  m.cfg.Image,
+			Image:  containerImage,
 			Env:    containerEnv,
 			Labels: map[string]string{labelManagedBy: labelValue},
 		},
