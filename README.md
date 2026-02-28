@@ -16,27 +16,28 @@ cli-server is to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) w
 
 ## Highlights
 
-- **Browser-based Claude Code** — Full Claude Code CLI running in isolated containers, accessible from any device
-- **Multi-user with sessions** — Each user gets their own sessions with persistent storage; pause and resume at any time
-- **Two sandbox backends** — Run agent containers via Docker (single node) or Kubernetes with [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox) + gVisor isolation
+- **Browser-based Claude Code** — Each sandbox runs [opencode](https://github.com/opencode-ai/opencode) serve, accessible via a per-sandbox subdomain
+- **Workspaces & multi-tenancy** — Organize work into workspaces with role-based membership (owner / maintainer / developer / guest); each workspace has a shared persistent disk
+- **Sandboxes** — Create multiple sandboxes per workspace; pause, resume, and auto-pause on idle
+- **Two backends** — Run sandbox containers via Docker (single node) or Kubernetes with [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox) + gVisor isolation
 - **SSO / OIDC** — Built-in GitHub OAuth and generic OIDC support; accounts are linked by email
+- **Anthropic API proxy** — Sandboxes never see the real API key; cli-server injects it server-side via a per-sandbox proxy token
 - **Helm one-liner** — Deploy to any Kubernetes cluster in minutes
 
 ## Architecture
 
 ```
-Browser ──▶ cli-server (Go) ──▶ sidecar (Python) ──▶ agent container
-               │                     │                   └─ Claude Code CLI
-               │                     └─ Claude Agent SDK
-               ├─ PostgreSQL (users, sessions, messages)
-               └─ Redis (live streaming)
+Browser ──▶ cli-server (Go) ──▶ sandbox pod / container
+               │                   └─ opencode serve (:4096)
+               │
+               ├─ PostgreSQL (users, workspaces, sandboxes)
+               └─ Anthropic API proxy (injects real API key)
 ```
 
 | Component | Description |
 |-----------|-------------|
-| **cli-server** | Go HTTP server — auth, session management, WebSocket terminal, static frontend |
-| **sidecar** | Python FastAPI service — drives the Claude Agent SDK, streams responses via Redis SSE |
-| **agent** | Minimal Debian container with Claude Code CLI installed — one per session |
+| **cli-server** | Go HTTP server — auth, workspace & sandbox management, opencode subdomain proxy, Anthropic API proxy, static frontend |
+| **sandbox** | Container running opencode serve — one per sandbox, isolated via Docker or K8s Agent Sandbox |
 
 ## Quick Start
 
@@ -44,7 +45,6 @@ Browser ──▶ cli-server (Go) ──▶ sidecar (Python) ──▶ agent con
 
 - Kubernetes cluster (or Docker for local dev)
 - PostgreSQL database
-- Redis instance
 - An [Anthropic API key](https://console.anthropic.com/)
 
 ### Helm Install
@@ -53,13 +53,13 @@ Browser ──▶ cli-server (Go) ──▶ sidecar (Python) ──▶ agent con
 helm install cli-server oci://ghcr.io/cli-server/charts/cli-server \
   --namespace cli-server --create-namespace \
   --set database.url="postgres://user:pass@postgres:5432/cliserver?sslmode=disable" \
-  --set redis.url="redis://redis:6379" \
   --set anthropicApiKey="sk-ant-..." \
   --set ingress.enabled=true \
-  --set ingress.host="cli.example.com"
+  --set ingress.host="cli.example.com" \
+  --set baseDomain="cli.example.com"
 ```
 
-That's it. Open `https://cli.example.com`, register an account, and start coding with Claude.
+Open `https://cli.example.com`, register an account, create a workspace, and launch a sandbox.
 
 ### Docker Compose (Local Development)
 
@@ -67,8 +67,8 @@ That's it. Open `https://cli.example.com`, register an account, and start coding
 git clone https://github.com/cli-server/cli-server.git
 cd cli-server
 
-# Build the agent image first
-docker build -f Dockerfile.agent -t cli-server-agent:latest .
+# Build the opencode agent image
+docker build -f Dockerfile.opencode -t cli-server-agent:latest .
 
 # Set your API key
 export ANTHROPIC_API_KEY="sk-ant-..."
@@ -79,6 +79,28 @@ docker compose up -d
 
 Open `http://localhost:8080` in your browser.
 
+## Concepts
+
+### Workspaces
+
+A workspace is a collaborative unit. It has members with roles and owns a shared persistent disk (PVC in K8s, named volume in Docker). All sandboxes in a workspace share this disk at `/data/disk0`.
+
+| Role | Permissions |
+|------|-------------|
+| **owner** | Full control — manage members, delete workspace, create/manage sandboxes |
+| **maintainer** | Add members, create/manage sandboxes |
+| **developer** | Create and manage sandboxes |
+| **guest** | View sandboxes (read-only access) |
+
+### Sandboxes
+
+A sandbox is an isolated container running opencode serve. Each sandbox:
+
+- Has its own opencode instance accessible via `oc-{sandboxID}.{baseDomain}`
+- Can be paused (scales to 0 replicas / stops container) and resumed
+- Is automatically paused after a configurable idle timeout
+- Gets a unique proxy token for Anthropic API access
+
 ## Configuration
 
 ### Helm Values
@@ -87,15 +109,19 @@ Open `http://localhost:8080` in your browser.
 |-----------|-------------|---------|
 | `image.repository` | Server image | `ghcr.io/cli-server/cli-server` |
 | `image.tag` | Server image tag | `latest` |
-| `sidecar.image` | Sidecar image | `ghcr.io/cli-server/sidecar:latest` |
-| `agent.image` | Agent container image | `ghcr.io/cli-server/agent:latest` |
+| `opencode.image` | Opencode agent image for sandbox pods | `ghcr.io/cli-server/opencode-agent:latest` |
+| `opencode.runtimeClassName` | RuntimeClass for sandbox pods (e.g. `gvisor`) | `""` |
 | `database.url` | PostgreSQL connection string | (required) |
-| `redis.url` | Redis connection string | (required) |
 | `anthropicApiKey` | Anthropic API key | (required) |
 | `anthropicBaseUrl` | Custom Anthropic API base URL | `""` |
-| `backend` | Session backend: `docker` or `k8s` | `docker` |
-| `idleTimeout` | Auto-pause idle sessions after | `30m` |
-| `persistence.userDriveSize` | Persistent storage per user | `10Gi` |
+| `anthropicAuthToken` | Anthropic auth token (alternative to API key) | `""` |
+| `backend` | Sandbox backend: `docker` or `k8s` | `docker` |
+| `baseDomain` | Base domain for subdomain routing (e.g. `cli.example.com`) | `""` |
+| `baseScheme` | URL scheme for generated URLs | `https` |
+| `idleTimeout` | Auto-pause idle sandboxes after | `30m` |
+| `persistence.sessionStorageSize` | Per-sandbox ephemeral storage | `5Gi` |
+| `persistence.userDriveSize` | Per-workspace shared disk size | `10Gi` |
+| `persistence.storageClassName` | Storage class for PVCs | `""` (cluster default) |
 | `ingress.enabled` | Enable Nginx Ingress | `false` |
 | `ingress.host` | Ingress hostname | `cli-server.example.com` |
 | `ingress.tls` | Enable TLS (cert-manager) | `false` |
@@ -138,26 +164,63 @@ For production multi-tenant deployments, use the Kubernetes backend with gVisor 
 helm upgrade cli-server oci://ghcr.io/cli-server/charts/cli-server \
   --reuse-values \
   --set backend=k8s \
-  --set agent.runtimeClassName=gvisor \
+  --set opencode.runtimeClassName=gvisor \
   --set sandbox.namespace=cli-server
 ```
 
-This uses the [Kubernetes Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox) controller to manage isolated pods per session.
+This uses the [Kubernetes Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox) controller to manage isolated pods per sandbox.
 
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
 | `DATABASE_URL` | PostgreSQL connection string |
-| `REDIS_URL` | Redis connection string |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `ANTHROPIC_BASE_URL` | Custom API base URL |
+| `ANTHROPIC_AUTH_TOKEN` | Anthropic auth token (alternative to API key) |
+| `ANTHROPIC_PROXY_URL` | URL sandbox pods use to reach the Anthropic proxy |
+| `BASE_DOMAIN` | Base domain for subdomain routing |
+| `BASE_SCHEME` | URL scheme (`http` or `https`) |
+| `IDLE_TIMEOUT` | Auto-pause timeout (e.g. `30m`) |
 | `OIDC_REDIRECT_BASE_URL` | External URL for OIDC callbacks |
 | `GITHUB_CLIENT_ID` | GitHub OAuth client ID |
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth client secret |
 | `OIDC_ISSUER_URL` | Generic OIDC issuer URL |
 | `OIDC_CLIENT_ID` | Generic OIDC client ID |
 | `OIDC_CLIENT_SECRET` | Generic OIDC client secret |
+
+## API
+
+All endpoints under `/api/` require authentication via cookie. Workspace and sandbox endpoints enforce role-based access.
+
+### Workspaces
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/workspaces` | List workspaces for current user |
+| `POST` | `/api/workspaces` | Create workspace (caller becomes owner) |
+| `GET` | `/api/workspaces/{id}` | Get workspace details |
+| `DELETE` | `/api/workspaces/{id}` | Delete workspace (owner only) |
+
+### Members
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/workspaces/{id}/members` | List members |
+| `POST` | `/api/workspaces/{id}/members` | Add member (owner/maintainer) |
+| `PUT` | `/api/workspaces/{id}/members/{userId}` | Update member role (owner) |
+| `DELETE` | `/api/workspaces/{id}/members/{userId}` | Remove member (owner) |
+
+### Sandboxes
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/workspaces/{wid}/sandboxes` | List sandboxes in workspace |
+| `POST` | `/api/workspaces/{wid}/sandboxes` | Create sandbox (developer+) |
+| `GET` | `/api/sandboxes/{id}` | Get sandbox details |
+| `DELETE` | `/api/sandboxes/{id}` | Delete sandbox |
+| `POST` | `/api/sandboxes/{id}/pause` | Pause sandbox |
+| `POST` | `/api/sandboxes/{id}/resume` | Resume sandbox |
 
 ## Contributing
 
@@ -167,10 +230,6 @@ go run . serve --db-url "postgres://..." --backend docker
 
 # Frontend (separate terminal)
 cd web && pnpm install && pnpm dev
-
-# Sidecar (separate terminal)
-cd sidecar && pip install -r requirements.txt
-uvicorn app.main:app --port 8081 --reload
 ```
 
 ## License
