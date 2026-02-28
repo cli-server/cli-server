@@ -113,6 +113,36 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Build frontend
+        run: cd web && pnpm install --frozen-lockfile && pnpm build
+
+      - name: Cross-compile binaries
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          mkdir -p dist
+          for PAIR in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            OS=${PAIR%%/*}
+            ARCH=${PAIR##*/}
+            OUT=dist/cli-server-${OS}-${ARCH}
+            [ "$OS" = "windows" ] && OUT="${OUT}.exe"
+            echo "Building ${OS}/${ARCH}..."
+            CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -o "$OUT" .
+          done
+
+      - name: Generate checksums
+        run: cd dist && sha256sum cli-server-* > checksums.txt
+
       - name: Generate changelog
         id: changelog
         run: |
@@ -139,6 +169,14 @@ jobs:
             echo "helm install cli-server oci://ghcr.io/cli-server/charts/cli-server --version ${TAG#v}"
             echo "\`\`\`"
             echo ""
+            echo "## Binaries"
+            echo ""
+            echo "Download the \`cli-server\` binary for your platform below. Use it to connect a local opencode instance:"
+            echo ""
+            echo "\`\`\`bash"
+            echo "cli-server agent connect --server https://your-server --code <registration-code> --opencode-url http://localhost:4096"
+            echo "\`\`\`"
+            echo ""
             echo "## Changes"
             echo ""
             echo "$COMMITS"
@@ -149,3 +187,6 @@ jobs:
         with:
           body: ${{ steps.changelog.outputs.body }}
           generate_release_notes: false
+          files: |
+            dist/cli-server-*
+            dist/checksums.txt
