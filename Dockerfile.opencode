@@ -7,7 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ripgrep git ca-certificates sudo \
     golang rustc cargo \
     build-essential clang llvm \
-    && rm -rf /var/lib/apt/lists/*
+    nodejs npm python3 python3-pip python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable && corepack prepare pnpm@latest --activate
 
 COPY opencode /usr/local/bin/opencode
 
