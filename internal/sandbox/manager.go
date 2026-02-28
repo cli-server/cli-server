@@ -129,7 +129,7 @@ func (m *Manager) CleanOrphans(knownSandboxNames []string) {
 
 func (m *Manager) Start(id, command string, args, env []string, opts process.StartOptions) (process.Process, error) {
 	ctx := context.Background()
-	sandboxName := "cli-session-" + shortID(id)
+	sandboxName := "cli-sandbox-" + shortID(id)
 
 	// Build environment variables for the sandbox pod.
 	containerEnv := []corev1.EnvVar{{Name: "TERM", Value: "xterm-256color"}}
@@ -153,16 +153,16 @@ func (m *Manager) Start(id, command string, args, env []string, opts process.Sta
 	}
 	var volumes []corev1.Volume
 
-	// Mount user drive PVC if provided.
-	if opts.UserDrivePVC != "" {
+	// Mount workspace drive PVC if provided.
+	if opts.WorkspaceDiskPVC != "" {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name: "user-drive", MountPath: "/data/disk0",
+			Name: "workspace-drive", MountPath: "/data/disk0",
 		})
 		volumes = append(volumes, corev1.Volume{
-			Name: "user-drive",
+			Name: "workspace-drive",
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: opts.UserDrivePVC,
+					ClaimName: opts.WorkspaceDiskPVC,
 				},
 			},
 		})
@@ -179,8 +179,8 @@ if [ ! -f /mnt/session-data/.initialized ]; then
   touch /mnt/session-data/.initialized
 fi
 chown -R 1000:1000 /mnt/session-data
-mkdir -p /mnt/user-drive
-chown -R 1000:1000 /mnt/user-drive
+mkdir -p /mnt/workspace-drive
+chown -R 1000:1000 /mnt/workspace-drive
 `
 	initContainers := []corev1.Container{{
 		Name:    "fix-perms",
@@ -193,10 +193,10 @@ chown -R 1000:1000 /mnt/user-drive
 			RunAsUser: int64Ptr(0),
 		},
 	}}
-	// Also mount user drive in init container if present.
-	if opts.UserDrivePVC != "" {
+	// Also mount workspace drive in init container if present.
+	if opts.WorkspaceDiskPVC != "" {
 		initContainers[0].VolumeMounts = append(initContainers[0].VolumeMounts,
-			corev1.VolumeMount{Name: "user-drive", MountPath: "/mnt/user-drive"},
+			corev1.VolumeMount{Name: "workspace-drive", MountPath: "/mnt/workspace-drive"},
 		)
 	}
 
@@ -291,7 +291,7 @@ func (m *Manager) StartContainer(id string, opts process.StartOptions) error {
 // StartContainerWithIP creates/starts the sandbox and returns the pod IP.
 func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (string, error) {
 	ctx := context.Background()
-	sandboxName := "cli-session-" + shortID(id)
+	sandboxName := "cli-sandbox-" + shortID(id)
 
 	// Build environment variables for the sandbox pod.
 	containerEnv := []corev1.EnvVar{{Name: "TERM", Value: "xterm-256color"}}
@@ -309,7 +309,7 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 		)
 	}
 
-	// Set opencode server password for per-session auth.
+	// Set opencode server password for per-sandbox auth.
 	if opts.OpencodePassword != "" {
 		containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", Value: opts.OpencodePassword})
 	}
@@ -320,16 +320,16 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 	}
 	var volumes []corev1.Volume
 
-	// Mount user drive PVC if provided.
-	if opts.UserDrivePVC != "" {
+	// Mount workspace drive PVC if provided.
+	if opts.WorkspaceDiskPVC != "" {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name: "user-drive", MountPath: "/data/disk0",
+			Name: "workspace-drive", MountPath: "/data/disk0",
 		})
 		volumes = append(volumes, corev1.Volume{
-			Name: "user-drive",
+			Name: "workspace-drive",
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: opts.UserDrivePVC,
+					ClaimName: opts.WorkspaceDiskPVC,
 				},
 			},
 		})
@@ -343,8 +343,8 @@ if [ ! -f /mnt/session-data/.initialized ]; then
   touch /mnt/session-data/.initialized
 fi
 chown -R 1000:1000 /mnt/session-data
-mkdir -p /mnt/user-drive
-chown -R 1000:1000 /mnt/user-drive
+mkdir -p /mnt/workspace-drive
+chown -R 1000:1000 /mnt/workspace-drive
 `
 	initContainers := []corev1.Container{{
 		Name:    "fix-perms",
@@ -357,9 +357,9 @@ chown -R 1000:1000 /mnt/user-drive
 			RunAsUser: int64Ptr(0),
 		},
 	}}
-	if opts.UserDrivePVC != "" {
+	if opts.WorkspaceDiskPVC != "" {
 		initContainers[0].VolumeMounts = append(initContainers[0].VolumeMounts,
-			corev1.VolumeMount{Name: "user-drive", MountPath: "/mnt/user-drive"},
+			corev1.VolumeMount{Name: "workspace-drive", MountPath: "/mnt/workspace-drive"},
 		)
 	}
 
@@ -444,7 +444,7 @@ func (m *Manager) ResumeContainer(id string) error {
 
 // ResumeContainerWithIP scales a paused sandbox back to 1 replica and returns the pod IP.
 func (m *Manager) ResumeContainerWithIP(id string) (string, error) {
-	sandboxName := "cli-session-" + shortID(id)
+	sandboxName := "cli-sandbox-" + shortID(id)
 	ctx := context.Background()
 
 	// Patch sandbox replicas to 1.
@@ -482,7 +482,7 @@ func (m *Manager) Pause(id string) error {
 	}
 
 	// Patch sandbox replicas to 0.
-	sandboxName := "cli-session-" + shortID(id)
+	sandboxName := "cli-sandbox-" + shortID(id)
 	if ok {
 		sandboxName = entry.sandboxName
 	}
@@ -632,7 +632,7 @@ func (m *Manager) Stop(id string) error {
 		entry.proc.close()
 	}
 
-	sandboxName := "cli-session-" + shortID(id)
+	sandboxName := "cli-sandbox-" + shortID(id)
 	if ok {
 		sandboxName = entry.sandboxName
 	}

@@ -20,8 +20,8 @@ import (
 	"github.com/imryao/cli-server/internal/db"
 	"github.com/imryao/cli-server/internal/process"
 	"github.com/imryao/cli-server/internal/sandbox"
+	"github.com/imryao/cli-server/internal/sbxstore"
 	"github.com/imryao/cli-server/internal/server"
-	"github.com/imryao/cli-server/internal/session"
 	"github.com/imryao/cli-server/internal/storage"
 	"github.com/imryao/cli-server/web"
 	"github.com/spf13/cobra"
@@ -76,7 +76,7 @@ var serveCmd = &cobra.Command{
 		var procMgr process.Manager
 		var driveMgr storage.DriveManager
 
-		// Load known sandbox/container names from DB to avoid cleaning paused sessions.
+		// Load known sandbox/container names from DB to avoid cleaning paused sandboxes.
 		knownNames, err := database.ListAllActiveSandboxNames()
 		if err != nil {
 			log.Printf("Warning: failed to load known sandbox names: %v", err)
@@ -95,7 +95,7 @@ var serveCmd = &cobra.Command{
 			mgr.CleanOrphans(knownNames)
 			log.Printf("Using Docker backend (image: %s)", cfg.Image)
 			procMgr = mgr
-			driveMgr = storage.NewDockerDriveAdapter(storage.NewDockerUserDriveManager(database))
+			driveMgr = storage.NewDockerDriveAdapter(storage.NewDockerWorkspaceDriveManager(database))
 
 		case "k8s":
 			cfg := sandbox.DefaultConfig()
@@ -110,21 +110,21 @@ var serveCmd = &cobra.Command{
 			log.Printf("Using K8s sandbox backend (namespace: %s, image: %s)", cfg.Namespace, cfg.Image)
 			procMgr = mgr
 
-			userDriveSize := envOrDefault("USER_DRIVE_SIZE", "10Gi")
+			workspaceDriveSize := envOrDefault("USER_DRIVE_SIZE", "10Gi")
 			storageClass := os.Getenv("STORAGE_CLASS")
-			userDriveStorageClass := os.Getenv("USER_DRIVE_STORAGE_CLASS")
-			if userDriveStorageClass == "" {
-				userDriveStorageClass = storageClass
+			workspaceDriveStorageClass := os.Getenv("USER_DRIVE_STORAGE_CLASS")
+			if workspaceDriveStorageClass == "" {
+				workspaceDriveStorageClass = storageClass
 			}
-			driveMgr = createK8sDriveManager(database, cfg.Namespace, userDriveSize, userDriveStorageClass)
+			driveMgr = createK8sDriveManager(database, cfg.Namespace, workspaceDriveSize, workspaceDriveStorageClass)
 
 		default:
 			log.Fatalf("Unknown backend: %s (supported: docker, k8s)", backend)
 		}
 
-		// Create auth and session store.
+		// Create auth and sandbox store.
 		authSvc := auth.New(database)
-		sessionStore := session.NewStore(database)
+		sandboxStore := sbxstore.NewStore(database)
 
 		// Initialize OIDC if configured.
 		var oidcMgr *auth.OIDCManager
@@ -159,13 +159,13 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
-		srv := server.New(authSvc, oidcMgr, database, sessionStore, procMgr, driveMgr, staticFS)
+		srv := server.New(authSvc, oidcMgr, database, sandboxStore, procMgr, driveMgr, staticFS)
 		addr := fmt.Sprintf(":%d", port)
 
 		// Start idle watcher.
-		var idleWatcher *session.IdleWatcher
+		var idleWatcher *sbxstore.IdleWatcher
 		if idleTimeout > 0 {
-			idleWatcher = session.NewIdleWatcher(database, procMgr, sessionStore, idleTimeout)
+			idleWatcher = sbxstore.NewIdleWatcher(database, procMgr, sandboxStore, idleTimeout)
 			idleWatcher.Start()
 			log.Printf("Idle watcher started (timeout: %s)", idleTimeout)
 		}
@@ -182,7 +182,7 @@ var serveCmd = &cobra.Command{
 			if idleWatcher != nil {
 				idleWatcher.Stop()
 			}
-			log.Println("Cleaning up active sessions...")
+			log.Println("Cleaning up active sandboxes...")
 			procMgr.Close()
 		}()
 
@@ -196,15 +196,15 @@ var serveCmd = &cobra.Command{
 func createK8sDriveManager(database *db.DB, namespace, storageSize, storageClassName string) storage.DriveManager {
 	restCfg, err := buildRESTConfig()
 	if err != nil {
-		log.Printf("Warning: K8s user drive manager unavailable: %v", err)
+		log.Printf("Warning: K8s workspace drive manager unavailable: %v", err)
 		return storage.NilDriveManager{}
 	}
 	clientset, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
-		log.Printf("Warning: K8s user drive manager unavailable: %v", err)
+		log.Printf("Warning: K8s workspace drive manager unavailable: %v", err)
 		return storage.NilDriveManager{}
 	}
-	mgr := storage.NewUserDriveManager(database, clientset, namespace, storageSize, storageClassName)
+	mgr := storage.NewWorkspaceDriveManager(database, clientset, namespace, storageSize, storageClassName)
 	return storage.NewK8sDriveAdapter(mgr)
 }
 

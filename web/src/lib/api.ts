@@ -1,9 +1,26 @@
-export type SessionStatus = 'creating' | 'running' | 'pausing' | 'paused' | 'resuming'
+export type SandboxStatus = 'creating' | 'running' | 'pausing' | 'paused' | 'resuming'
+export type WorkspaceRole = 'owner' | 'maintainer' | 'developer' | 'guest'
 
-export interface Session {
+export interface Workspace {
   id: string
   name: string
-  status: SessionStatus
+  diskPvcName?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WorkspaceMember {
+  userId: string
+  username: string
+  role: WorkspaceRole
+}
+
+export interface Sandbox {
+  id: string
+  workspaceId: string
+  name: string
+  type: string
+  status: SandboxStatus
   opencodeUrl?: string
   createdAt: string
   lastActivityAt: string | null
@@ -50,39 +67,102 @@ export async function logout(): Promise<void> {
   await fetch('/api/auth/logout', { method: 'POST' })
 }
 
-export async function listSessions(): Promise<Session[]> {
-  const res = await fetch('/api/sessions')
-  if (!res.ok) throw new Error('Failed to list sessions')
+// Workspace API
+
+export async function listWorkspaces(): Promise<Workspace[]> {
+  const res = await fetch('/api/workspaces')
+  if (!res.ok) throw new Error('Failed to list workspaces')
   return res.json()
 }
 
-export async function getSession(id: string): Promise<Session> {
-  const res = await fetch(`/api/sessions/${id}`)
-  if (!res.ok) throw new Error('Failed to get session')
-  return res.json()
-}
-
-export async function createSession(name?: string): Promise<Session> {
-  const res = await fetch('/api/sessions', {
+export async function createWorkspace(name?: string): Promise<Workspace> {
+  const res = await fetch('/api/workspaces', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: name || 'New Session' }),
+    body: JSON.stringify({ name: name || 'New Workspace' }),
   })
-  if (!res.ok) throw new Error('Failed to create session')
+  if (!res.ok) throw new Error('Failed to create workspace')
   return res.json()
 }
 
-export async function deleteSession(id: string): Promise<void> {
-  const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error('Failed to delete session')
+export async function getWorkspace(id: string): Promise<Workspace> {
+  const res = await fetch(`/api/workspaces/${id}`)
+  if (!res.ok) throw new Error('Failed to get workspace')
+  return res.json()
 }
 
-export async function pauseSession(id: string): Promise<void> {
-  const res = await fetch(`/api/sessions/${id}/pause`, { method: 'POST' })
-  if (!res.ok) throw new Error('Failed to pause session')
+export async function deleteWorkspace(id: string): Promise<void> {
+  const res = await fetch(`/api/workspaces/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete workspace')
 }
 
-export async function resumeSession(id: string): Promise<void> {
-  const res = await fetch(`/api/sessions/${id}/resume`, { method: 'POST' })
-  if (!res.ok) throw new Error('Failed to resume session')
+// Workspace member API
+
+export async function listMembers(workspaceId: string): Promise<WorkspaceMember[]> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/members`)
+  if (!res.ok) throw new Error('Failed to list members')
+  return res.json()
+}
+
+export async function addMember(workspaceId: string, username: string, role?: string): Promise<WorkspaceMember> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/members`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, role: role || 'developer' }),
+  })
+  if (!res.ok) throw new Error('Failed to add member')
+  return res.json()
+}
+
+export async function updateMemberRole(workspaceId: string, userId: string, role: string): Promise<void> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/members/${userId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  })
+  if (!res.ok) throw new Error('Failed to update member role')
+}
+
+export async function removeMember(workspaceId: string, userId: string): Promise<void> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/members/${userId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to remove member')
+}
+
+// Sandbox API
+
+export async function listSandboxes(workspaceId: string): Promise<Sandbox[]> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/sandboxes`)
+  if (!res.ok) throw new Error('Failed to list sandboxes')
+  return res.json()
+}
+
+export async function createSandbox(workspaceId: string, name?: string): Promise<Sandbox> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/sandboxes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name || 'New Sandbox' }),
+  })
+  if (!res.ok) throw new Error('Failed to create sandbox')
+  return res.json()
+}
+
+export async function getSandbox(id: string): Promise<Sandbox> {
+  const res = await fetch(`/api/sandboxes/${id}`)
+  if (!res.ok) throw new Error('Failed to get sandbox')
+  return res.json()
+}
+
+export async function deleteSandbox(id: string): Promise<void> {
+  const res = await fetch(`/api/sandboxes/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete sandbox')
+}
+
+export async function pauseSandbox(id: string): Promise<void> {
+  const res = await fetch(`/api/sandboxes/${id}/pause`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to pause sandbox')
+}
+
+export async function resumeSandbox(id: string): Promise<void> {
+  const res = await fetch(`/api/sandboxes/${id}/resume`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to resume sandbox')
 }

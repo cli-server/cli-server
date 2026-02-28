@@ -123,7 +123,7 @@ func (m *Manager) Start(id, command string, args, env []string, opts process.Sta
 func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string, error) {
 	ctx := context.Background()
 
-	containerName := "cli-session-" + id
+	containerName := "cli-sandbox-" + id
 
 	// Check if container already exists.
 	f := filters.NewArgs(
@@ -153,14 +153,14 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 	mounts := []dockermount.Mount{
 		{
 			Type:   dockermount.TypeVolume,
-			Source: "cli-session-" + id + "-data",
+			Source: "cli-sandbox-" + id + "-data",
 			Target: "/home/agent",
 		},
 	}
-	if opts.UserDrivePVC != "" {
+	if opts.WorkspaceDiskPVC != "" {
 		mounts = append(mounts, dockermount.Mount{
 			Type:   dockermount.TypeVolume,
-			Source: opts.UserDrivePVC,
+			Source: opts.WorkspaceDiskPVC,
 			Target: "/data/disk0",
 		})
 	}
@@ -226,7 +226,7 @@ func (m *Manager) Pause(id string) error {
 	}
 
 	// No PTY process — stop the container by name (chat mode).
-	containerName := "cli-session-" + id
+	containerName := "cli-sandbox-" + id
 	ctx := context.Background()
 	f := filters.NewArgs(
 		filters.Arg("name", containerName),
@@ -330,7 +330,7 @@ func (m *Manager) Stop(id string) error {
 	m.cli.ContainerRemove(ctx, p.containerID, container.RemoveOptions{Force: true})
 
 	// Also remove the session data volume.
-	m.cli.VolumeRemove(ctx, "cli-session-"+id+"-data", true)
+	m.cli.VolumeRemove(ctx, "cli-sandbox-"+id+"-data", true)
 	return nil
 }
 

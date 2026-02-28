@@ -1,6 +1,6 @@
-package session
+package sbxstore
 
-// Status constants for session lifecycle.
+// Status constants for sandbox lifecycle.
 const (
 	StatusCreating = "creating"
 	StatusRunning  = "running"

@@ -12,7 +12,7 @@ import (
 // handleAnthropicProxy proxies Anthropic API requests from sandbox containers,
 // injecting the real API key server-side so sandboxes never see it.
 //
-// Auth: the sandbox sends its per-session proxy token via the x-api-key header
+// Auth: the sandbox sends its per-sandbox proxy token via the x-api-key header
 // (the standard Anthropic SDK authentication header). The proxy validates this
 // token against the database, replaces it with the real API key, and forwards
 // the request to the real Anthropic API.
@@ -25,18 +25,18 @@ func (s *Server) handleAnthropicProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate proxy token against the database.
-	sess, err := s.DB.GetSessionByProxyToken(proxyToken)
+	sbx, err := s.DB.GetSandboxByProxyToken(proxyToken)
 	if err != nil {
 		log.Printf("anthropic proxy: db error: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if sess == nil {
+	if sbx == nil {
 		http.Error(w, "invalid api key", http.StatusUnauthorized)
 		return
 	}
-	if sess.Status != "running" && sess.Status != "creating" {
-		http.Error(w, "session not active", http.StatusForbidden)
+	if sbx.Status != "running" && sbx.Status != "creating" {
+		http.Error(w, "sandbox not active", http.StatusForbidden)
 		return
 	}
 
@@ -92,7 +92,7 @@ func (s *Server) handleAnthropicProxy(w http.ResponseWriter, r *http.Request) {
 		},
 		FlushInterval: -1, // Enable SSE streaming.
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("anthropic proxy error for session %s: %v", sess.ID, err)
+			log.Printf("anthropic proxy error for sandbox %s: %v", sbx.ID, err)
 			http.Error(w, "proxy error", http.StatusBadGateway)
 		},
 	}

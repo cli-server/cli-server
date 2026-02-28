@@ -14,14 +14,14 @@ const (
 	subdomainCookieKey = "oc-token"
 )
 
-// handleSubdomainProxy handles all requests on oc-{sessionID}.{baseDomain}.
+// handleSubdomainProxy handles all requests on oc-{sandboxID}.{baseDomain}.
 //
 // Auth flow:
 //  1. GET /auth?token=xxx — validates the main-site token, sets a per-subdomain
 //     cookie, and redirects to /.
 //  2. All other requests — validated via the per-subdomain cookie, then proxied
-//     to the session pod.
-func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sessionID string) {
+//     to the sandbox pod.
+func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sandboxID string) {
 	// Step 1: handle /auth?token=xxx — exchange main-site token for subdomain cookie.
 	if r.URL.Path == "/auth" {
 		token := r.URL.Query().Get("token")
@@ -34,10 +34,15 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, se
 			http.Error(w, "invalid token", http.StatusUnauthorized)
 			return
 		}
-		// Verify session ownership.
-		sess, found := s.Sessions.Get(sessionID)
-		if !found || sess.UserID != userID {
-			http.Error(w, "session not found", http.StatusNotFound)
+		// Verify workspace membership.
+		sbx, found := s.Sandboxes.Get(sandboxID)
+		if !found {
+			http.Error(w, "sandbox not found", http.StatusNotFound)
+			return
+		}
+		isMember, err := s.DB.IsWorkspaceMember(sbx.WorkspaceID, userID)
+		if err != nil || !isMember {
+			http.Error(w, "sandbox not found", http.StatusNotFound)
 			return
 		}
 		// Set a per-subdomain auth cookie (no Domain attr — scoped to this subdomain only).
@@ -68,44 +73,45 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 
-	// Validate session ownership.
-	sess, found := s.Sessions.Get(sessionID)
+	// Validate workspace membership.
+	sbx, found := s.Sandboxes.Get(sandboxID)
 	if !found {
-		log.Printf("subdomain proxy: session %s not found in store", sessionID)
-		http.Error(w, "session not found", http.StatusNotFound)
+		log.Printf("subdomain proxy: sandbox %s not found in store", sandboxID)
+		http.Error(w, "sandbox not found", http.StatusNotFound)
 		return
 	}
-	if sess.UserID != userID {
-		log.Printf("subdomain proxy: session %s owned by %s, but request from %s", sessionID, sess.UserID, userID)
-		http.Error(w, "session not found", http.StatusNotFound)
-		return
-	}
-
-	if sess.Status != "running" {
-		http.Error(w, "session is not running", http.StatusServiceUnavailable)
+	isMember, err := s.DB.IsWorkspaceMember(sbx.WorkspaceID, userID)
+	if err != nil || !isMember {
+		log.Printf("subdomain proxy: user %s not a member of workspace %s for sandbox %s", userID, sbx.WorkspaceID, sandboxID)
+		http.Error(w, "sandbox not found", http.StatusNotFound)
 		return
 	}
 
-	if sess.PodIP == "" {
-		http.Error(w, "session pod not ready", http.StatusServiceUnavailable)
+	if sbx.Status != "running" {
+		http.Error(w, "sandbox is not running", http.StatusServiceUnavailable)
+		return
+	}
+
+	if sbx.PodIP == "" {
+		http.Error(w, "sandbox pod not ready", http.StatusServiceUnavailable)
 		return
 	}
 
 	// Inject Basic Auth header for opencode server authentication.
-	if sess.OpencodePassword != "" {
-		cred := base64.StdEncoding.EncodeToString([]byte("opencode:" + sess.OpencodePassword))
+	if sbx.OpencodePassword != "" {
+		cred := base64.StdEncoding.EncodeToString([]byte("opencode:" + sbx.OpencodePassword))
 		r.Header.Set("Authorization", "Basic "+cred)
 	}
 
-	// Reverse proxy to the session pod.
+	// Reverse proxy to the sandbox pod.
 	target := &url.URL{
 		Scheme: "http",
-		Host:   sess.PodIP + ":" + opencodePort,
+		Host:   sbx.PodIP + ":" + opencodePort,
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.FlushInterval = -1 // Enable SSE streaming.
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		log.Printf("subdomain proxy error for session %s: %v", sessionID, err)
+		log.Printf("subdomain proxy error for sandbox %s: %v", sandboxID, err)
 		http.Error(w, "proxy error", http.StatusBadGateway)
 	}
 	proxy.ServeHTTP(w, r)

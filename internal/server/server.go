@@ -18,28 +18,26 @@ import (
 	"github.com/imryao/cli-server/internal/auth"
 	"github.com/imryao/cli-server/internal/db"
 	"github.com/imryao/cli-server/internal/process"
-	"github.com/imryao/cli-server/internal/session"
+	"github.com/imryao/cli-server/internal/sbxstore"
 	"github.com/imryao/cli-server/internal/storage"
-	"github.com/imryao/cli-server/internal/ws"
 )
 
 type Server struct {
 	Auth           *auth.Auth
 	OIDC           *auth.OIDCManager
 	DB             *db.DB
-	Sessions       *session.Store
+	Sandboxes      *sbxstore.Store
 	ProcessManager process.Manager
 	DriveManager   storage.DriveManager
-	WSHandler      *ws.Handler
 	StaticFS       fs.FS
 	BaseDomain     string // e.g. "cli.cs.ac.cn" — used for subdomain routing
 	BaseScheme     string // e.g. "https" — scheme for generated URLs
 	// activityThrottle prevents excessive DB writes for activity tracking.
-	activityMu     sync.Mutex
-	activityLast   map[string]time.Time
+	activityMu   sync.Mutex
+	activityLast map[string]time.Time
 }
 
-func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sessionStore *session.Store, processManager process.Manager, driveManager storage.DriveManager, staticFS fs.FS) *Server {
+func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, staticFS fs.FS) *Server {
 	baseDomain := os.Getenv("BASE_DOMAIN")
 	baseScheme := os.Getenv("BASE_SCHEME")
 	if baseScheme == "" {
@@ -50,7 +48,7 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sessionStore 
 		Auth:           a,
 		OIDC:           oidcMgr,
 		DB:             database,
-		Sessions:       sessionStore,
+		Sandboxes:      sandboxStore,
 		ProcessManager: processManager,
 		DriveManager:   driveManager,
 		StaticFS:       staticFS,
@@ -58,27 +56,21 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sessionStore 
 		BaseScheme:     baseScheme,
 		activityLast:   make(map[string]time.Time),
 	}
-
-	s.WSHandler = &ws.Handler{
-		Sessions:       sessionStore,
-		ProcessManager: processManager,
-		OnActivity:     s.throttledActivity,
-	}
 	return s
 }
 
-// throttledActivity updates activity at most once per 30 seconds per session.
-func (s *Server) throttledActivity(sessionID string) {
+// throttledActivity updates activity at most once per 30 seconds per sandbox.
+func (s *Server) throttledActivity(sandboxID string) {
 	s.activityMu.Lock()
-	last, ok := s.activityLast[sessionID]
+	last, ok := s.activityLast[sandboxID]
 	now := time.Now()
 	if ok && now.Sub(last) < 30*time.Second {
 		s.activityMu.Unlock()
 		return
 	}
-	s.activityLast[sessionID] = now
+	s.activityLast[sandboxID] = now
 	s.activityMu.Unlock()
-	s.Sessions.UpdateActivity(sessionID)
+	s.Sandboxes.UpdateActivity(sandboxID)
 }
 
 func (s *Server) Router() http.Handler {
@@ -86,8 +78,8 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// Subdomain middleware: if the Host matches oc-{sessionID}.{baseDomain},
-	// proxy the entire request to the session pod and skip all other routes.
+	// Subdomain middleware: if the Host matches oc-{sandboxID}.{baseDomain},
+	// proxy the entire request to the sandbox pod and skip all other routes.
 	if s.BaseDomain != "" {
 		r.Use(func(next http.Handler) http.Handler {
 			suffix := "." + s.BaseDomain
@@ -100,8 +92,8 @@ func (s *Server) Router() http.Handler {
 				if strings.HasSuffix(host, suffix) {
 					sub := strings.TrimSuffix(host, suffix)
 					if strings.HasPrefix(sub, "oc-") {
-						sessionID := sub[3:] // strip "oc-" prefix
-						s.handleSubdomainProxy(w, r, sessionID)
+						sandboxID := sub[3:] // strip "oc-" prefix
+						s.handleSubdomainProxy(w, r, sandboxID)
 						return
 					}
 				}
@@ -141,16 +133,27 @@ func (s *Server) Router() http.Handler {
 		r.Use(s.Auth.Middleware)
 
 		r.Get("/api/auth/me", s.handleMe)
-		r.Get("/api/sessions", s.handleListSessions)
-		r.Post("/api/sessions", s.handleCreateSession)
-		r.Get("/api/sessions/{id}", s.handleGetSession)
-		r.Delete("/api/sessions/{id}", s.handleDeleteSession)
-		r.Post("/api/sessions/{id}/pause", s.handlePauseSession)
-		r.Post("/api/sessions/{id}/resume", s.handleResumeSession)
-	})
 
-	// WebSocket (auth checked inside)
-	r.Get("/ws/terminal/{id}", s.handleWebSocket)
+		// Workspace routes
+		r.Get("/api/workspaces", s.handleListWorkspaces)
+		r.Post("/api/workspaces", s.handleCreateWorkspace)
+		r.Get("/api/workspaces/{id}", s.handleGetWorkspace)
+		r.Delete("/api/workspaces/{id}", s.handleDeleteWorkspace)
+
+		// Workspace member routes
+		r.Get("/api/workspaces/{id}/members", s.handleListMembers)
+		r.Post("/api/workspaces/{id}/members", s.handleAddMember)
+		r.Put("/api/workspaces/{id}/members/{userId}", s.handleUpdateMemberRole)
+		r.Delete("/api/workspaces/{id}/members/{userId}", s.handleRemoveMember)
+
+		// Sandbox routes
+		r.Get("/api/workspaces/{wid}/sandboxes", s.handleListSandboxes)
+		r.Post("/api/workspaces/{wid}/sandboxes", s.handleCreateSandbox)
+		r.Get("/api/sandboxes/{id}", s.handleGetSandbox)
+		r.Delete("/api/sandboxes/{id}", s.handleDeleteSandbox)
+		r.Post("/api/sandboxes/{id}/pause", s.handlePauseSandbox)
+		r.Post("/api/sandboxes/{id}/resume", s.handleResumeSandbox)
+	})
 
 	// Static files
 	if s.StaticFS != nil {
@@ -264,36 +267,67 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type sessionResponse struct {
+// --- Response types ---
+
+type workspaceResponse struct {
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	DiskPVCName *string `json:"diskPvcName,omitempty"`
+	CreatedAt  string  `json:"createdAt"`
+	UpdatedAt  string  `json:"updatedAt"`
+}
+
+type workspaceMemberResponse struct {
+	UserID   string `json:"userId"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+}
+
+type sandboxResponse struct {
 	ID             string  `json:"id"`
+	WorkspaceID    string  `json:"workspaceId"`
 	Name           string  `json:"name"`
+	Type           string  `json:"type"`
 	Status         string  `json:"status"`
-	SandboxName    string  `json:"sandboxName,omitempty"`
 	OpencodeURL    string  `json:"opencodeUrl,omitempty"`
 	CreatedAt      string  `json:"createdAt"`
 	LastActivityAt *string `json:"lastActivityAt"`
 	PausedAt       *string `json:"pausedAt"`
 }
 
-func (s *Server) toSessionResponse(sess *session.Session, authToken string) sessionResponse {
+func (s *Server) toWorkspaceResponse(ws *db.Workspace) workspaceResponse {
+	resp := workspaceResponse{
+		ID:        ws.ID,
+		Name:      ws.Name,
+		CreatedAt: ws.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: ws.UpdatedAt.Format(time.RFC3339),
+	}
+	if ws.DiskPVCName.Valid {
+		resp.DiskPVCName = &ws.DiskPVCName.String
+	}
+	return resp
+}
+
+func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sandboxResponse {
 	var opencodeURL string
 	if s.BaseDomain != "" {
-		opencodeURL = s.BaseScheme + "://oc-" + sess.ID + "." + s.BaseDomain + "/auth?token=" + authToken
+		opencodeURL = s.BaseScheme + "://oc-" + sbx.ID + "." + s.BaseDomain + "/auth?token=" + authToken
 	}
-	resp := sessionResponse{
-		ID:          sess.ID,
-		Name:        sess.Name,
-		Status:      sess.Status,
-		SandboxName: sess.SandboxName,
+	resp := sandboxResponse{
+		ID:          sbx.ID,
+		WorkspaceID: sbx.WorkspaceID,
+		Name:        sbx.Name,
+		Type:        sbx.Type,
+		Status:      sbx.Status,
 		OpencodeURL: opencodeURL,
-		CreatedAt:   sess.CreatedAt.Format(time.RFC3339),
+		CreatedAt:   sbx.CreatedAt.Format(time.RFC3339),
 	}
-	if sess.LastActivityAt != nil {
-		s := sess.LastActivityAt.Format(time.RFC3339)
+	if sbx.LastActivityAt != nil {
+		s := sbx.LastActivityAt.Format(time.RFC3339)
 		resp.LastActivityAt = &s
 	}
-	if sess.PausedAt != nil {
-		s := sess.PausedAt.Format(time.RFC3339)
+	if sbx.PausedAt != nil {
+		s := sbx.PausedAt.Format(time.RFC3339)
 		resp.PausedAt = &s
 	}
 	return resp
@@ -308,61 +342,305 @@ func authTokenFromRequest(r *http.Request) string {
 	return c.Value
 }
 
-func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+// --- Authorization helpers ---
+
+func (s *Server) requireWorkspaceMember(w http.ResponseWriter, r *http.Request, workspaceID string) (string, bool) {
 	userID := auth.UserIDFromContext(r.Context())
-	sessions := s.Sessions.List(userID)
-	token := authTokenFromRequest(r)
-	resp := make([]sessionResponse, len(sessions))
-	for i, sess := range sessions {
-		resp[i] = s.toSessionResponse(sess, token)
+	role, err := s.DB.GetWorkspaceMemberRole(workspaceID, userID)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return "", false
+	}
+	if role == "" {
+		http.Error(w, "not a workspace member", http.StatusForbidden)
+		return "", false
+	}
+	return role, true
+}
+
+func (s *Server) requireWorkspaceRole(w http.ResponseWriter, r *http.Request, workspaceID string, allowedRoles ...string) bool {
+	role, ok := s.requireWorkspaceMember(w, r, workspaceID)
+	if !ok {
+		return false
+	}
+	for _, allowed := range allowedRoles {
+		if role == allowed {
+			return true
+		}
+	}
+	http.Error(w, "insufficient permissions", http.StatusForbidden)
+	return false
+}
+
+// --- Workspace handlers ---
+
+func (s *Server) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserIDFromContext(r.Context())
+	workspaces, err := s.DB.ListWorkspacesByUser(userID)
+	if err != nil {
+		log.Printf("failed to list workspaces: %v", err)
+		http.Error(w, "failed to list workspaces", http.StatusInternalServerError)
+		return
+	}
+	resp := make([]workspaceResponse, len(workspaces))
+	for i, ws := range workspaces {
+		resp[i] = s.toWorkspaceResponse(ws)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
-	userID := auth.UserIDFromContext(r.Context())
-	id := chi.URLParam(r, "id")
-	sess, ok := s.Sessions.Get(id)
-	if !ok || sess.UserID != userID {
-		http.Error(w, "session not found", http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.toSessionResponse(sess, authTokenFromRequest(r)))
-}
-
-func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 	var req struct {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		req.Name = "New Session"
+		req.Name = "New Workspace"
 	}
 	if req.Name == "" {
-		req.Name = "New Session"
-	}
-
-	// Ensure user drive exists.
-	userDrivePVC, err := s.DriveManager.EnsureDrive(r.Context(), userID)
-	if err != nil {
-		log.Printf("failed to ensure user drive for %s: %v", userID, err)
-		// Non-fatal: session can still work without user drive.
+		req.Name = "New Workspace"
 	}
 
 	id := uuid.New().String()
-	sandboxName := "cli-session-" + shortID(id)
+	if err := s.DB.CreateWorkspace(id, req.Name); err != nil {
+		log.Printf("failed to create workspace: %v", err)
+		http.Error(w, "failed to create workspace", http.StatusInternalServerError)
+		return
+	}
+
+	// Add creator as owner.
+	if err := s.DB.AddWorkspaceMember(id, userID, "owner"); err != nil {
+		log.Printf("failed to add workspace owner: %v", err)
+		s.DB.DeleteWorkspace(id)
+		http.Error(w, "failed to create workspace", http.StatusInternalServerError)
+		return
+	}
+
+	ws, err := s.DB.GetWorkspace(id)
+	if err != nil || ws == nil {
+		http.Error(w, "failed to get workspace", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(s.toWorkspaceResponse(ws))
+}
+
+func (s *Server) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if _, ok := s.requireWorkspaceMember(w, r, id); !ok {
+		return
+	}
+
+	ws, err := s.DB.GetWorkspace(id)
+	if err != nil || ws == nil {
+		http.Error(w, "workspace not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.toWorkspaceResponse(ws))
+}
+
+func (s *Server) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.requireWorkspaceRole(w, r, id, "owner") {
+		return
+	}
+
+	// Stop all sandboxes in the workspace.
+	sandboxes := s.Sandboxes.ListByWorkspace(id)
+	for _, sbx := range sandboxes {
+		switch sbx.Status {
+		case sbxstore.StatusRunning:
+			s.ProcessManager.Stop(sbx.ID)
+		case sbxstore.StatusPaused:
+			if sbx.SandboxName != "" {
+				switch mgr := s.ProcessManager.(type) {
+				case interface{ StopBySandboxName(string) error }:
+					mgr.StopBySandboxName(sbx.SandboxName)
+				case interface{ StopByContainerName(string) error }:
+					mgr.StopByContainerName(sbx.SandboxName)
+				}
+			}
+		}
+	}
+
+	if err := s.DB.DeleteWorkspace(id); err != nil {
+		log.Printf("failed to delete workspace %s: %v", id, err)
+		http.Error(w, "failed to delete workspace", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Member handlers ---
+
+func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "id")
+	if _, ok := s.requireWorkspaceMember(w, r, wsID); !ok {
+		return
+	}
+
+	members, err := s.DB.ListWorkspaceMembers(wsID)
+	if err != nil {
+		log.Printf("failed to list members: %v", err)
+		http.Error(w, "failed to list members", http.StatusInternalServerError)
+		return
+	}
+
+	resp := make([]workspaceMemberResponse, 0, len(members))
+	for _, m := range members {
+		user, err := s.Auth.GetUserByID(m.UserID)
+		username := m.UserID
+		if err == nil && user != nil {
+			username = user.Username
+		}
+		resp = append(resp, workspaceMemberResponse{
+			UserID:   m.UserID,
+			Username: username,
+			Role:     m.Role,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "id")
+	if !s.requireWorkspaceRole(w, r, wsID, "owner", "maintainer") {
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+		Role     string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.Role == "" {
+		req.Role = "developer"
+	}
+
+	user, err := s.Auth.GetUserByUsername(req.Username)
+	if err != nil || user == nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	if err := s.DB.AddWorkspaceMember(wsID, user.ID, req.Role); err != nil {
+		log.Printf("failed to add member: %v", err)
+		http.Error(w, "failed to add member", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(workspaceMemberResponse{
+		UserID:   user.ID,
+		Username: user.Username,
+		Role:     req.Role,
+	})
+}
+
+func (s *Server) handleUpdateMemberRole(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "id")
+	if !s.requireWorkspaceRole(w, r, wsID, "owner") {
+		return
+	}
+
+	targetUserID := chi.URLParam(r, "userId")
+	var req struct {
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Role == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.DB.UpdateWorkspaceMemberRole(wsID, targetUserID, req.Role); err != nil {
+		log.Printf("failed to update member role: %v", err)
+		http.Error(w, "failed to update member role", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "id")
+	if !s.requireWorkspaceRole(w, r, wsID, "owner") {
+		return
+	}
+
+	targetUserID := chi.URLParam(r, "userId")
+	if err := s.DB.RemoveWorkspaceMember(wsID, targetUserID); err != nil {
+		log.Printf("failed to remove member: %v", err)
+		http.Error(w, "failed to remove member", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Sandbox handlers ---
+
+func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "wid")
+	if _, ok := s.requireWorkspaceMember(w, r, wsID); !ok {
+		return
+	}
+
+	sandboxes := s.Sandboxes.ListByWorkspace(wsID)
+	token := authTokenFromRequest(r)
+	resp := make([]sandboxResponse, len(sandboxes))
+	for i, sbx := range sandboxes {
+		resp[i] = s.toSandboxResponse(sbx, token)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "wid")
+	if !s.requireWorkspaceRole(w, r, wsID, "owner", "maintainer", "developer") {
+		return
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.Name = "New Sandbox"
+	}
+	if req.Name == "" {
+		req.Name = "New Sandbox"
+	}
+
+	// Ensure workspace drive exists.
+	workspaceDiskPVC, err := s.DriveManager.EnsureDrive(r.Context(), wsID)
+	if err != nil {
+		log.Printf("failed to ensure workspace drive for %s: %v", wsID, err)
+		// Non-fatal: sandbox can still work without workspace drive.
+	}
+
+	id := uuid.New().String()
+	sandboxName := "cli-sandbox-" + shortID(id)
 
 	// Generate random password for opencode server auth.
 	opencodePassword := generatePassword()
 	// Generate random token for Anthropic API proxy auth.
 	proxyToken := generatePassword()
 
-	sess, err := s.Sessions.Create(id, userID, req.Name, sandboxName, opencodePassword, proxyToken)
+	sbx, err := s.Sandboxes.Create(id, wsID, req.Name, "opencode", sandboxName, opencodePassword, proxyToken)
 	if err != nil {
-		log.Printf("failed to create session: %v", err)
-		http.Error(w, "failed to create session", http.StatusInternalServerError)
+		log.Printf("failed to create sandbox: %v", err)
+		http.Error(w, "failed to create sandbox", http.StatusInternalServerError)
 		return
 	}
 
@@ -375,90 +653,105 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}); ok {
 			var err error
 			podIP, err = sc.StartContainerWithIP(id, process.StartOptions{
-				UserDrivePVC:     userDrivePVC,
+				WorkspaceDiskPVC: workspaceDiskPVC,
 				OpencodePassword: opencodePassword,
 				ProxyToken:       proxyToken,
 			})
 			if err != nil {
-				log.Printf("failed to start container for session %s: %v", id, err)
-				s.Sessions.Delete(id)
+				log.Printf("failed to start container for sandbox %s: %v", id, err)
+				s.Sandboxes.Delete(id)
 				return
 			}
 		} else {
 			if err := s.ProcessManager.StartContainer(id, process.StartOptions{
-				UserDrivePVC:     userDrivePVC,
+				WorkspaceDiskPVC: workspaceDiskPVC,
 				OpencodePassword: opencodePassword,
 				ProxyToken:       proxyToken,
 			}); err != nil {
-				log.Printf("failed to start container for session %s: %v", id, err)
-				s.Sessions.Delete(id)
+				log.Printf("failed to start container for sandbox %s: %v", id, err)
+				s.Sandboxes.Delete(id)
 				return
 			}
 		}
 		if podIP != "" {
-			if err := s.DB.UpdateSessionPodIP(id, podIP); err != nil {
-				log.Printf("failed to update pod IP for session %s: %v", id, err)
+			if err := s.DB.UpdateSandboxPodIP(id, podIP); err != nil {
+				log.Printf("failed to update pod IP for sandbox %s: %v", id, err)
 			}
 		}
-		s.Sessions.UpdateStatus(id, session.StatusRunning)
+		s.Sandboxes.UpdateStatus(id, sbxstore.StatusRunning)
 	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(s.toSessionResponse(sess, authTokenFromRequest(r)))
+	json.NewEncoder(w).Encode(s.toSandboxResponse(sbx, authTokenFromRequest(r)))
 }
 
-func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
-	userID := auth.UserIDFromContext(r.Context())
+func (s *Server) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	sbx, ok := s.Sandboxes.Get(id)
+	if !ok {
+		http.Error(w, "sandbox not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.toSandboxResponse(sbx, authTokenFromRequest(r)))
+}
 
-	sess, ok := s.Sessions.Get(id)
-	if !ok || sess.UserID != userID {
-		http.Error(w, "session not found", http.StatusNotFound)
+func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sbx, ok := s.Sandboxes.Get(id)
+	if !ok {
+		http.Error(w, "sandbox not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
 		return
 	}
 
-	// Handle based on session status.
-	switch sess.Status {
-	case session.StatusRunning:
+	// Handle based on sandbox status.
+	switch sbx.Status {
+	case sbxstore.StatusRunning:
 		s.ProcessManager.Stop(id)
-	case session.StatusPaused:
-		// Delete the sandbox/container directly by name.
-		if sess.SandboxName != "" {
+	case sbxstore.StatusPaused:
+		if sbx.SandboxName != "" {
 			switch mgr := s.ProcessManager.(type) {
 			case interface{ StopBySandboxName(string) error }:
-				mgr.StopBySandboxName(sess.SandboxName)
+				mgr.StopBySandboxName(sbx.SandboxName)
 			case interface{ StopByContainerName(string) error }:
-				mgr.StopByContainerName(sess.SandboxName)
+				mgr.StopByContainerName(sbx.SandboxName)
 			}
 		}
 	}
 
-	if err := s.Sessions.Delete(id); err != nil {
-		log.Printf("failed to delete session %s: %v", id, err)
-		http.Error(w, "failed to delete session", http.StatusInternalServerError)
+	if err := s.Sandboxes.Delete(id); err != nil {
+		log.Printf("failed to delete sandbox %s: %v", id, err)
+		http.Error(w, "failed to delete sandbox", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handlePauseSession(w http.ResponseWriter, r *http.Request) {
-	userID := auth.UserIDFromContext(r.Context())
+func (s *Server) handlePauseSandbox(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-
-	sess, ok := s.Sessions.Get(id)
-	if !ok || sess.UserID != userID {
-		http.Error(w, "session not found", http.StatusNotFound)
+	sbx, ok := s.Sandboxes.Get(id)
+	if !ok {
+		http.Error(w, "sandbox not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
 		return
 	}
 
-	if !session.ValidTransition(sess.Status, session.StatusPausing) {
-		http.Error(w, "session cannot be paused in current state: "+sess.Status, http.StatusConflict)
+	if !sbxstore.ValidTransition(sbx.Status, sbxstore.StatusPausing) {
+		http.Error(w, "sandbox cannot be paused in current state: "+sbx.Status, http.StatusConflict)
 		return
 	}
 
 	// Transition to pausing.
-	if err := s.Sessions.UpdateStatus(id, session.StatusPausing); err != nil {
+	if err := s.Sandboxes.UpdateStatus(id, sbxstore.StatusPausing); err != nil {
 		http.Error(w, "failed to update status", http.StatusInternalServerError)
 		return
 	}
@@ -466,43 +759,39 @@ func (s *Server) handlePauseSession(w http.ResponseWriter, r *http.Request) {
 	// Pause asynchronously.
 	go func() {
 		if err := s.ProcessManager.Pause(id); err != nil {
-			log.Printf("failed to pause session %s: %v", id, err)
-			s.Sessions.UpdateStatus(id, session.StatusRunning)
+			log.Printf("failed to pause sandbox %s: %v", id, err)
+			s.Sandboxes.UpdateStatus(id, sbxstore.StatusRunning)
 			return
 		}
 		// Clear pod IP so the proxy won't connect to a stale address.
-		if err := s.DB.UpdateSessionPodIP(id, ""); err != nil {
-			log.Printf("failed to clear pod IP for session %s: %v", id, err)
+		if err := s.DB.UpdateSandboxPodIP(id, ""); err != nil {
+			log.Printf("failed to clear pod IP for sandbox %s: %v", id, err)
 		}
-		s.Sessions.UpdateStatus(id, session.StatusPaused)
+		s.Sandboxes.UpdateStatus(id, sbxstore.StatusPaused)
 	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "pausing"})
 }
 
-func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
-	userID := auth.UserIDFromContext(r.Context())
+func (s *Server) handleResumeSandbox(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-
-	sess, ok := s.Sessions.Get(id)
-	if !ok || sess.UserID != userID {
-		http.Error(w, "session not found", http.StatusNotFound)
+	sbx, ok := s.Sandboxes.Get(id)
+	if !ok {
+		http.Error(w, "sandbox not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
 		return
 	}
 
-	if !session.ValidTransition(sess.Status, session.StatusResuming) {
-		http.Error(w, "session cannot be resumed in current state: "+sess.Status, http.StatusConflict)
-		return
-	}
-
-	if !session.ValidTransition(sess.Status, session.StatusResuming) {
-		http.Error(w, "session cannot be resumed in current state: "+sess.Status, http.StatusConflict)
+	if !sbxstore.ValidTransition(sbx.Status, sbxstore.StatusResuming) {
+		http.Error(w, "sandbox cannot be resumed in current state: "+sbx.Status, http.StatusConflict)
 		return
 	}
 
 	// Transition to resuming.
-	if err := s.Sessions.UpdateStatus(id, session.StatusResuming); err != nil {
+	if err := s.Sandboxes.UpdateStatus(id, sbxstore.StatusResuming); err != nil {
 		http.Error(w, "failed to update status", http.StatusInternalServerError)
 		return
 	}
@@ -522,38 +811,20 @@ func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
 			err = s.ProcessManager.StartContainer(id, process.StartOptions{})
 		}
 		if err != nil {
-			log.Printf("failed to resume session %s: %v", id, err)
-			s.Sessions.UpdateStatus(id, session.StatusPaused)
+			log.Printf("failed to resume sandbox %s: %v", id, err)
+			s.Sandboxes.UpdateStatus(id, sbxstore.StatusPaused)
 			return
 		}
 		if podIP != "" {
-			if err := s.DB.UpdateSessionPodIP(id, podIP); err != nil {
-				log.Printf("failed to update pod IP for session %s: %v", id, err)
+			if err := s.DB.UpdateSandboxPodIP(id, podIP); err != nil {
+				log.Printf("failed to update pod IP for sandbox %s: %v", id, err)
 			}
 		}
-		s.Sessions.UpdateStatus(id, session.StatusRunning)
+		s.Sandboxes.UpdateStatus(id, sbxstore.StatusRunning)
 	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "resuming"})
-}
-
-func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.Auth.ValidateRequest(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	id := chi.URLParam(r, "id")
-
-	// Verify ownership.
-	sess, found := s.Sessions.Get(id)
-	if !found || sess.UserID != userID {
-		http.Error(w, "session not found", http.StatusNotFound)
-		return
-	}
-
-	s.WSHandler.ServeHTTP(w, r, id)
 }
 
 func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {

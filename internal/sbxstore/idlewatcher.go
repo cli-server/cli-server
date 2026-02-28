@@ -1,4 +1,4 @@
-package session
+package sbxstore
 
 import (
 	"log"
@@ -8,7 +8,7 @@ import (
 	"github.com/imryao/cli-server/internal/process"
 )
 
-// IdleWatcher monitors sessions and auto-pauses idle ones.
+// IdleWatcher monitors sandboxes and auto-pauses idle ones.
 type IdleWatcher struct {
 	db      *db.DB
 	procMgr process.Manager
@@ -17,7 +17,7 @@ type IdleWatcher struct {
 	stop    chan struct{}
 }
 
-// NewIdleWatcher creates a new idle session watcher.
+// NewIdleWatcher creates a new idle sandbox watcher.
 func NewIdleWatcher(database *db.DB, procMgr process.Manager, store *Store, timeout time.Duration) *IdleWatcher {
 	return &IdleWatcher{
 		db:      database,
@@ -53,37 +53,37 @@ func (w *IdleWatcher) loop() {
 }
 
 func (w *IdleWatcher) check() {
-	sessions, err := w.db.ListIdleSessions(w.timeout)
+	sandboxes, err := w.db.ListIdleSandboxes(w.timeout)
 	if err != nil {
-		log.Printf("idle watcher: failed to list idle sessions: %v", err)
+		log.Printf("idle watcher: failed to list idle sandboxes: %v", err)
 		return
 	}
 
-	for _, sess := range sessions {
-		log.Printf("idle watcher: pausing idle session %s (last activity: %v)", sess.ID, sess.LastActivityAt)
+	for _, sbx := range sandboxes {
+		log.Printf("idle watcher: pausing idle sandbox %s (last activity: %v)", sbx.ID, sbx.LastActivityAt)
 
 		// Transition to pausing.
-		if err := w.store.UpdateStatus(sess.ID, StatusPausing); err != nil {
-			log.Printf("idle watcher: failed to set pausing status for %s: %v", sess.ID, err)
+		if err := w.store.UpdateStatus(sbx.ID, StatusPausing); err != nil {
+			log.Printf("idle watcher: failed to set pausing status for %s: %v", sbx.ID, err)
 			continue
 		}
 
 		// Pause the process.
-		if err := w.procMgr.Pause(sess.ID); err != nil {
-			log.Printf("idle watcher: failed to pause process for %s: %v", sess.ID, err)
+		if err := w.procMgr.Pause(sbx.ID); err != nil {
+			log.Printf("idle watcher: failed to pause process for %s: %v", sbx.ID, err)
 			// Revert status to running.
-			w.store.UpdateStatus(sess.ID, StatusRunning)
+			w.store.UpdateStatus(sbx.ID, StatusRunning)
 			continue
 		}
 
 		// Clear pod IP so the proxy won't connect to a stale address.
-		if err := w.db.UpdateSessionPodIP(sess.ID, ""); err != nil {
-			log.Printf("idle watcher: failed to clear pod IP for %s: %v", sess.ID, err)
+		if err := w.db.UpdateSandboxPodIP(sbx.ID, ""); err != nil {
+			log.Printf("idle watcher: failed to clear pod IP for %s: %v", sbx.ID, err)
 		}
 
 		// Transition to paused.
-		if err := w.store.UpdateStatus(sess.ID, StatusPaused); err != nil {
-			log.Printf("idle watcher: failed to set paused status for %s: %v", sess.ID, err)
+		if err := w.store.UpdateStatus(sbx.ID, StatusPaused); err != nil {
+			log.Printf("idle watcher: failed to set paused status for %s: %v", sbx.ID, err)
 		}
 	}
 }

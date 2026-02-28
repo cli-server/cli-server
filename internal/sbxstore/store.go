@@ -1,0 +1,122 @@
+package sbxstore
+
+import (
+	"time"
+
+	"github.com/imryao/cli-server/internal/db"
+)
+
+// Sandbox represents a sandbox with its current state.
+type Sandbox struct {
+	ID               string     `json:"id"`
+	WorkspaceID      string     `json:"workspaceId"`
+	Name             string     `json:"name"`
+	Type             string     `json:"type"`
+	Status           string     `json:"status"`
+	SandboxName      string     `json:"sandboxName,omitempty"`
+	PodIP            string     `json:"podIp,omitempty"`
+	OpencodePassword string     `json:"-"`
+	ProxyToken       string     `json:"-"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	LastActivityAt   *time.Time `json:"lastActivityAt,omitempty"`
+	PausedAt         *time.Time `json:"pausedAt,omitempty"`
+}
+
+// Store manages sandboxes via PostgreSQL.
+type Store struct {
+	db *db.DB
+}
+
+func NewStore(database *db.DB) *Store {
+	return &Store{db: database}
+}
+
+// Create inserts a new sandbox into the DB with 'creating' status.
+func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken string) (*Sandbox, error) {
+	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken); err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	return &Sandbox{
+		ID:               id,
+		WorkspaceID:      workspaceID,
+		Name:             name,
+		Type:             sandboxType,
+		Status:           StatusCreating,
+		SandboxName:      sandboxName,
+		OpencodePassword: opencodePassword,
+		ProxyToken:       proxyToken,
+		CreatedAt:        now,
+		LastActivityAt:   &now,
+	}, nil
+}
+
+// Get returns a sandbox from DB.
+func (s *Store) Get(id string) (*Sandbox, bool) {
+	dbSbx, err := s.db.GetSandbox(id)
+	if err != nil || dbSbx == nil {
+		return nil, false
+	}
+	return dbSandboxToSandbox(dbSbx), true
+}
+
+// ListByWorkspace returns all sandboxes for a workspace from the database.
+func (s *Store) ListByWorkspace(workspaceID string) []*Sandbox {
+	dbSandboxes, err := s.db.ListSandboxesByWorkspace(workspaceID)
+	if err != nil {
+		return nil
+	}
+	out := make([]*Sandbox, 0, len(dbSandboxes))
+	for _, ds := range dbSandboxes {
+		out = append(out, dbSandboxToSandbox(ds))
+	}
+	return out
+}
+
+// UpdateStatus transitions a sandbox to a new status.
+func (s *Store) UpdateStatus(id, status string) error {
+	return s.db.UpdateSandboxStatus(id, status)
+}
+
+// Delete removes a sandbox from the DB.
+func (s *Store) Delete(id string) error {
+	return s.db.DeleteSandbox(id)
+}
+
+// UpdateActivity records user activity on a sandbox.
+func (s *Store) UpdateActivity(id string) {
+	s.db.UpdateSandboxActivity(id)
+}
+
+func dbSandboxToSandbox(ds *db.Sandbox) *Sandbox {
+	sbx := &Sandbox{
+		ID:          ds.ID,
+		WorkspaceID: ds.WorkspaceID,
+		Name:        ds.Name,
+		Type:        ds.Type,
+		Status:      ds.Status,
+		CreatedAt:   ds.CreatedAt,
+	}
+	if ds.SandboxName.Valid {
+		sbx.SandboxName = ds.SandboxName.String
+	}
+	if ds.PodIP.Valid {
+		sbx.PodIP = ds.PodIP.String
+	}
+	if ds.OpencodePassword.Valid {
+		sbx.OpencodePassword = ds.OpencodePassword.String
+	}
+	if ds.ProxyToken.Valid {
+		sbx.ProxyToken = ds.ProxyToken.String
+	}
+	if ds.LastActivityAt.Valid {
+		t := ds.LastActivityAt.Time
+		sbx.LastActivityAt = &t
+	}
+	if ds.PausedAt.Valid {
+		t := ds.PausedAt.Time
+		sbx.PausedAt = &t
+	}
+	return sbx
+}
