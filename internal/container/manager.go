@@ -192,7 +192,7 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 	}
 	if opts.SandboxType == "openclaw" {
 		containerConfig.Cmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
-{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true}}}
+{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}}
 CFGEOF
 exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 	}

@@ -326,7 +326,7 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 			containerPort = 18789
 		}
 		containerCmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
-{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true}}}
+{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}}
 CFGEOF
 exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 		if opts.GatewayToken != "" {
