@@ -307,9 +307,13 @@ export function SandboxList({
           >
             <StatusDot status={sbx.status} />
             <span className="flex-1 truncate">{sbx.name}</span>
-            {sbx.type === 'openclaw' && (
+            {sbx.type === 'openclaw' ? (
               <span className="shrink-0 rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-medium text-purple-400">
                 claw
+              </span>
+            ) : (
+              <span className="shrink-0 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-400">
+                code
               </span>
             )}
             <div className="hidden gap-0.5 group-hover:flex">
