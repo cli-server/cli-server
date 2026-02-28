@@ -1,4 +1,4 @@
-export type SandboxStatus = 'creating' | 'running' | 'pausing' | 'paused' | 'resuming'
+export type SandboxStatus = 'creating' | 'running' | 'pausing' | 'paused' | 'resuming' | 'offline'
 export type WorkspaceRole = 'owner' | 'maintainer' | 'developer' | 'guest'
 
 export interface Workspace {
@@ -26,6 +26,8 @@ export interface Sandbox {
   createdAt: string
   lastActivityAt: string | null
   pausedAt: string | null
+  isLocal: boolean
+  lastHeartbeatAt?: string | null
 }
 
 export async function login(username: string, password: string): Promise<boolean> {
@@ -175,4 +177,15 @@ export async function pauseSandbox(id: string): Promise<void> {
 export async function resumeSandbox(id: string): Promise<void> {
   const res = await fetch(`/api/sandboxes/${id}/resume`, { method: 'POST' })
   if (!res.ok) throw new Error('Failed to resume sandbox')
+}
+
+// Agent registration code API
+
+export async function createAgentCode(workspaceId: string): Promise<{ code: string; expiresAt: string }> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/agent-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  if (!res.ok) throw new Error('Failed to create agent code')
+  return res.json()
 }

@@ -92,6 +92,17 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 		return
 	}
 
+	// Local agent: proxy via WebSocket tunnel.
+	if sbx.IsLocal {
+		tunnel, ok := s.TunnelRegistry.Get(sandboxID)
+		if !ok {
+			http.Error(w, "agent offline", http.StatusServiceUnavailable)
+			return
+		}
+		s.proxyViaTunnel(w, r, sbx, tunnel)
+		return
+	}
+
 	if sbx.PodIP == "" {
 		http.Error(w, "sandbox pod not ready", http.StatusServiceUnavailable)
 		return

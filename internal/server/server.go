@@ -20,6 +20,7 @@ import (
 	"github.com/imryao/cli-server/internal/process"
 	"github.com/imryao/cli-server/internal/sbxstore"
 	"github.com/imryao/cli-server/internal/storage"
+	"github.com/imryao/cli-server/internal/tunnel"
 )
 
 type Server struct {
@@ -29,6 +30,7 @@ type Server struct {
 	Sandboxes      *sbxstore.Store
 	ProcessManager process.Manager
 	DriveManager   storage.DriveManager
+	TunnelRegistry *tunnel.Registry
 	StaticFS       fs.FS
 	BaseDomain     string // e.g. "cli.cs.ac.cn" — used for subdomain routing
 	BaseScheme     string // e.g. "https" — scheme for generated URLs
@@ -37,7 +39,7 @@ type Server struct {
 	activityLast map[string]time.Time
 }
 
-func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, staticFS fs.FS) *Server {
+func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, tunnelReg *tunnel.Registry, staticFS fs.FS) *Server {
 	baseDomain := os.Getenv("BASE_DOMAIN")
 	baseScheme := os.Getenv("BASE_SCHEME")
 	if baseScheme == "" {
@@ -51,6 +53,7 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 		Sandboxes:      sandboxStore,
 		ProcessManager: processManager,
 		DriveManager:   driveManager,
+		TunnelRegistry: tunnelReg,
 		StaticFS:       staticFS,
 		BaseDomain:     baseDomain,
 		BaseScheme:     baseScheme,
@@ -115,6 +118,12 @@ func (s *Server) Router() http.Handler {
 	// Anthropic API proxy for sandboxes (auth via proxy token in x-api-key header).
 	r.HandleFunc("/proxy/anthropic/*", s.handleAnthropicProxy)
 
+	// Agent tunnel endpoint (auth via tunnel token, no cookie auth needed).
+	r.HandleFunc("/api/tunnel/{sandboxId}", s.handleTunnel)
+
+	// Agent registration (auth via one-time code, no cookie auth needed).
+	r.Post("/api/agent/register", s.handleAgentRegister)
+
 	// Auth endpoints (no auth required)
 	r.Post("/api/auth/login", s.handleLogin)
 	r.Post("/api/auth/register", s.handleRegister)
@@ -158,6 +167,9 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/api/sandboxes/{id}", s.handleDeleteSandbox)
 		r.Post("/api/sandboxes/{id}/pause", s.handlePauseSandbox)
 		r.Post("/api/sandboxes/{id}/resume", s.handleResumeSandbox)
+
+		// Agent registration code generation
+		r.Post("/api/workspaces/{wid}/agent-code", s.handleCreateAgentCode)
 	})
 
 	// Static files
@@ -289,16 +301,18 @@ type workspaceMemberResponse struct {
 }
 
 type sandboxResponse struct {
-	ID             string  `json:"id"`
-	WorkspaceID    string  `json:"workspaceId"`
-	Name           string  `json:"name"`
-	Type           string  `json:"type"`
-	Status         string  `json:"status"`
-	OpencodeURL    string  `json:"opencodeUrl,omitempty"`
-	OpenclawURL    string  `json:"openclawUrl,omitempty"`
-	CreatedAt      string  `json:"createdAt"`
-	LastActivityAt *string `json:"lastActivityAt"`
-	PausedAt       *string `json:"pausedAt"`
+	ID              string  `json:"id"`
+	WorkspaceID     string  `json:"workspaceId"`
+	Name            string  `json:"name"`
+	Type            string  `json:"type"`
+	Status          string  `json:"status"`
+	OpencodeURL     string  `json:"opencodeUrl,omitempty"`
+	OpenclawURL     string  `json:"openclawUrl,omitempty"`
+	CreatedAt       string  `json:"createdAt"`
+	LastActivityAt  *string `json:"lastActivityAt"`
+	PausedAt        *string `json:"pausedAt"`
+	IsLocal         bool    `json:"isLocal"`
+	LastHeartbeatAt *string `json:"lastHeartbeatAt,omitempty"`
 }
 
 func (s *Server) toWorkspaceResponse(ws *db.Workspace) workspaceResponse {
@@ -322,6 +336,7 @@ func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sand
 		Type:        sbx.Type,
 		Status:      sbx.Status,
 		CreatedAt:   sbx.CreatedAt.Format(time.RFC3339),
+		IsLocal:     sbx.IsLocal,
 	}
 	if s.BaseDomain != "" {
 		switch sbx.Type {
@@ -338,6 +353,10 @@ func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sand
 	if sbx.PausedAt != nil {
 		s := sbx.PausedAt.Format(time.RFC3339)
 		resp.PausedAt = &s
+	}
+	if sbx.LastHeartbeatAt != nil {
+		s := sbx.LastHeartbeatAt.Format(time.RFC3339)
+		resp.LastHeartbeatAt = &s
 	}
 	return resp
 }
@@ -462,6 +481,12 @@ func (s *Server) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	// Stop all sandboxes in the workspace.
 	sandboxes := s.Sandboxes.ListByWorkspace(id)
 	for _, sbx := range sandboxes {
+		if sbx.IsLocal {
+			if t, ok := s.TunnelRegistry.Get(sbx.ID); ok {
+				t.Close()
+			}
+			continue
+		}
 		switch sbx.Status {
 		case sbxstore.StatusRunning:
 			s.ProcessManager.Stop(sbx.ID)
@@ -742,16 +767,23 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Handle based on sandbox status.
-	switch sbx.Status {
-	case sbxstore.StatusRunning:
-		s.ProcessManager.Stop(id)
-	case sbxstore.StatusPaused:
-		if sbx.SandboxName != "" {
-			switch mgr := s.ProcessManager.(type) {
-			case interface{ StopBySandboxName(string) error }:
-				mgr.StopBySandboxName(sbx.SandboxName)
-			case interface{ StopByContainerName(string) error }:
-				mgr.StopByContainerName(sbx.SandboxName)
+	if sbx.IsLocal {
+		// For local sandboxes, close the tunnel if active.
+		if t, ok := s.TunnelRegistry.Get(id); ok {
+			t.Close()
+		}
+	} else {
+		switch sbx.Status {
+		case sbxstore.StatusRunning:
+			s.ProcessManager.Stop(id)
+		case sbxstore.StatusPaused:
+			if sbx.SandboxName != "" {
+				switch mgr := s.ProcessManager.(type) {
+				case interface{ StopBySandboxName(string) error }:
+					mgr.StopBySandboxName(sbx.SandboxName)
+				case interface{ StopByContainerName(string) error }:
+					mgr.StopByContainerName(sbx.SandboxName)
+				}
 			}
 		}
 	}
@@ -772,6 +804,11 @@ func (s *Server) handlePauseSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
+		return
+	}
+
+	if sbx.IsLocal {
+		http.Error(w, "local sandboxes cannot be paused", http.StatusBadRequest)
 		return
 	}
 
@@ -812,6 +849,11 @@ func (s *Server) handleResumeSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
+		return
+	}
+
+	if sbx.IsLocal {
+		http.Error(w, "local sandboxes cannot be resumed from server", http.StatusBadRequest)
 		return
 	}
 

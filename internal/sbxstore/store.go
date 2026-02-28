@@ -22,6 +22,9 @@ type Sandbox struct {
 	CreatedAt        time.Time  `json:"createdAt"`
 	LastActivityAt   *time.Time `json:"lastActivityAt,omitempty"`
 	PausedAt         *time.Time `json:"pausedAt,omitempty"`
+	IsLocal          bool       `json:"isLocal"`
+	TunnelToken      string     `json:"-"`
+	LastHeartbeatAt  *time.Time `json:"lastHeartbeatAt,omitempty"`
 }
 
 // Store manages sandboxes via PostgreSQL.
@@ -101,6 +104,7 @@ func dbSandboxToSandbox(ds *db.Sandbox) *Sandbox {
 		Type:        ds.Type,
 		Status:      ds.Status,
 		CreatedAt:   ds.CreatedAt,
+		IsLocal:     ds.IsLocal,
 	}
 	if ds.SandboxName.Valid {
 		sbx.SandboxName = ds.SandboxName.String
@@ -127,6 +131,13 @@ func dbSandboxToSandbox(ds *db.Sandbox) *Sandbox {
 	if ds.PausedAt.Valid {
 		t := ds.PausedAt.Time
 		sbx.PausedAt = &t
+	}
+	if ds.TunnelToken.Valid {
+		sbx.TunnelToken = ds.TunnelToken.String
+	}
+	if ds.LastHeartbeatAt.Valid {
+		t := ds.LastHeartbeatAt.Time
+		sbx.LastHeartbeatAt = &t
 	}
 	return sbx
 }

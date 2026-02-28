@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Trash2, Pause, Play, Loader2, LogOut, ChevronDown, Sun, Moon, Monitor, Settings } from 'lucide-react'
+import { Plus, Trash2, Pause, Play, Loader2, LogOut, ChevronDown, Sun, Moon, Monitor, Settings, Laptop } from 'lucide-react'
 import {
   type Workspace,
   type Sandbox,
@@ -11,6 +11,7 @@ import {
   createWorkspace,
   deleteWorkspace,
   listMembers,
+  createAgentCode,
   logout,
 } from '../lib/api'
 import type { UserInfo } from '../App'
@@ -39,6 +40,8 @@ function StatusDot({ status }: { status: string }) {
       return <span className="inline-block h-2 w-2 rounded-full bg-green-500" title="Running" />
     case 'paused':
       return <span className="inline-block h-2 w-2 rounded-full bg-yellow-500" title="Paused" />
+    case 'offline':
+      return <span className="inline-block h-2 w-2 rounded-full bg-red-500" title="Offline" />
     case 'pausing':
     case 'resuming':
     case 'creating':
@@ -81,6 +84,7 @@ export function SandboxList({
   const [confirmDeleteWs, setConfirmDeleteWs] = useState<{ id: string; name: string } | null>(null)
   const [showCreateWs, setShowCreateWs] = useState(false)
   const [wsDetail, setWsDetail] = useState<{ name: string; members: WorkspaceMember[]; createdAt: string } | null>(null)
+  const [agentCodeData, setAgentCodeData] = useState<{ code: string; expiresAt: string; command: string } | null>(null)
   const [theme, setThemeState] = useState<'system' | 'light' | 'dark'>(() => {
     return (localStorage.getItem('theme') as 'light' | 'dark') || 'system'
   })
@@ -316,14 +320,34 @@ export function SandboxList({
       {/* Sandbox header */}
       <div className="flex items-center justify-between border-b border-[var(--border)] p-3">
         <span className="text-sm font-medium">Sandboxes</span>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          disabled={creating || !selectedWorkspaceId}
-          className="rounded p-1 hover:bg-[var(--secondary)] disabled:opacity-50"
-          title="New sandbox"
-        >
-          {creating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-        </button>
+        <div className="flex gap-1">
+          <button
+            onClick={async () => {
+              if (!selectedWorkspaceId) return
+              try {
+                const data = await createAgentCode(selectedWorkspaceId)
+                const serverUrl = window.location.origin
+                const command = `cli-server agent connect --server ${serverUrl} --code ${data.code} --name "My PC" --opencode-url http://localhost:4096`
+                setAgentCodeData({ ...data, command })
+              } catch {
+                // ignore
+              }
+            }}
+            disabled={!selectedWorkspaceId}
+            className="rounded p-1 hover:bg-[var(--secondary)] disabled:opacity-50"
+            title="Connect local agent"
+          >
+            <Laptop size={16} />
+          </button>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            disabled={creating || !selectedWorkspaceId}
+            className="rounded p-1 hover:bg-[var(--secondary)] disabled:opacity-50"
+            title="New sandbox"
+          >
+            {creating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+          </button>
+        </div>
       </div>
 
       {/* Sandbox list */}
@@ -338,7 +362,11 @@ export function SandboxList({
           >
             <StatusDot status={sbx.status} />
             <span className="flex-1 truncate">{sbx.name}</span>
-            {sbx.type === 'openclaw' ? (
+            {sbx.isLocal ? (
+              <span className="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+                local
+              </span>
+            ) : sbx.type === 'openclaw' ? (
               <span className="shrink-0 rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-medium text-purple-400">
                 claw
               </span>
@@ -348,7 +376,7 @@ export function SandboxList({
               </span>
             )}
             <div className="hidden gap-0.5 group-hover:flex">
-              {sbx.status === 'running' && (
+              {!sbx.isLocal && sbx.status === 'running' && (
                 <button
                   onClick={(e) => handlePause(sbx.id, e)}
                   className="rounded p-1 hover:bg-[var(--muted-foreground)]/20"
@@ -357,7 +385,7 @@ export function SandboxList({
                   <Pause size={12} />
                 </button>
               )}
-              {sbx.status === 'paused' && (
+              {!sbx.isLocal && sbx.status === 'paused' && (
                 <button
                   onClick={(e) => handleResume(sbx.id, e)}
                   className="rounded p-1 hover:bg-[var(--muted-foreground)]/20"
@@ -539,6 +567,44 @@ export function SandboxList({
             <div className="flex justify-end mt-5">
               <button
                 onClick={() => setWsDetail(null)}
+                className="rounded-md border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--secondary)]"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {agentCodeData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setAgentCodeData(null)}>
+          <div
+            className="w-full max-w-lg rounded-lg border border-[var(--border)] bg-[var(--card)] p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-[var(--foreground)] mb-4">Connect Local Agent</h2>
+            <div className="flex flex-col gap-3 text-sm">
+              <p className="text-[var(--muted-foreground)]">
+                Run the following command on your local machine to connect your opencode instance:
+              </p>
+              <div className="relative rounded-md bg-[var(--secondary)] p-3">
+                <code className="block whitespace-pre-wrap break-all text-xs text-[var(--foreground)]">
+                  {agentCodeData.command}
+                </code>
+                <button
+                  onClick={() => navigator.clipboard.writeText(agentCodeData.command)}
+                  className="absolute right-2 top-2 rounded px-2 py-1 text-xs text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                >
+                  Copy
+                </button>
+              </div>
+              <p className="text-xs text-[var(--muted-foreground)]">
+                Code expires at {new Date(agentCodeData.expiresAt).toLocaleString()}. It can only be used once.
+              </p>
+            </div>
+            <div className="flex justify-end mt-5">
+              <button
+                onClick={() => setAgentCodeData(null)}
                 className="rounded-md border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--secondary)]"
               >
                 Close

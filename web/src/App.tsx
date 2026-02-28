@@ -106,6 +106,7 @@ export default function App() {
     )
   } else if (activeSandboxId && activeSandboxData) {
     const isRunning = activeSandboxData.status === 'running'
+    const isOffline = activeSandboxData.status === 'offline'
     const isOpenClaw = activeSandboxData.type === 'openclaw'
     const sandboxUrl = isOpenClaw ? activeSandboxData.openclawUrl : activeSandboxData.opencodeUrl
     const buttonLabel = isOpenClaw ? 'Open OpenClaw' : 'Open OpenCode'
@@ -120,19 +121,28 @@ export default function App() {
               <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
                 isRunning
                   ? 'bg-green-500/10 text-green-500'
-                  : activeSandboxData.status === 'paused'
-                    ? 'bg-yellow-500/10 text-yellow-500'
-                    : 'bg-gray-500/10 text-[var(--muted-foreground)]'
+                  : isOffline
+                    ? 'bg-red-500/10 text-red-500'
+                    : activeSandboxData.status === 'paused'
+                      ? 'bg-yellow-500/10 text-yellow-500'
+                      : 'bg-gray-500/10 text-[var(--muted-foreground)]'
               }`}>
                 <span className={`inline-block h-1.5 w-1.5 rounded-full ${
                   isRunning
                     ? 'bg-green-500'
-                    : activeSandboxData.status === 'paused'
-                      ? 'bg-yellow-500'
-                      : 'bg-gray-500'
+                    : isOffline
+                      ? 'bg-red-500'
+                      : activeSandboxData.status === 'paused'
+                        ? 'bg-yellow-500'
+                        : 'bg-gray-500'
                 }`} />
                 {activeSandboxData.status}
               </span>
+              {activeSandboxData.isLocal && (
+                <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
+                  local
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2 text-[var(--muted-foreground)]">
               <Clock size={14} />
@@ -158,7 +168,7 @@ export default function App() {
           </a>
         ) : (
           <span className="text-sm text-[var(--muted-foreground)]">
-            {isRunning ? `${fallbackLabel} URL not configured` : `Sandbox must be running to open ${fallbackLabel}`}
+            {isOffline ? 'Agent is offline. Reconnect the local agent to access.' : isRunning ? `${fallbackLabel} URL not configured` : `Sandbox must be running to open ${fallbackLabel}`}
           </span>
         )}
       </div>

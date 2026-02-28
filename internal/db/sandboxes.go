@@ -21,6 +21,9 @@ type Sandbox struct {
 	LastActivityAt   sql.NullTime
 	CreatedAt        time.Time
 	PausedAt         sql.NullTime
+	IsLocal          bool
+	TunnelToken      sql.NullString
+	LastHeartbeatAt  sql.NullTime
 }
 
 func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken string) error {
@@ -35,13 +38,19 @@ func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, ope
 	return nil
 }
 
-func (db *DB) GetSandbox(id string) (*Sandbox, error) {
+// sandboxColumns is the list of columns selected for sandbox queries.
+const sandboxColumns = `id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at, is_local, tunnel_token, last_heartbeat_at`
+
+func scanSandbox(scanner interface{ Scan(...interface{}) error }) (*Sandbox, error) {
 	s := &Sandbox{}
-	err := db.QueryRow(
-		`SELECT id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at
-		 FROM sandboxes WHERE id = $1`,
-		id,
-	).Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt)
+	err := scanner.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt, &s.IsLocal, &s.TunnelToken, &s.LastHeartbeatAt)
+	return s, err
+}
+
+func (db *DB) GetSandbox(id string) (*Sandbox, error) {
+	s, err := scanSandbox(db.QueryRow(
+		`SELECT `+sandboxColumns+` FROM sandboxes WHERE id = $1`, id,
+	))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -53,8 +62,7 @@ func (db *DB) GetSandbox(id string) (*Sandbox, error) {
 
 func (db *DB) ListSandboxesByWorkspace(workspaceID string) ([]*Sandbox, error) {
 	rows, err := db.Query(
-		`SELECT id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at
-		 FROM sandboxes WHERE workspace_id = $1 ORDER BY created_at ASC`,
+		`SELECT `+sandboxColumns+` FROM sandboxes WHERE workspace_id = $1 ORDER BY created_at ASC`,
 		workspaceID,
 	)
 	if err != nil {
@@ -64,8 +72,8 @@ func (db *DB) ListSandboxesByWorkspace(workspaceID string) ([]*Sandbox, error) {
 
 	var sandboxes []*Sandbox
 	for rows.Next() {
-		s := &Sandbox{}
-		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt); err != nil {
+		s, err := scanSandbox(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan sandbox: %w", err)
 		}
 		sandboxes = append(sandboxes, s)
@@ -129,9 +137,9 @@ func (db *DB) UpdateSandboxSandboxName(id, sandboxName string) error {
 
 func (db *DB) ListIdleSandboxes(idleTimeout time.Duration) ([]*Sandbox, error) {
 	rows, err := db.Query(
-		`SELECT id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at
+		`SELECT `+sandboxColumns+`
 		 FROM sandboxes
-		 WHERE status = 'running' AND last_activity_at < NOW() - $1::interval`,
+		 WHERE status = 'running' AND is_local = FALSE AND last_activity_at < NOW() - $1::interval`,
 		fmt.Sprintf("%d seconds", int(idleTimeout.Seconds())),
 	)
 	if err != nil {
@@ -141,8 +149,8 @@ func (db *DB) ListIdleSandboxes(idleTimeout time.Duration) ([]*Sandbox, error) {
 
 	var sandboxes []*Sandbox
 	for rows.Next() {
-		s := &Sandbox{}
-		if err := rows.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt); err != nil {
+		s, err := scanSandbox(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan idle sandbox: %w", err)
 		}
 		sandboxes = append(sandboxes, s)
@@ -171,12 +179,9 @@ func (db *DB) ListAllActiveSandboxNames() ([]string, error) {
 }
 
 func (db *DB) GetSandboxByProxyToken(proxyToken string) (*Sandbox, error) {
-	s := &Sandbox{}
-	err := db.QueryRow(
-		`SELECT id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at
-		 FROM sandboxes WHERE proxy_token = $1`,
-		proxyToken,
-	).Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt)
+	s, err := scanSandbox(db.QueryRow(
+		`SELECT `+sandboxColumns+` FROM sandboxes WHERE proxy_token = $1`, proxyToken,
+	))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -191,4 +196,85 @@ func nullIfEmpty(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// CreateLocalSandbox inserts a local agent sandbox with is_local=true.
+func (db *DB) CreateLocalSandbox(id, workspaceID, name, sandboxType, opencodePassword, proxyToken, tunnelToken string) error {
+	_, err := db.Exec(
+		`INSERT INTO sandboxes (id, workspace_id, name, type, status, opencode_password, proxy_token, is_local, tunnel_token, last_activity_at, last_heartbeat_at)
+		 VALUES ($1, $2, $3, $4, 'running', $5, $6, TRUE, $7, NOW(), NOW())`,
+		id, workspaceID, name, sandboxType, opencodePassword, proxyToken, tunnelToken,
+	)
+	if err != nil {
+		return fmt.Errorf("create local sandbox: %w", err)
+	}
+	return nil
+}
+
+// UpdateSandboxHeartbeat updates the last_heartbeat_at timestamp.
+func (db *DB) UpdateSandboxHeartbeat(id string) error {
+	_, err := db.Exec("UPDATE sandboxes SET last_heartbeat_at = NOW() WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("update sandbox heartbeat: %w", err)
+	}
+	return nil
+}
+
+// GetSandboxByTunnelToken finds a local sandbox by its tunnel token.
+func (db *DB) GetSandboxByTunnelToken(sandboxID, tunnelToken string) (*Sandbox, error) {
+	s, err := scanSandbox(db.QueryRow(
+		`SELECT `+sandboxColumns+` FROM sandboxes WHERE id = $1 AND tunnel_token = $2 AND is_local = TRUE`,
+		sandboxID, tunnelToken,
+	))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get sandbox by tunnel token: %w", err)
+	}
+	return s, nil
+}
+
+// --- Agent Registration Codes ---
+
+type AgentRegistrationCode struct {
+	Code        string
+	UserID      string
+	WorkspaceID string
+	CreatedAt   time.Time
+	ExpiresAt   time.Time
+	Used        bool
+}
+
+// CreateAgentRegistrationCode inserts a new one-time registration code.
+func (db *DB) CreateAgentRegistrationCode(code, userID, workspaceID string, expiresAt time.Time) error {
+	_, err := db.Exec(
+		`INSERT INTO agent_registration_codes (code, user_id, workspace_id, expires_at)
+		 VALUES ($1, $2, $3, $4)`,
+		code, userID, workspaceID, expiresAt,
+	)
+	if err != nil {
+		return fmt.Errorf("create agent registration code: %w", err)
+	}
+	return nil
+}
+
+// ConsumeAgentRegistrationCode atomically validates and marks a code as used.
+// Returns the code record if valid, nil if not found/expired/used.
+func (db *DB) ConsumeAgentRegistrationCode(code string) (*AgentRegistrationCode, error) {
+	arc := &AgentRegistrationCode{}
+	err := db.QueryRow(
+		`UPDATE agent_registration_codes
+		 SET used = TRUE
+		 WHERE code = $1 AND used = FALSE AND expires_at > NOW()
+		 RETURNING code, user_id, workspace_id, created_at, expires_at, used`,
+		code,
+	).Scan(&arc.Code, &arc.UserID, &arc.WorkspaceID, &arc.CreatedAt, &arc.ExpiresAt, &arc.Used)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("consume agent registration code: %w", err)
+	}
+	return arc, nil
 }

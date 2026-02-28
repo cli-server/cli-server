@@ -8,6 +8,7 @@ const (
 	StatusPaused   = "paused"
 	StatusResuming = "resuming"
 	StatusDeleting = "deleting"
+	StatusOffline  = "offline"
 )
 
 // ValidTransition checks whether a status transition is allowed.
@@ -16,13 +17,15 @@ func ValidTransition(from, to string) bool {
 	case StatusCreating:
 		return to == StatusRunning || to == StatusDeleting
 	case StatusRunning:
-		return to == StatusPausing || to == StatusDeleting
+		return to == StatusPausing || to == StatusDeleting || to == StatusOffline
 	case StatusPausing:
 		return to == StatusPaused
 	case StatusPaused:
 		return to == StatusResuming || to == StatusDeleting
 	case StatusResuming:
 		return to == StatusRunning
+	case StatusOffline:
+		return to == StatusRunning || to == StatusDeleting
 	default:
 		return false
 	}
