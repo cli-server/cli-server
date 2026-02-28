@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -415,6 +416,16 @@ chown -R 1000:1000 /mnt/workspace-drive
 			ContainerPort: int32(containerPort),
 			Protocol:      corev1.ProtocolTCP,
 		}},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				TCPSocket: &corev1.TCPSocketAction{
+					Port: intstr.FromInt32(int32(containerPort)),
+				},
+			},
+			InitialDelaySeconds: 2,
+			PeriodSeconds:       2,
+			FailureThreshold:    30,
+		},
 		Resources: corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
 				corev1.ResourceMemory: resource.MustParse(m.cfg.MemoryLimit),
