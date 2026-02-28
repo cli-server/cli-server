@@ -131,7 +131,7 @@ jobs:
         run: |
           TAG=${GITHUB_REF#refs/tags/}
           mkdir -p dist
-          for PAIR in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+          for PAIR in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
             OS=${PAIR%%/*}
             ARCH=${PAIR##*/}
             OUT=dist/cli-server-${OS}-${ARCH}

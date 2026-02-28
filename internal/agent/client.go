@@ -1,8 +1,8 @@
 package agent
 
 import (
+	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,21 +18,21 @@ import (
 // Client is the cli-agent tunnel client that connects to the server
 // and forwards HTTP requests to a local opencode instance.
 type Client struct {
-	ServerURL       string
-	SandboxID       string
-	TunnelToken     string
-	OpencodeURL     string
+	ServerURL        string
+	SandboxID        string
+	TunnelToken      string
+	OpencodeURL      string
 	OpencodePassword string
-	httpClient      *http.Client
+	httpClient       *http.Client
 }
 
 // NewClient creates a new agent tunnel client.
 func NewClient(serverURL, sandboxID, tunnelToken, opencodeURL, opencodePassword string) *Client {
 	return &Client{
-		ServerURL:       serverURL,
-		SandboxID:       sandboxID,
-		TunnelToken:     tunnelToken,
-		OpencodeURL:     opencodeURL,
+		ServerURL:        serverURL,
+		SandboxID:        sandboxID,
+		TunnelToken:      tunnelToken,
+		OpencodeURL:      opencodeURL,
 		OpencodePassword: opencodePassword,
 		httpClient: &http.Client{
 			Timeout: 0, // No timeout for SSE streams.
@@ -119,57 +119,60 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 	}
 	defer conn.CloseNow()
 
-	// Increase read limit for large responses.
-	conn.SetReadLimit(64 * 1024 * 1024) // 64MB
-
 	log.Printf("tunnel connected (sandbox: %s)", c.SandboxID)
 
-	// Read and process frames.
+	// Read and process binary frames.
 	for {
 		_, data, err := conn.Read(ctx)
 		if err != nil {
 			return fmt.Errorf("read: %w", err)
 		}
 
-		var frame tunnel.IncomingFrame
-		if err := json.Unmarshal(data, &frame); err != nil {
-			log.Printf("failed to unmarshal frame: %v", err)
+		headerJSON, payload, err := tunnel.DecodeFrameHeader(data)
+		if err != nil {
+			log.Printf("failed to decode frame: %v", err)
 			continue
 		}
 
-		if frame.Type == tunnel.FrameTypeRequest {
-			var reqFrame tunnel.RequestFrame
-			if err := json.Unmarshal(data, &reqFrame); err != nil {
-				log.Printf("failed to unmarshal request frame: %v", err)
+		var hdr tunnel.IncomingHeader
+		if err := json.Unmarshal(headerJSON, &hdr); err != nil {
+			log.Printf("failed to unmarshal header: %v", err)
+			continue
+		}
+
+		if hdr.Type == tunnel.FrameTypeRequest {
+			var reqHeader tunnel.RequestHeader
+			if err := json.Unmarshal(headerJSON, &reqHeader); err != nil {
+				log.Printf("failed to unmarshal request header: %v", err)
 				continue
 			}
-			go c.handleRequest(ctx, conn, &reqFrame)
+			go c.handleRequest(ctx, conn, &reqHeader, payload)
 		}
 	}
 }
 
-func (c *Client) handleRequest(ctx context.Context, conn *websocket.Conn, reqFrame *tunnel.RequestFrame) {
+// maxChunkSize is the maximum raw bytes per stream chunk.
+// Keeps each WebSocket binary message well under the default 32KB read limit
+// (header JSON ~200 bytes + 16KB payload = ~16.5KB).
+const maxChunkSize = 16 * 1024
+
+func (c *Client) handleRequest(ctx context.Context, conn *websocket.Conn, reqHeader *tunnel.RequestHeader, reqBody []byte) {
 	// Build the local HTTP request.
-	targetURL := c.OpencodeURL + reqFrame.Path
+	targetURL := c.OpencodeURL + reqHeader.Path
 
 	var bodyReader io.Reader
-	if reqFrame.Body != "" {
-		bodyBytes, err := base64.StdEncoding.DecodeString(reqFrame.Body)
-		if err != nil {
-			c.sendErrorResponse(ctx, conn, reqFrame.ID, http.StatusBadGateway, "failed to decode request body")
-			return
-		}
-		bodyReader = strings.NewReader(string(bodyBytes))
+	if len(reqBody) > 0 {
+		bodyReader = bytes.NewReader(reqBody)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, reqFrame.Method, targetURL, bodyReader)
+	httpReq, err := http.NewRequestWithContext(ctx, reqHeader.Method, targetURL, bodyReader)
 	if err != nil {
-		c.sendErrorResponse(ctx, conn, reqFrame.ID, http.StatusBadGateway, "failed to create request")
+		c.sendErrorResponse(ctx, conn, reqHeader.ID, http.StatusBadGateway, "failed to create request")
 		return
 	}
 
 	// Copy headers from the request frame.
-	for k, v := range reqFrame.Headers {
+	for k, v := range reqHeader.Headers {
 		httpReq.Header.Set(k, v)
 	}
 
@@ -180,7 +183,7 @@ func (c *Client) handleRequest(ctx context.Context, conn *websocket.Conn, reqFra
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		c.sendErrorResponse(ctx, conn, reqFrame.ID, http.StatusBadGateway, "failed to reach local opencode: "+err.Error())
+		c.sendErrorResponse(ctx, conn, reqHeader.ID, http.StatusBadGateway, "failed to reach local opencode: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -193,82 +196,63 @@ func (c *Client) handleRequest(ctx context.Context, conn *websocket.Conn, reqFra
 		}
 	}
 
-	// Check if this is an SSE stream.
-	contentType := resp.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "text/event-stream") {
-		c.handleStreamResponse(ctx, conn, reqFrame.ID, resp, headers)
-		return
-	}
-
-	// Normal response: read body entirely and send as ResponseFrame.
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.sendErrorResponse(ctx, conn, reqFrame.ID, http.StatusBadGateway, "failed to read response")
-		return
-	}
-
-	respFrame := tunnel.ResponseFrame{
-		Type:    tunnel.FrameTypeResponse,
-		ID:      reqFrame.ID,
-		Status:  resp.StatusCode,
-		Headers: headers,
-		Body:    base64.StdEncoding.EncodeToString(body),
-	}
-
-	data, _ := json.Marshal(respFrame)
-	conn.Write(ctx, websocket.MessageText, data)
-}
-
-func (c *Client) handleStreamResponse(ctx context.Context, conn *websocket.Conn, requestID string, resp *http.Response, headers map[string]string) {
-	// Send first frame with headers and status.
-	buf := make([]byte, 4096)
+	// Stream response body as chunked binary frames.
+	buf := make([]byte, maxChunkSize)
 	firstFrame := true
 	for {
-		n, err := resp.Body.Read(buf)
+		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			frame := tunnel.StreamFrame{
-				Type:  tunnel.FrameTypeStream,
-				ID:    requestID,
-				Chunk: base64.StdEncoding.EncodeToString(buf[:n]),
-				Done:  false,
+			sh := tunnel.StreamHeader{
+				Type: tunnel.FrameTypeStream,
+				ID:   reqHeader.ID,
+				Done: false,
 			}
 			if firstFrame {
-				frame.Status = resp.StatusCode
-				frame.Headers = headers
+				sh.Status = resp.StatusCode
+				sh.Headers = headers
 				firstFrame = false
 			}
-			data, _ := json.Marshal(frame)
-			if writeErr := conn.Write(ctx, websocket.MessageText, data); writeErr != nil {
+			msg, _ := tunnel.EncodeFrame(sh, buf[:n])
+			if writeErr := conn.Write(ctx, websocket.MessageBinary, msg); writeErr != nil {
 				return
 			}
 		}
-		if err != nil {
-			// Send done frame.
-			doneFrame := tunnel.StreamFrame{
-				Type:  tunnel.FrameTypeStream,
-				ID:    requestID,
-				Chunk: "",
-				Done:  true,
+		if readErr != nil {
+			// Send done frame (no payload).
+			sh := tunnel.StreamHeader{
+				Type: tunnel.FrameTypeStream,
+				ID:   reqHeader.ID,
+				Done: true,
 			}
 			if firstFrame {
-				doneFrame.Status = resp.StatusCode
-				doneFrame.Headers = headers
+				sh.Status = resp.StatusCode
+				sh.Headers = headers
 			}
-			data, _ := json.Marshal(doneFrame)
-			conn.Write(ctx, websocket.MessageText, data)
+			msg, _ := tunnel.EncodeFrame(sh, nil)
+			conn.Write(ctx, websocket.MessageBinary, msg)
 			return
 		}
 	}
 }
 
 func (c *Client) sendErrorResponse(ctx context.Context, conn *websocket.Conn, requestID string, status int, message string) {
-	resp := tunnel.ResponseFrame{
-		Type:    tunnel.FrameTypeResponse,
+	// Send error as a single stream frame with done=true.
+	sh := tunnel.StreamHeader{
+		Type:    tunnel.FrameTypeStream,
 		ID:      requestID,
 		Status:  status,
 		Headers: map[string]string{"Content-Type": "text/plain"},
-		Body:    base64.StdEncoding.EncodeToString([]byte(message)),
+		Done:    false,
 	}
-	data, _ := json.Marshal(resp)
-	conn.Write(ctx, websocket.MessageText, data)
+	msg, _ := tunnel.EncodeFrame(sh, []byte(message))
+	conn.Write(ctx, websocket.MessageBinary, msg)
+
+	// Send done frame.
+	doneSh := tunnel.StreamHeader{
+		Type: tunnel.FrameTypeStream,
+		ID:   requestID,
+		Done: true,
+	}
+	doneMsg, _ := tunnel.EncodeFrame(doneSh, nil)
+	conn.Write(ctx, websocket.MessageBinary, doneMsg)
 }

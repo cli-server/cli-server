@@ -55,18 +55,22 @@ func (r *Registry) Get(sandboxID string) (*Tunnel, bool) {
 	return t, ok
 }
 
-// responseWaiter is a channel that receives either a ResponseFrame or StreamFrames.
-type responseWaiter struct {
-	responseCh chan *ResponseFrame
-	streamCh   chan *StreamFrame
-	isStream   bool
+// StreamMessage holds a decoded stream frame header and its binary payload.
+type StreamMessage struct {
+	Header  StreamHeader
+	Payload []byte
+}
+
+// streamWaiter receives StreamMessages for a pending request.
+type streamWaiter struct {
+	ch chan *StreamMessage
 }
 
 // Tunnel represents an active WebSocket tunnel to a local agent.
 type Tunnel struct {
 	SandboxID string
 	Conn      *websocket.Conn
-	pending   map[string]*responseWaiter
+	pending   map[string]*streamWaiter
 	mu        sync.Mutex
 	done      chan struct{}
 	closeOnce sync.Once
@@ -76,7 +80,7 @@ func newTunnel(sandboxID string, conn *websocket.Conn) *Tunnel {
 	t := &Tunnel{
 		SandboxID: sandboxID,
 		Conn:      conn,
-		pending:   make(map[string]*responseWaiter),
+		pending:   make(map[string]*streamWaiter),
 		done:      make(chan struct{}),
 	}
 	go t.readLoop()
@@ -91,10 +95,7 @@ func (t *Tunnel) Close() {
 		// Drain all pending waiters.
 		t.mu.Lock()
 		for id, w := range t.pending {
-			close(w.responseCh)
-			if w.streamCh != nil {
-				close(w.streamCh)
-			}
+			close(w.ch)
 			delete(t.pending, id)
 		}
 		t.mu.Unlock()
@@ -106,64 +107,25 @@ func (t *Tunnel) Done() <-chan struct{} {
 	return t.done
 }
 
-// SendRequest sends an HTTP request through the tunnel and waits for a complete response.
-func (t *Tunnel) SendRequest(ctx context.Context, req *RequestFrame) (*ResponseFrame, error) {
-	w := &responseWaiter{
-		responseCh: make(chan *ResponseFrame, 1),
-	}
+// SendRequest sends a request frame through the tunnel and returns a channel
+// for receiving streamed response messages.
+func (t *Tunnel) SendRequest(ctx context.Context, header *RequestHeader, body []byte) (<-chan *StreamMessage, error) {
+	ch := make(chan *StreamMessage, 64)
+	w := &streamWaiter{ch: ch}
 	t.mu.Lock()
-	t.pending[req.ID] = w
+	t.pending[header.ID] = w
 	t.mu.Unlock()
 
-	defer func() {
-		t.mu.Lock()
-		delete(t.pending, req.ID)
-		t.mu.Unlock()
-	}()
-
-	data, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request frame: %w", err)
-	}
-	if err := t.Conn.Write(ctx, websocket.MessageText, data); err != nil {
-		return nil, fmt.Errorf("write request frame: %w", err)
-	}
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-t.done:
-		return nil, errors.New("tunnel closed")
-	case resp, ok := <-w.responseCh:
-		if !ok {
-			return nil, errors.New("tunnel closed")
-		}
-		return resp, nil
-	}
-}
-
-// SendStreamRequest sends an HTTP request and returns a channel for streaming response frames.
-func (t *Tunnel) SendStreamRequest(ctx context.Context, req *RequestFrame) (<-chan *StreamFrame, error) {
-	ch := make(chan *StreamFrame, 64)
-	w := &responseWaiter{
-		responseCh: make(chan *ResponseFrame, 1),
-		streamCh:   ch,
-		isStream:   true,
-	}
-	t.mu.Lock()
-	t.pending[req.ID] = w
-	t.mu.Unlock()
-
-	data, err := json.Marshal(req)
+	msg, err := EncodeFrame(header, body)
 	if err != nil {
 		t.mu.Lock()
-		delete(t.pending, req.ID)
+		delete(t.pending, header.ID)
 		t.mu.Unlock()
-		return nil, fmt.Errorf("marshal request frame: %w", err)
+		return nil, fmt.Errorf("encode request frame: %w", err)
 	}
-	if err := t.Conn.Write(ctx, websocket.MessageText, data); err != nil {
+	if err := t.Conn.Write(ctx, websocket.MessageBinary, msg); err != nil {
 		t.mu.Lock()
-		delete(t.pending, req.ID)
+		delete(t.pending, header.ID)
 		t.mu.Unlock()
 		return nil, fmt.Errorf("write request frame: %w", err)
 	}
@@ -171,14 +133,14 @@ func (t *Tunnel) SendStreamRequest(ctx context.Context, req *RequestFrame) (<-ch
 	return ch, nil
 }
 
-// CleanupStream removes a pending stream waiter after the stream is done.
-func (t *Tunnel) CleanupStream(requestID string) {
+// CleanupRequest removes a pending waiter after the request is done.
+func (t *Tunnel) CleanupRequest(requestID string) {
 	t.mu.Lock()
 	delete(t.pending, requestID)
 	t.mu.Unlock()
 }
 
-// readLoop reads frames from the WebSocket and dispatches them to pending waiters.
+// readLoop reads binary frames from the WebSocket and dispatches them to pending waiters.
 func (t *Tunnel) readLoop() {
 	defer t.Close()
 	for {
@@ -191,13 +153,21 @@ func (t *Tunnel) readLoop() {
 				return
 			default:
 			}
-			log.Printf("tunnel %s: read error: %v", t.SandboxID, err)
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("tunnel %s: read error: %v", t.SandboxID, err)
+			}
 			return
 		}
 
-		var incoming IncomingFrame
-		if err := json.Unmarshal(data, &incoming); err != nil {
-			log.Printf("tunnel %s: failed to unmarshal frame: %v", t.SandboxID, err)
+		headerJSON, payload, err := DecodeFrameHeader(data)
+		if err != nil {
+			log.Printf("tunnel %s: failed to decode frame: %v", t.SandboxID, err)
+			continue
+		}
+
+		var incoming IncomingHeader
+		if err := json.Unmarshal(headerJSON, &incoming); err != nil {
+			log.Printf("tunnel %s: failed to unmarshal header: %v", t.SandboxID, err)
 			continue
 		}
 
@@ -209,32 +179,19 @@ func (t *Tunnel) readLoop() {
 			continue
 		}
 
-		switch incoming.Type {
-		case FrameTypeResponse:
-			var resp ResponseFrame
-			if err := json.Unmarshal(data, &resp); err != nil {
-				log.Printf("tunnel %s: failed to unmarshal response: %v", t.SandboxID, err)
+		if incoming.Type == FrameTypeStream {
+			var sh StreamHeader
+			if err := json.Unmarshal(headerJSON, &sh); err != nil {
+				log.Printf("tunnel %s: failed to unmarshal stream header: %v", t.SandboxID, err)
 				continue
 			}
+			msg := &StreamMessage{Header: sh, Payload: payload}
 			select {
-			case w.responseCh <- &resp:
+			case w.ch <- msg:
 			default:
 			}
-
-		case FrameTypeStream:
-			var sf StreamFrame
-			if err := json.Unmarshal(data, &sf); err != nil {
-				log.Printf("tunnel %s: failed to unmarshal stream frame: %v", t.SandboxID, err)
-				continue
-			}
-			if w.streamCh != nil {
-				select {
-				case w.streamCh <- &sf:
-				default:
-				}
-				if sf.Done {
-					close(w.streamCh)
-				}
+			if sh.Done {
+				close(w.ch)
 			}
 		}
 	}

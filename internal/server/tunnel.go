@@ -2,12 +2,12 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"time"
+
+	"encoding/base64"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -95,17 +95,16 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 }
 
 // proxyViaTunnel forwards an HTTP request through a WebSocket tunnel to the local agent.
+// All responses are received as chunked binary StreamFrames.
 func (s *Server) proxyViaTunnel(w http.ResponseWriter, r *http.Request, sbx *sbxstore.Sandbox, t *tunnel.Tunnel) {
 	// Read request body.
-	var bodyB64 string
+	var body []byte
 	if r.Body != nil {
-		bodyBytes, err := io.ReadAll(r.Body)
+		var err error
+		body, err = io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "failed to read request body", http.StatusInternalServerError)
 			return
-		}
-		if len(bodyBytes) > 0 {
-			bodyB64 = base64.StdEncoding.EncodeToString(bodyBytes)
 		}
 	}
 
@@ -123,107 +122,60 @@ func (s *Server) proxyViaTunnel(w http.ResponseWriter, r *http.Request, sbx *sbx
 		headers["Authorization"] = "Basic " + cred
 	}
 
-	reqFrame := &tunnel.RequestFrame{
+	reqHeader := &tunnel.RequestHeader{
 		Type:    tunnel.FrameTypeRequest,
 		ID:      uuid.New().String(),
 		Method:  r.Method,
 		Path:    r.URL.RequestURI(),
 		Headers: headers,
-		Body:    bodyB64,
 	}
 
 	// Track activity.
 	s.throttledActivity(sbx.ID)
 
-	// Check Accept header to decide if we expect streaming.
-	acceptHeader := r.Header.Get("Accept")
-	isSSE := strings.Contains(acceptHeader, "text/event-stream")
-
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
-	if isSSE {
-		s.proxySSEViaTunnel(ctx, w, reqFrame, t)
-	} else {
-		s.proxyHTTPViaTunnel(ctx, w, reqFrame, t)
-	}
-}
-
-// proxyHTTPViaTunnel handles a normal (non-streaming) request via tunnel.
-func (s *Server) proxyHTTPViaTunnel(ctx context.Context, w http.ResponseWriter, req *tunnel.RequestFrame, t *tunnel.Tunnel) {
-	resp, err := t.SendRequest(ctx, req)
+	streamCh, err := t.SendRequest(ctx, reqHeader, body)
 	if err != nil {
 		log.Printf("tunnel proxy error for %s: %v", t.SandboxID, err)
 		http.Error(w, "tunnel proxy error", http.StatusBadGateway)
 		return
 	}
+	defer t.CleanupRequest(reqHeader.ID)
 
-	// Write response headers.
-	for k, v := range resp.Headers {
-		w.Header().Set(k, v)
-	}
-	w.WriteHeader(resp.Status)
-
-	// Write response body.
-	if resp.Body != "" {
-		body, err := base64.StdEncoding.DecodeString(resp.Body)
-		if err != nil {
-			log.Printf("tunnel proxy: failed to decode response body: %v", err)
-			return
-		}
-		w.Write(body)
-	}
-}
-
-// proxySSEViaTunnel handles a streaming (SSE) request via tunnel.
-func (s *Server) proxySSEViaTunnel(ctx context.Context, w http.ResponseWriter, req *tunnel.RequestFrame, t *tunnel.Tunnel) {
-	streamCh, err := t.SendStreamRequest(ctx, req)
-	if err != nil {
-		log.Printf("tunnel SSE proxy error for %s: %v", t.SandboxID, err)
-		http.Error(w, "tunnel proxy error", http.StatusBadGateway)
-		return
-	}
-	defer t.CleanupStream(req.ID)
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
-		return
-	}
+	flusher, _ := w.(http.Flusher)
 
 	headersSent := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case frame, ok := <-streamCh:
+		case msg, ok := <-streamCh:
 			if !ok {
 				return
 			}
 
 			// Send headers on first frame.
 			if !headersSent {
-				for k, v := range frame.Headers {
+				for k, v := range msg.Header.Headers {
 					w.Header().Set(k, v)
 				}
-				if frame.Status > 0 {
-					w.WriteHeader(frame.Status)
+				if msg.Header.Status > 0 {
+					w.WriteHeader(msg.Header.Status)
 				}
 				headersSent = true
 			}
 
-			if frame.Done {
+			if msg.Header.Done {
 				return
 			}
 
-			if frame.Chunk != "" {
-				chunk, err := base64.StdEncoding.DecodeString(frame.Chunk)
-				if err != nil {
-					log.Printf("tunnel SSE proxy: failed to decode chunk: %v", err)
-					return
+			if len(msg.Payload) > 0 {
+				w.Write(msg.Payload)
+				if flusher != nil {
+					flusher.Flush()
 				}
-				w.Write(chunk)
-				flusher.Flush()
 			}
 		}
 	}
