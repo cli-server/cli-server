@@ -1,7 +1,7 @@
 <h1 align="center">cli-server</h1>
 
 <p align="center">
-  <strong>Run <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a> on any machine anywhere and access it in the browser.</strong>
+  <strong>Run your <a href="https://github.com/opencode-ai/opencode">coding agent</a> on any machine anywhere and access it in the browser.</strong>
 </p>
 
 <p align="center">
@@ -16,11 +16,11 @@
   <img src="assets/screenshot.png" alt="cli-server Web UI" width="800">
 </p>
 
-cli-server is to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) what [code-server](https://github.com/coder/code-server) is to VS Code — a self-hosted web interface that lets your team use Claude Code from a browser, no local installation required.
+cli-server is to [opencode](https://github.com/opencode-ai/opencode) what [code-server](https://github.com/coder/code-server) is to VS Code — a self-hosted web interface that lets your team use a coding agent from a browser, no local installation required.
 
 ## Highlights
 
-- **Browser-based Claude Code** — Each sandbox runs [opencode](https://github.com/opencode-ai/opencode) serve, accessible via a per-sandbox subdomain
+- **Browser-based coding agent** — Each sandbox runs [opencode](https://github.com/opencode-ai/opencode) serve, accessible via a per-sandbox subdomain
 - **Local agent tunneling** — Connect a locally-running opencode instance to cli-server via a WebSocket reverse tunnel, no public IP needed
 - **Workspaces & multi-tenancy** — Organize work into workspaces with role-based membership (owner / maintainer / developer / guest); each workspace has a shared persistent disk
 - **Sandboxes** — Create multiple sandboxes per workspace; pause, resume, and auto-pause on idle

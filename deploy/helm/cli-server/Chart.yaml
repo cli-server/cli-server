@@ -1,6 +1,6 @@
 apiVersion: v2
 name: cli-server
-description: Run Claude Code in the browser — a cloud-hosted terminal server for Claude Code CLI
+description: Run your coding agent in the browser — a self-hosted web interface for opencode
 type: application
 version: 0.5.0
 appVersion: "0.5.0"

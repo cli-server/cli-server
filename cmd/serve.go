@@ -39,7 +39,7 @@ var (
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the cli-server HTTP server",
-	Long:  `Start the web server that provides a browser-based terminal to Claude Code CLI.`,
+	Long:  `Start the web server that provides a browser-based interface to opencode.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Resolve DB URL from flag or env.
 		if dbURL == "" {

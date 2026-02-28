@@ -8,8 +8,8 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "cli-server",
-	Short: "Cloud-hosted Claude Code terminal server",
-	Long:  `cli-server provides a web-based terminal interface to Claude Code CLI, similar to code-server.`,
+	Short: "Self-hosted coding agent server",
+	Long:  `cli-server provides a web-based interface to opencode, similar to code-server for VS Code.`,
 }
 
 func Execute() {
