@@ -38,3 +38,15 @@ func envOrDefault(key, def string) string {
 	}
 	return def
 }
+
+// buildOpenclawConfig returns the openclaw.json content with gateway settings
+// and optional Anthropic proxy credentials.
+func buildOpenclawConfig(proxyBaseURL, proxyToken string) string {
+	cfg := `{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}`
+	if proxyBaseURL != "" && proxyToken != "" {
+		cfg += `,"models":{"providers":{"anthropic":{"baseUrl":"` + proxyBaseURL + `","apiKey":"` + proxyToken + `","api":"anthropic-messages"}}}}`
+	} else {
+		cfg += `}`
+	}
+	return cfg
+}

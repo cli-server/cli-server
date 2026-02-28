@@ -327,11 +327,7 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 			containerPort = 18789
 		}
 		// Build openclaw config JSON with gateway settings and Anthropic proxy.
-		openclawCfg := `{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}`
-		if proxyBaseURL != "" && opts.ProxyToken != "" {
-			openclawCfg += `,"models":{"providers":{"anthropic":{"baseUrl":"` + proxyBaseURL + `","apiKey":"` + opts.ProxyToken + `","api":"anthropic-messages"}}}`
-		}
-		openclawCfg += `}`
+		openclawCfg := buildOpenclawConfig(proxyBaseURL, opts.ProxyToken)
 		containerCmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
 ` + openclawCfg + `
 CFGEOF
@@ -635,8 +631,8 @@ func shortID(id string) string {
 	return id
 }
 
-func strPtr(s string) *string   { return &s }
-func int64Ptr(i int64) *int64   { return &i }
+func strPtr(s string) *string { return &s }
+func int64Ptr(i int64) *int64 { return &i }
 
 func (m *Manager) runtimeClassName() *string {
 	if m.cfg.RuntimeClassName == "" {
