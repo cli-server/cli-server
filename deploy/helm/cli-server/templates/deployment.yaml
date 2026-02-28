@@ -17,10 +17,6 @@ spec:
       {{- if eq .Values.backend "k8s" }}
       serviceAccountName: {{ .Release.Name }}
       {{- end }}
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       containers:
         - name: cli-server
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -97,10 +93,6 @@ spec:
             {{- if eq .Values.backend "k8s" }}
             - name: SANDBOX_NAMESPACE
               value: {{ .Values.sandbox.namespace | quote }}
-            {{- if .Values.imagePullSecrets }}
-            - name: IMAGE_PULL_SECRET
-              value: {{ (index .Values.imagePullSecrets 0).name | quote }}
-            {{- end }}
             {{- if or .Values.opencode.runtimeClassName .Values.agent.runtimeClassName }}
             - name: RUNTIME_CLASS
               value: {{ .Values.opencode.runtimeClassName | default .Values.agent.runtimeClassName | quote }}

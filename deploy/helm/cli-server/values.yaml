@@ -5,8 +5,6 @@ image:
   tag: latest
   pullPolicy: Always
 
-imagePullSecrets: []
-
 database:
   url: "postgres://user:pass@postgres:5432/cliserver?sslmode=disable"
 

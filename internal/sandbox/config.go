@@ -8,7 +8,6 @@ type Config struct {
 	Image              string
 	MemoryLimit        string
 	CPULimit           string
-	ImagePullSecret    string
 	SessionStorageSize string
 	StorageClassName   string
 	RuntimeClassName   string
@@ -24,7 +23,6 @@ func DefaultConfig() Config {
 		Image:              envOrDefault("AGENT_IMAGE", "cli-server-agent:latest"),
 		MemoryLimit:        envOrDefault("AGENT_MEMORY_LIMIT", "2Gi"),
 		CPULimit:           envOrDefault("AGENT_CPU_LIMIT", "2"),
-		ImagePullSecret:    os.Getenv("IMAGE_PULL_SECRET"),
 		SessionStorageSize: envOrDefault("SESSION_STORAGE_SIZE", "5Gi"),
 		StorageClassName:   os.Getenv("STORAGE_CLASS"),
 		RuntimeClassName:   os.Getenv("RUNTIME_CLASS"),
