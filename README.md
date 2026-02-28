@@ -12,16 +12,23 @@
 
 ---
 
+<p align="center">
+  <img src="assets/screenshot.png" alt="cli-server Web UI" width="800">
+</p>
+
 cli-server is to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) what [code-server](https://github.com/coder/code-server) is to VS Code — a self-hosted web interface that lets your team use Claude Code from a browser, no local installation required.
 
 ## Highlights
 
 - **Browser-based Claude Code** — Each sandbox runs [opencode](https://github.com/opencode-ai/opencode) serve, accessible via a per-sandbox subdomain
+- **Local agent tunneling** — Connect a locally-running opencode instance to cli-server via a WebSocket reverse tunnel, no public IP needed
 - **Workspaces & multi-tenancy** — Organize work into workspaces with role-based membership (owner / maintainer / developer / guest); each workspace has a shared persistent disk
 - **Sandboxes** — Create multiple sandboxes per workspace; pause, resume, and auto-pause on idle
 - **Two backends** — Run sandbox containers via Docker (single node) or Kubernetes with [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox) + gVisor isolation
 - **SSO / OIDC** — Built-in GitHub OAuth and generic OIDC support; accounts are linked by email
 - **Anthropic API proxy** — Sandboxes never see the real API key; cli-server injects it server-side via a per-sandbox proxy token
+- **Rich dev environment** — Sandbox image ships with Go, Rust, C/C++, Node.js, Python 3, and common tools out of the box
+- **Cross-platform binary** — Pre-built binaries for Linux, macOS, and Windows (amd64 / arm64)
 - **Helm one-liner** — Deploy to any Kubernetes cluster in minutes
 
 ## Architecture
@@ -31,13 +38,20 @@ Browser ──▶ cli-server (Go) ──▶ sandbox pod / container
                │                   └─ opencode serve (:4096)
                │
                ├─ PostgreSQL (users, workspaces, sandboxes)
-               └─ Anthropic API proxy (injects real API key)
+               ├─ Anthropic API proxy (injects real API key)
+               │
+               │               WebSocket tunnel
+Local machine ─┼──▶ cli-server agent connect ──────────▶ cli-server
+               └─ opencode serve (:4096)                    │
+                                                    Browser access via
+                                                    subdomain proxy
 ```
 
 | Component | Description |
 |-----------|-------------|
-| **cli-server** | Go HTTP server — auth, workspace & sandbox management, opencode subdomain proxy, Anthropic API proxy, static frontend |
+| **cli-server** | Go HTTP server — auth, workspace & sandbox management, opencode subdomain proxy, WebSocket tunnel, Anthropic API proxy, static frontend |
 | **sandbox** | Container running opencode serve — one per sandbox, isolated via Docker or K8s Agent Sandbox |
+| **local agent** | `cli-server agent connect` — connects a local opencode instance to the server via a WebSocket reverse tunnel |
 
 ## Quick Start
 
@@ -79,6 +93,50 @@ docker compose up -d
 
 Open `http://localhost:8080` in your browser.
 
+## Local Agent Tunneling
+
+You can connect a locally-running opencode instance to cli-server without a public IP or any third-party tunnel tool. The server manages it like any other sandbox — accessible via subdomain proxy in the Web UI.
+
+### How it works
+
+1. In the Web UI, click the laptop icon next to "Sandboxes" to generate a one-time registration code
+2. On your local machine, download `cli-server` from the [latest release](https://github.com/cli-server/cli-server/releases) and run:
+
+```bash
+# First time: register with the code
+cli-server agent connect \
+  --server https://cli.example.com \
+  --code <registration-code> \
+  --name "My MacBook" \
+  --opencode-url http://localhost:4096
+
+# Subsequent runs: auto-reconnects using saved credentials (~/.cli-server/agent.json)
+cli-server agent connect --opencode-url http://localhost:4096
+```
+
+3. A new sandbox labeled **local** appears in the Web UI. Click "Open" to access your local opencode through the browser.
+
+### Features
+
+- **Zero configuration networking** — WebSocket tunnel punches through NATs and firewalls
+- **Auto-reconnect** — Exponential backoff reconnection on disconnect (1s → 2s → 4s → ... → 60s)
+- **Binary protocol** — Raw binary WebSocket frames with chunked streaming, no base64 overhead
+- **SSE streaming** — Agent execution updates stream in real-time through the tunnel
+- **Offline detection** — Web UI shows `offline` status when the agent disconnects; automatically recovers to `running` on reconnect
+
+### Tunnel protocol
+
+The tunnel uses a binary WebSocket protocol. Each message is a binary frame:
+
+```
+[4 bytes: JSON header length] [JSON header] [raw binary payload]
+```
+
+- **Server → Agent**: request header (method, path, HTTP headers) + request body
+- **Agent → Server**: stream header (status, HTTP headers, done flag) + response body chunk (16KB max)
+
+All responses are chunked, keeping each WebSocket message well under the default 32KB limit.
+
 ## Concepts
 
 ### Workspaces
@@ -94,12 +152,24 @@ A workspace is a collaborative unit. It has members with roles and owns a shared
 
 ### Sandboxes
 
-A sandbox is an isolated container running opencode serve. Each sandbox:
+A sandbox is an isolated container running opencode serve, or a local agent connected via WebSocket tunnel. Each sandbox:
 
 - Has its own opencode instance accessible via `oc-{sandboxID}.{baseDomain}`
-- Can be paused (scales to 0 replicas / stops container) and resumed
-- Is automatically paused after a configurable idle timeout
+- Cloud sandboxes can be paused (scales to 0 replicas / stops container) and resumed
+- Cloud sandboxes are automatically paused after a configurable idle timeout
+- Local sandboxes show `offline` when the agent disconnects and recover on reconnect
 - Gets a unique proxy token for Anthropic API access
+
+### Sandbox statuses
+
+| Status | Description |
+|--------|-------------|
+| `creating` | Container is being provisioned |
+| `running` | Sandbox is active and accessible |
+| `pausing` | Container is being paused |
+| `paused` | Container is stopped, can be resumed |
+| `resuming` | Container is being restarted |
+| `offline` | Local agent disconnected (will recover on reconnect) |
 
 ## Configuration
 
@@ -122,6 +192,8 @@ A sandbox is an isolated container running opencode serve. Each sandbox:
 | `persistence.sessionStorageSize` | Per-sandbox ephemeral storage | `5Gi` |
 | `persistence.userDriveSize` | Per-workspace shared disk size | `10Gi` |
 | `persistence.storageClassName` | Storage class for PVCs | `""` (cluster default) |
+| `workspace.resources` | Resource limits/requests for sandbox pods | `1Gi/1cpu` limits |
+| `agentSandbox.install` | Install Agent Sandbox controller | `true` |
 | `ingress.enabled` | Enable Nginx Ingress | `false` |
 | `ingress.host` | Ingress hostname | `cli-server.example.com` |
 | `ingress.tls` | Enable TLS (cert-manager) | `false` |
@@ -182,6 +254,7 @@ This uses the [Kubernetes Agent Sandbox](https://github.com/kubernetes-sigs/agen
 | `BASE_DOMAIN` | Base domain for subdomain routing |
 | `BASE_SCHEME` | URL scheme (`http` or `https`) |
 | `IDLE_TIMEOUT` | Auto-pause timeout (e.g. `30m`) |
+| `AGENT_IMAGE` | Container image for sandbox agents |
 | `OIDC_REDIRECT_BASE_URL` | External URL for OIDC callbacks |
 | `GITHUB_CLIENT_ID` | GitHub OAuth client ID |
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth client secret |
@@ -191,7 +264,7 @@ This uses the [Kubernetes Agent Sandbox](https://github.com/kubernetes-sigs/agen
 
 ## API
 
-All endpoints under `/api/` require authentication via cookie. Workspace and sandbox endpoints enforce role-based access.
+All endpoints under `/api/` require authentication via cookie unless noted otherwise.
 
 ### Workspaces
 
@@ -219,8 +292,16 @@ All endpoints under `/api/` require authentication via cookie. Workspace and san
 | `POST` | `/api/workspaces/{wid}/sandboxes` | Create sandbox (developer+) |
 | `GET` | `/api/sandboxes/{id}` | Get sandbox details |
 | `DELETE` | `/api/sandboxes/{id}` | Delete sandbox |
-| `POST` | `/api/sandboxes/{id}/pause` | Pause sandbox |
-| `POST` | `/api/sandboxes/{id}/resume` | Resume sandbox |
+| `POST` | `/api/sandboxes/{id}/pause` | Pause sandbox (cloud only) |
+| `POST` | `/api/sandboxes/{id}/resume` | Resume sandbox (cloud only) |
+
+### Local Agent
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/workspaces/{wid}/agent-code` | Cookie | Generate one-time registration code (developer+) |
+| `POST` | `/api/agent/register` | Registration code | Register local agent, returns sandbox ID and tunnel token |
+| `GET` | `/api/tunnel/{sandboxId}?token={tunnelToken}` | Tunnel token | WebSocket tunnel endpoint |
 
 ## Contributing
 
