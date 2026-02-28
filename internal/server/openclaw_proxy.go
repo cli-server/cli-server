@@ -53,7 +53,13 @@ func (s *Server) handleOpenclawSubdomainProxy(w http.ResponseWriter, r *http.Req
 			SameSite: http.SameSiteLaxMode,
 			MaxAge:   int((7 * 24 * time.Hour).Seconds()),
 		})
-		http.Redirect(w, r, "/", http.StatusFound)
+		// Redirect to Control UI with the gateway token so the frontend JS
+		// can authenticate the WebSocket connection automatically.
+		redirectURL := "/"
+		if sbx.GatewayToken != "" {
+			redirectURL = "/?token=" + url.QueryEscape(sbx.GatewayToken)
+		}
+		http.Redirect(w, r, redirectURL, http.StatusFound)
 		return
 	}
 

@@ -245,7 +245,6 @@ chown -R 1000:1000 /mnt/workspace-drive
 						},
 					}},
 					Volumes:          volumes,
-					ImagePullSecrets: m.imagePullSecrets(),
 					RuntimeClassName: m.runtimeClassName(),
 					RestartPolicy:    corev1.RestartPolicyNever,
 				},
@@ -329,7 +328,7 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 		containerCmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
 {"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true}}}
 CFGEOF
-exec node openclaw.mjs gateway --allow-unconfigured --bind lan --auth none`}
+exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 		if opts.GatewayToken != "" {
 			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: opts.GatewayToken})
 		}
@@ -440,7 +439,6 @@ chown -R 1000:1000 /mnt/workspace-drive
 					InitContainers:   initContainers,
 					Containers:       []corev1.Container{mainContainer},
 					Volumes:          volumes,
-					ImagePullSecrets: m.imagePullSecrets(),
 					RuntimeClassName: m.runtimeClassName(),
 					RestartPolicy:    corev1.RestartPolicyNever,
 				},
@@ -628,13 +626,6 @@ func (m *Manager) runtimeClassName() *string {
 		return nil
 	}
 	return strPtr(m.cfg.RuntimeClassName)
-}
-
-func (m *Manager) imagePullSecrets() []corev1.LocalObjectReference {
-	if m.cfg.ImagePullSecret == "" {
-		return nil
-	}
-	return []corev1.LocalObjectReference{{Name: m.cfg.ImagePullSecret}}
 }
 
 func (m *Manager) Get(id string) (process.Process, bool) {

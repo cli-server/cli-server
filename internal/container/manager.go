@@ -194,7 +194,7 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 		containerConfig.Cmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
 {"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true}}}
 CFGEOF
-exec node openclaw.mjs gateway --allow-unconfigured --bind lan --auth none`}
+exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 	}
 	resp, err := m.cli.ContainerCreate(ctx,
 		containerConfig,
