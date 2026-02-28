@@ -4,12 +4,15 @@ ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ripgrep git ca-certificates \
+    ripgrep git ca-certificates sudo \
+    golang rustc cargo \
+    build-essential clang llvm \
     && rm -rf /var/lib/apt/lists/*
 
 COPY opencode /usr/local/bin/opencode
 
-RUN useradd -m -d /home/agent agent
+RUN useradd -m -d /home/agent agent \
+    && echo 'agent ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/agent
 USER agent
 WORKDIR /home/agent
 
