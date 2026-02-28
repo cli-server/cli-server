@@ -191,8 +191,16 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 		Labels: map[string]string{labelManagedBy: labelValue},
 	}
 	if opts.SandboxType == "openclaw" {
+		// Build openclaw config JSON with gateway settings and Anthropic proxy.
+		anthropicBaseURL := os.Getenv("ANTHROPIC_BASE_URL")
+		anthropicAPIKey := os.Getenv("ANTHROPIC_API_KEY")
+		openclawCfg := `{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}`
+		if anthropicBaseURL != "" && anthropicAPIKey != "" {
+			openclawCfg += `,"models":{"providers":{"anthropic":{"baseUrl":"` + anthropicBaseURL + `","apiKey":"` + anthropicAPIKey + `","api":"anthropic-messages"}}}`
+		}
+		openclawCfg += `}`
 		containerConfig.Cmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
-{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}}
+` + openclawCfg + `
 CFGEOF
 exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 	}

@@ -326,8 +326,14 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 		if containerPort == 0 {
 			containerPort = 18789
 		}
+		// Build openclaw config JSON with gateway settings and Anthropic proxy.
+		openclawCfg := `{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}`
+		if proxyBaseURL != "" && opts.ProxyToken != "" {
+			openclawCfg += `,"models":{"providers":{"anthropic":{"baseUrl":"` + proxyBaseURL + `","apiKey":"` + opts.ProxyToken + `","api":"anthropic-messages"}}}`
+		}
+		openclawCfg += `}`
 		containerCmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
-{"gateway":{"controlUi":{"dangerouslyAllowHostHeaderOriginFallback":true,"dangerouslyDisableDeviceAuth":true}}}
+` + openclawCfg + `
 CFGEOF
 exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 		if opts.GatewayToken != "" {
