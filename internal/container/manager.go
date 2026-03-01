@@ -167,6 +167,9 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 		if opts.OpencodePassword != "" {
 			containerEnv = append(containerEnv, "OPENCODE_SERVER_PASSWORD="+opts.OpencodePassword)
 		}
+		if m.cfg.OpencodeConfigContent != "" {
+			containerEnv = append(containerEnv, "OPENCODE_CONFIG_CONTENT="+m.cfg.OpencodeConfigContent)
+		}
 	}
 
 	// Volume mounts for persistence.

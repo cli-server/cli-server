@@ -39,6 +39,15 @@ opencode:
   image: ghcr.io/cli-server/opencode-agent:latest
   # RuntimeClass for sandbox pods (e.g. "gvisor" for gVisor isolation).
   runtimeClassName: ""
+  # Opencode config injected into sandbox pods via OPENCODE_CONFIG_CONTENT.
+  # Accepts any valid opencode.json fields as structured YAML.
+  # Example: restrict to specific providers/models:
+  #   config:
+  #     enabled_providers: ["anthropic"]
+  #     provider:
+  #       anthropic:
+  #         whitelist: ["claude-sonnet-4-20250514"]
+  config: {}
 
 openclaw:
   # Image for openclaw gateway sandboxes.

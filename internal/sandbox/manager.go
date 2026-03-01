@@ -354,6 +354,9 @@ exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 		if opts.OpencodePassword != "" {
 			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", Value: opts.OpencodePassword})
 		}
+		if m.cfg.OpencodeConfigContent != "" {
+			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_CONFIG_CONTENT", Value: m.cfg.OpencodeConfigContent})
+		}
 	}
 
 	// Volume mounts for the main container.

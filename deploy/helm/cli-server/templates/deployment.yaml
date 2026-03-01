@@ -106,6 +106,10 @@ spec:
               value: {{ .Values.opencode.runtimeClassName | default .Values.agent.runtimeClassName | quote }}
             {{- end }}
             {{- end }}
+            {{- if gt (len .Values.opencode.config) 0 }}
+            - name: OPENCODE_CONFIG_CONTENT
+              value: {{ .Values.opencode.config | toJson | quote }}
+            {{- end }}
             {{- if .Values.oidc.redirectBaseUrl }}
             - name: OIDC_REDIRECT_BASE_URL
               value: {{ .Values.oidc.redirectBaseUrl | quote }}
