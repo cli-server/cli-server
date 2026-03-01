@@ -2,10 +2,13 @@ package server
 
 import (
 	"encoding/base64"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path"
+	"strings"
 	"time"
 )
 
@@ -92,6 +95,13 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 		return
 	}
 
+	// Try serving from embedded opencode frontend before proxying to pod.
+	if s.OpencodeStaticFS != nil {
+		if s.tryServeOpencodeStatic(w, r) {
+			return
+		}
+	}
+
 	// Local agent: proxy via WebSocket tunnel.
 	if sbx.IsLocal {
 		tunnel, ok := s.TunnelRegistry.Get(sandboxID)
@@ -129,4 +139,95 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 		http.Error(w, "proxy error", http.StatusBadGateway)
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+// opencodeAPIPrefixes lists path prefixes that should always be proxied to
+// the opencode pod rather than served from the embedded frontend.
+var opencodeAPIPrefixes = []string{
+	"/global/", "/auth/", "/project/", "/session/", "/pty/",
+	"/file", "/find", "/config/", "/mcp/", "/provider/",
+	"/question/", "/permission/", "/tui/", "/experimental/",
+	"/doc", "/path", "/vcs", "/command", "/log",
+	"/agent", "/skill", "/lsp", "/formatter", "/event",
+	"/instance/",
+}
+
+// tryServeOpencodeStatic attempts to serve a request from the embedded opencode
+// frontend (SPA). Returns true if the response was handled, false if the request
+// should be proxied to the pod.
+//
+// Decision flow:
+//  1. If the cleaned path matches a real file in OpencodeStaticFS → serve it.
+//  2. If the path starts with a known API prefix → return false (proxy to pod).
+//  3. Otherwise → serve index.html (SPA client-side route fallback).
+func (s *Server) tryServeOpencodeStatic(w http.ResponseWriter, r *http.Request) bool {
+	upath := path.Clean(r.URL.Path)
+	if upath == "/" {
+		upath = "/index.html"
+	}
+
+	// 1. Check if the path matches a real file in the embedded FS.
+	filePath := upath[1:] // strip leading "/"
+	if f, err := fs.Stat(s.OpencodeStaticFS, filePath); err == nil && !f.IsDir() {
+		s.serveOpencodeFile(w, r, filePath)
+		return true
+	}
+
+	// 2. If the path starts with a known API prefix, let the proxy handle it.
+	for _, prefix := range opencodeAPIPrefixes {
+		if strings.HasPrefix(upath, prefix) {
+			return false
+		}
+	}
+
+	// 3. If the path has a file extension but didn't match a real file, proxy it.
+	// This handles cases like sourcemaps or other assets not in the embedded FS.
+	if ext := path.Ext(upath); ext != "" {
+		return false
+	}
+
+	// 4. No extension and not an API route — serve index.html as SPA fallback.
+	if _, err := fs.Stat(s.OpencodeStaticFS, "index.html"); err != nil {
+		return false
+	}
+	s.serveOpencodeFile(w, r, "index.html")
+	return true
+}
+
+// serveOpencodeFile serves a single file from the embedded opencode frontend FS
+// with appropriate cache headers.
+func (s *Server) serveOpencodeFile(w http.ResponseWriter, r *http.Request, filePath string) {
+	f, err := s.OpencodeStaticFS.Open(filePath)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Set cache headers: long cache for hashed assets, no-cache for index.html.
+	if filePath == "index.html" {
+		w.Header().Set("Cache-Control", "no-cache")
+	} else if strings.HasPrefix(filePath, "assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
+
+	// http.ServeContent handles Content-Type detection, range requests, and If-Modified-Since.
+	rs, ok := f.(readSeeker)
+	if !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.ServeContent(w, r, filePath, stat.ModTime(), rs)
+}
+
+// readSeeker combines io.Reader and io.Seeker (fs.File may implement this).
+type readSeeker interface {
+	Read([]byte) (int, error)
+	Seek(int64, int) (int64, error)
 }

@@ -31,15 +31,16 @@ type Server struct {
 	ProcessManager process.Manager
 	DriveManager   storage.DriveManager
 	TunnelRegistry *tunnel.Registry
-	StaticFS       fs.FS
-	BaseDomain     string // e.g. "cli.cs.ac.cn" — used for subdomain routing
+	StaticFS          fs.FS
+	OpencodeStaticFS  fs.FS // embedded opencode frontend dist (served on subdomain requests)
+	BaseDomain        string // e.g. "cli.cs.ac.cn" — used for subdomain routing
 	BaseScheme     string // e.g. "https" — scheme for generated URLs
 	// activityThrottle prevents excessive DB writes for activity tracking.
 	activityMu   sync.Mutex
 	activityLast map[string]time.Time
 }
 
-func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, tunnelReg *tunnel.Registry, staticFS fs.FS) *Server {
+func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, tunnelReg *tunnel.Registry, staticFS fs.FS, opcodeStaticFS fs.FS) *Server {
 	baseDomain := os.Getenv("BASE_DOMAIN")
 	baseScheme := os.Getenv("BASE_SCHEME")
 	if baseScheme == "" {
@@ -47,17 +48,18 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 	}
 
 	s := &Server{
-		Auth:           a,
-		OIDC:           oidcMgr,
-		DB:             database,
-		Sandboxes:      sandboxStore,
-		ProcessManager: processManager,
-		DriveManager:   driveManager,
-		TunnelRegistry: tunnelReg,
-		StaticFS:       staticFS,
-		BaseDomain:     baseDomain,
-		BaseScheme:     baseScheme,
-		activityLast:   make(map[string]time.Time),
+		Auth:             a,
+		OIDC:             oidcMgr,
+		DB:               database,
+		Sandboxes:        sandboxStore,
+		ProcessManager:   processManager,
+		DriveManager:     driveManager,
+		TunnelRegistry:   tunnelReg,
+		StaticFS:         staticFS,
+		OpencodeStaticFS: opcodeStaticFS,
+		BaseDomain:       baseDomain,
+		BaseScheme:       baseScheme,
+		activityLast:     make(map[string]time.Time),
 	}
 	return s
 }

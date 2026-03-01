@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: docker/setup-buildx-action@v3
 
@@ -112,6 +114,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: true
 
       - uses: actions/setup-go@v5
         with:
@@ -121,11 +124,16 @@ jobs:
         with:
           node-version: 22
 
+      - uses: oven-sh/setup-bun@v2
+
       - name: Install pnpm
         run: npm install -g pnpm
 
-      - name: Build frontend
+      - name: Build admin frontend
         run: cd web && pnpm install --frozen-lockfile && pnpm build
+
+      - name: Build opencode frontend
+        run: cd opencode && bun install --frozen-lockfile && bun run --filter=@opencode-ai/app build && cp -r packages/app/dist ../opencodeweb/dist
 
       - name: Cross-compile binaries
         run: |

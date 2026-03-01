@@ -24,6 +24,7 @@ import (
 	"github.com/imryao/cli-server/internal/server"
 	"github.com/imryao/cli-server/internal/storage"
 	"github.com/imryao/cli-server/internal/tunnel"
+	"github.com/imryao/cli-server/opencodeweb"
 	"github.com/imryao/cli-server/web"
 	"github.com/spf13/cobra"
 )
@@ -72,6 +73,14 @@ var serveCmd = &cobra.Command{
 			log.Printf("Warning: embedded static files not available: %v", err)
 		} else {
 			staticFS = distFS
+		}
+
+		var opencodeStaticFS fs.FS
+		ocDistFS, err := fs.Sub(opencodeweb.StaticFS, "dist")
+		if err != nil {
+			log.Printf("Warning: embedded opencode static files not available: %v", err)
+		} else {
+			opencodeStaticFS = ocDistFS
 		}
 
 		var procMgr process.Manager
@@ -160,7 +169,7 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
-		srv := server.New(authSvc, oidcMgr, database, sandboxStore, procMgr, driveMgr, tunnel.NewRegistry(), staticFS)
+		srv := server.New(authSvc, oidcMgr, database, sandboxStore, procMgr, driveMgr, tunnel.NewRegistry(), staticFS, opencodeStaticFS)
 		addr := fmt.Sprintf(":%d", port)
 
 		// Start idle watcher.
