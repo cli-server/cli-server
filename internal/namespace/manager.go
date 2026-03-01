@@ -24,7 +24,7 @@ type Config struct {
 type NetworkPolicyConfig struct {
 	Enabled            bool
 	DenyCIDRs          []string
-	CliServerNamespace string // Allow egress to cli-server namespace (for Anthropic API proxy).
+	AgentserverNamespace string // Allow egress to agentserver namespace (for Anthropic API proxy).
 }
 
 // Manager handles per-workspace K8s namespace lifecycle.
@@ -36,7 +36,7 @@ type Manager struct {
 // NewManager creates a new namespace Manager.
 func NewManager(clientset kubernetes.Interface, config Config) *Manager {
 	if config.Prefix == "" {
-		config.Prefix = "cli-ws"
+		config.Prefix = "agent-ws"
 	}
 	return &Manager{
 		clientset: clientset,
@@ -62,7 +62,7 @@ func (m *Manager) EnsureNamespace(ctx context.Context, workspaceID string) (stri
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nsName,
 			Labels: map[string]string{
-				"managed-by":   "cli-server",
+				"managed-by":   "agentserver",
 				"workspace-id": workspaceID,
 			},
 		},
@@ -142,13 +142,13 @@ func (m *Manager) buildNetworkPolicy(namespace string) *networkingv1.NetworkPoli
 		},
 	}
 
-	// 3. Allow traffic to cli-server namespace (for Anthropic API proxy).
-	if m.config.NetworkPolicy.CliServerNamespace != "" {
+	// 3. Allow traffic to agentserver namespace (for Anthropic API proxy).
+	if m.config.NetworkPolicy.AgentserverNamespace != "" {
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 			To: []networkingv1.NetworkPolicyPeer{{
 				NamespaceSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
-						"kubernetes.io/metadata.name": m.config.NetworkPolicy.CliServerNamespace,
+						"kubernetes.io/metadata.name": m.config.NetworkPolicy.AgentserverNamespace,
 					},
 				},
 			}},
@@ -177,16 +177,16 @@ func (m *Manager) buildNetworkPolicy(namespace string) *networkingv1.NetworkPoli
 
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "cli-server-sandbox-egress",
+			Name:      "agentserver-sandbox-egress",
 			Namespace: namespace,
 			Labels: map[string]string{
-				"managed-by": "cli-server",
+				"managed-by": "agentserver",
 			},
 		},
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					"managed-by": "cli-server",
+					"managed-by": "agentserver",
 				},
 			},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},

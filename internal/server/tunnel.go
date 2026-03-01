@@ -11,8 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/imryao/cli-server/internal/sbxstore"
-	"github.com/imryao/cli-server/internal/tunnel"
+	"github.com/agentserver/agentserver/internal/sbxstore"
+	"github.com/agentserver/agentserver/internal/tunnel"
 	"nhooyr.io/websocket"
 )
 

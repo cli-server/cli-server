@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/imryao/cli-server/internal/auth"
-	"github.com/imryao/cli-server/internal/shortid"
+	"github.com/agentserver/agentserver/internal/auth"
+	"github.com/agentserver/agentserver/internal/shortid"
 )
 
 // handleCreateAgentCode generates a one-time registration code for connecting a local agent.

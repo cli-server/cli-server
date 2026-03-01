@@ -24,13 +24,13 @@ import (
 
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 
-	"github.com/imryao/cli-server/internal/db"
-	"github.com/imryao/cli-server/internal/process"
+	"github.com/agentserver/agentserver/internal/db"
+	"github.com/agentserver/agentserver/internal/process"
 )
 
 const (
 	labelManagedBy       = "managed-by"
-	labelValue           = "cli-server"
+	labelValue           = "agentserver"
 	sandboxNameHashLabel = "agents.x-k8s.io/sandbox-name-hash"
 	sandboxContainerName = "agent"
 	pollInterval         = 2 * time.Second
@@ -102,7 +102,7 @@ func buildRESTConfig() (*rest.Config, error) {
 	return clientcmd.BuildConfigFromFlags("", kubeconfig)
 }
 
-// CleanOrphans deletes Sandbox CRs labelled managed-by=cli-server that are NOT in the known set.
+// CleanOrphans deletes Sandbox CRs labelled managed-by=agentserver that are NOT in the known set.
 // It iterates all provided workspace namespaces.
 func (m *Manager) CleanOrphans(knownSandboxNames []string, namespaces []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -137,17 +137,17 @@ func (m *Manager) CleanOrphans(knownSandboxNames []string, namespaces []string) 
 
 func (m *Manager) Start(id, command string, args, env []string, opts process.StartOptions) (process.Process, error) {
 	ctx := context.Background()
-	sandboxName := "cli-sandbox-" + shortID(id)
+	sandboxName := "agent-sandbox-" + shortID(id)
 	ns := opts.Namespace
 
 	// Build environment variables for the sandbox pod.
 	containerEnv := []corev1.EnvVar{{Name: "TERM", Value: "xterm-256color"}}
 
-	// Inject proxy URL and token so the sandbox uses the cli-server proxy
+	// Inject proxy URL and token so the sandbox uses the agentserver proxy
 	// instead of the real Anthropic API key.
 	proxyBaseURL := os.Getenv("ANTHROPIC_PROXY_URL")
 	if proxyBaseURL == "" {
-		proxyBaseURL = "http://cli-server." + m.cfg.CliServerNamespace + ".svc.cluster.local:8080/proxy/anthropic/v1"
+		proxyBaseURL = "http://agentserver." + m.cfg.AgentserverNamespace + ".svc.cluster.local:8080/proxy/anthropic/v1"
 	}
 	if opts.ProxyToken != "" {
 		containerEnv = append(containerEnv,
@@ -302,17 +302,17 @@ func (m *Manager) StartContainer(id string, opts process.StartOptions) error {
 // StartContainerWithIP creates/starts the sandbox and returns the pod IP.
 func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (string, error) {
 	ctx := context.Background()
-	sandboxName := "cli-sandbox-" + shortID(id)
+	sandboxName := "agent-sandbox-" + shortID(id)
 	ns := opts.Namespace
 
 	// Build environment variables for the sandbox pod.
 	containerEnv := []corev1.EnvVar{{Name: "TERM", Value: "xterm-256color"}}
 
-	// Inject proxy URL and token so the sandbox uses the cli-server proxy
+	// Inject proxy URL and token so the sandbox uses the agentserver proxy
 	// instead of the real Anthropic API key.
 	proxyBaseURL := os.Getenv("ANTHROPIC_PROXY_URL")
 	if proxyBaseURL == "" {
-		proxyBaseURL = "http://cli-server." + m.cfg.CliServerNamespace + ".svc.cluster.local:8080/proxy/anthropic/v1"
+		proxyBaseURL = "http://agentserver." + m.cfg.AgentserverNamespace + ".svc.cluster.local:8080/proxy/anthropic/v1"
 	}
 	if opts.ProxyToken != "" {
 		containerEnv = append(containerEnv,
@@ -500,7 +500,7 @@ func (m *Manager) ResumeContainer(id string) error {
 
 // ResumeContainerWithIP scales a paused sandbox back to 1 replica and returns the pod IP.
 func (m *Manager) ResumeContainerWithIP(id string) (string, error) {
-	sandboxName := "cli-sandbox-" + shortID(id)
+	sandboxName := "agent-sandbox-" + shortID(id)
 	ctx := context.Background()
 
 	ns, err := m.lookupNamespace(id)
@@ -543,7 +543,7 @@ func (m *Manager) Pause(id string) error {
 	}
 
 	// Patch sandbox replicas to 0.
-	sandboxName := "cli-sandbox-" + shortID(id)
+	sandboxName := "agent-sandbox-" + shortID(id)
 	var ns string
 	if ok {
 		sandboxName = entry.sandboxName
@@ -726,7 +726,7 @@ func (m *Manager) Stop(id string) error {
 		entry.proc.close()
 	}
 
-	sandboxName := "cli-sandbox-" + shortID(id)
+	sandboxName := "agent-sandbox-" + shortID(id)
 	var ns string
 	if ok {
 		sandboxName = entry.sandboxName

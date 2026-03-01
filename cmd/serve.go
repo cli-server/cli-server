@@ -15,18 +15,18 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/imryao/cli-server/internal/auth"
-	"github.com/imryao/cli-server/internal/container"
-	"github.com/imryao/cli-server/internal/db"
-	"github.com/imryao/cli-server/internal/namespace"
-	"github.com/imryao/cli-server/internal/process"
-	"github.com/imryao/cli-server/internal/sandbox"
-	"github.com/imryao/cli-server/internal/sbxstore"
-	"github.com/imryao/cli-server/internal/server"
-	"github.com/imryao/cli-server/internal/storage"
-	"github.com/imryao/cli-server/internal/tunnel"
-	"github.com/imryao/cli-server/opencodeweb"
-	"github.com/imryao/cli-server/web"
+	"github.com/agentserver/agentserver/internal/auth"
+	"github.com/agentserver/agentserver/internal/container"
+	"github.com/agentserver/agentserver/internal/db"
+	"github.com/agentserver/agentserver/internal/namespace"
+	"github.com/agentserver/agentserver/internal/process"
+	"github.com/agentserver/agentserver/internal/sandbox"
+	"github.com/agentserver/agentserver/internal/sbxstore"
+	"github.com/agentserver/agentserver/internal/server"
+	"github.com/agentserver/agentserver/internal/storage"
+	"github.com/agentserver/agentserver/internal/tunnel"
+	"github.com/agentserver/agentserver/opencodeweb"
+	"github.com/agentserver/agentserver/web"
 	"github.com/spf13/cobra"
 )
 
@@ -40,7 +40,7 @@ var (
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
-	Short: "Start the cli-server HTTP server",
+	Short: "Start the agentserver HTTP server",
 	Long:  `Start the web server that provides a browser-based interface to opencode.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Resolve DB URL from flag or env.
@@ -120,7 +120,7 @@ var serveCmd = &cobra.Command{
 			}
 
 			// Set up namespace manager for per-workspace namespace isolation.
-			nsPrefix := envOrDefault("SANDBOX_NAMESPACE_PREFIX", "cli-ws")
+			nsPrefix := envOrDefault("SANDBOX_NAMESPACE_PREFIX", "agent-ws")
 			npEnabled := os.Getenv("NETWORKPOLICY_ENABLED") == "true"
 			npDenyCIDRs := namespace.ParseDenyCIDRs(os.Getenv("NETWORKPOLICY_DENY_CIDRS"))
 
@@ -137,7 +137,7 @@ var serveCmd = &cobra.Command{
 				NetworkPolicy: namespace.NetworkPolicyConfig{
 					Enabled:            npEnabled,
 					DenyCIDRs:          npDenyCIDRs,
-					CliServerNamespace: os.Getenv("CLI_SERVER_NAMESPACE"),
+					AgentserverNamespace: os.Getenv("AGENTSERVER_NAMESPACE"),
 				},
 			})
 
@@ -166,7 +166,7 @@ var serveCmd = &cobra.Command{
 				log.Printf("Warning: failed to get workspace namespaces: %v", err)
 			}
 			mgr.CleanOrphans(knownNames, allNamespaces)
-			log.Printf("Using K8s sandbox backend (namespace prefix: %s, cli-server ns: %s, image: %s)", nsPrefix, cfg.CliServerNamespace, cfg.Image)
+			log.Printf("Using K8s sandbox backend (namespace prefix: %s, agentserver ns: %s, image: %s)", nsPrefix, cfg.AgentserverNamespace, cfg.Image)
 			procMgr = mgr
 
 			workspaceDriveSize := envOrDefault("USER_DRIVE_SIZE", "10Gi")
@@ -245,7 +245,7 @@ var serveCmd = &cobra.Command{
 			procMgr.Close()
 		}()
 
-		log.Printf("Starting cli-server on %s", addr)
+		log.Printf("Starting agentserver on %s", addr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}

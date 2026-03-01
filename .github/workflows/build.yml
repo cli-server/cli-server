@@ -31,7 +31,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ env.REGISTRY }}/cli-server/cli-server
+          images: ${{ env.REGISTRY }}/agentserver/agentserver
           tags: |
             type=sha,prefix=
             type=ref,event=branch
@@ -71,7 +71,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ env.REGISTRY }}/cli-server/opencode-agent
+          images: ${{ env.REGISTRY }}/agentserver/opencode-agent
           tags: |
             type=sha,prefix=
             type=ref,event=branch
@@ -103,8 +103,8 @@ jobs:
 
       - name: Package and push Helm chart
         run: |
-          helm package deploy/helm/cli-server
-          helm push cli-server-*.tgz oci://${{ env.REGISTRY }}/cli-server/charts
+          helm package deploy/helm/agentserver
+          helm push agentserver-*.tgz oci://${{ env.REGISTRY }}/agentserver/charts
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -142,14 +142,14 @@ jobs:
           for PAIR in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
             OS=${PAIR%%/*}
             ARCH=${PAIR##*/}
-            OUT=dist/cli-server-${OS}-${ARCH}
+            OUT=dist/agentserver-${OS}-${ARCH}
             [ "$OS" = "windows" ] && OUT="${OUT}.exe"
             echo "Building ${OS}/${ARCH}..."
             CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -o "$OUT" .
           done
 
       - name: Generate checksums
-        run: cd dist && sha256sum cli-server-* > checksums.txt
+        run: cd dist && sha256sum agentserver-* > checksums.txt
 
       - name: Generate changelog
         id: changelog
@@ -167,22 +167,22 @@ jobs:
             echo "## Docker Images"
             echo ""
             echo "\`\`\`"
-            echo "ghcr.io/cli-server/cli-server:${TAG}"
-            echo "ghcr.io/cli-server/opencode-agent:${TAG}"
+            echo "ghcr.io/agentserver/agentserver:${TAG}"
+            echo "ghcr.io/agentserver/opencode-agent:${TAG}"
             echo "\`\`\`"
             echo ""
             echo "## Helm Chart"
             echo ""
             echo "\`\`\`bash"
-            echo "helm install cli-server oci://ghcr.io/cli-server/charts/cli-server --version ${TAG#v}"
+            echo "helm install agentserver oci://ghcr.io/agentserver/charts/agentserver --version ${TAG#v}"
             echo "\`\`\`"
             echo ""
             echo "## Binaries"
             echo ""
-            echo "Download the \`cli-server\` binary for your platform below. Use it to connect a local opencode instance:"
+            echo "Download the \`agentserver\` binary for your platform below. Use it to connect a local opencode instance:"
             echo ""
             echo "\`\`\`bash"
-            echo "cli-server agent connect --server https://your-server --code <registration-code> --opencode-url http://localhost:4096"
+            echo "agentserver agent connect --server https://your-server --code <registration-code> --opencode-url http://localhost:4096"
             echo "\`\`\`"
             echo ""
             echo "## Changes"
@@ -196,5 +196,5 @@ jobs:
           body: ${{ steps.changelog.outputs.body }}
           generate_release_notes: false
           files: |
-            dist/cli-server-*
+            dist/agentserver-*
             dist/checksums.txt

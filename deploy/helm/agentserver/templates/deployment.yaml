@@ -18,7 +18,7 @@ spec:
       serviceAccountName: {{ .Release.Name }}
       {{- end }}
       containers:
-        - name: cli-server
+        - name: agentserver
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
@@ -96,8 +96,8 @@ spec:
             {{- end }}
             {{- if eq .Values.backend "k8s" }}
             - name: SANDBOX_NAMESPACE_PREFIX
-              value: {{ .Values.sandbox.namespacePrefix | default "cli-ws" | quote }}
-            - name: CLI_SERVER_NAMESPACE
+              value: {{ .Values.sandbox.namespacePrefix | default "agent-ws" | quote }}
+            - name: AGENTSERVER_NAMESPACE
               value: {{ .Release.Namespace | quote }}
             - name: NETWORKPOLICY_ENABLED
               value: {{ .Values.networkPolicy.enabled | default false | quote }}

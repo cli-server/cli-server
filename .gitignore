@@ -3,5 +3,5 @@ bin/
 node_modules/
 web/dist/
 sidecar-ts/dist/
-agent-server/dist/
+agentserver/dist/
 *.tgz

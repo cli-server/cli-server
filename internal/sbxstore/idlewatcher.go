@@ -4,8 +4,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/imryao/cli-server/internal/db"
-	"github.com/imryao/cli-server/internal/process"
+	"github.com/agentserver/agentserver/internal/db"
+	"github.com/agentserver/agentserver/internal/process"
 )
 
 // IdleWatcher monitors sandboxes and auto-pauses idle ones.

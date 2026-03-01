@@ -12,7 +12,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 
-	"github.com/imryao/cli-server/internal/process"
+	"github.com/agentserver/agentserver/internal/process"
 )
 
 // Compile-time interface check.

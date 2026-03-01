@@ -22,7 +22,7 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /app/web/dist ./web/dist
 COPY --from=opencode-frontend /app/packages/app/dist ./opencodeweb/dist
-RUN CGO_ENABLED=0 go build -o cli-server .
+RUN CGO_ENABLED=0 go build -o agentserver .
 
 # Stage 4: Runtime image with Docker CLI (claude-code runs in agent containers)
 FROM debian:trixie-slim
@@ -36,6 +36,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update \
     && apt-get install -y --no-install-recommends docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=backend /app/cli-server /usr/local/bin/cli-server
+COPY --from=backend /app/agentserver /usr/local/bin/agentserver
 EXPOSE 8080
-ENTRYPOINT ["cli-server", "serve"]
+ENTRYPOINT ["agentserver", "serve"]

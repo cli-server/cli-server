@@ -64,7 +64,7 @@ func (m *OIDCManager) HandleProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 const (
-	stateCookieName = "cli-server-oauth-state"
+	stateCookieName = "agentserver-oauth-state"
 	stateCookieTTL  = 10 * time.Minute
 )
 

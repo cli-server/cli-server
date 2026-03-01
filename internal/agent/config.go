@@ -22,7 +22,7 @@ func DefaultConfigPath() string {
 	if err != nil {
 		home = "."
 	}
-	return filepath.Join(home, ".cli-server", "agent.json")
+	return filepath.Join(home, ".agentserver", "agent.json")
 }
 
 // LoadConfig reads the agent config from disk.

@@ -14,12 +14,12 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	dockermount "github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
-	"github.com/imryao/cli-server/internal/process"
-	"github.com/imryao/cli-server/internal/sandbox"
+	"github.com/agentserver/agentserver/internal/process"
+	"github.com/agentserver/agentserver/internal/sandbox"
 )
 
 const labelManagedBy = "managed-by"
-const labelValue = "cli-server"
+const labelValue = "agentserver"
 
 // Compile-time interface checks.
 var (
@@ -78,7 +78,7 @@ func NewManager(cfg Config) (*Manager, error) {
 	return m, nil
 }
 
-// CleanOrphans removes containers labelled managed-by=cli-server that are NOT in the known set.
+// CleanOrphans removes containers labelled managed-by=agentserver that are NOT in the known set.
 func (m *Manager) CleanOrphans(knownContainerNames []string) {
 	ctx := context.Background()
 

@@ -1,4 +1,4 @@
-module github.com/imryao/cli-server
+module github.com/agentserver/agentserver
 
 go 1.25.0
 

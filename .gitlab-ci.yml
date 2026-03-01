@@ -3,8 +3,8 @@ stages:
   - deploy
 
 variables:
-  IMAGE: registry.nj.cs.ac.cn/mryao/cli-server
-  AGENT_IMAGE: registry.nj.cs.ac.cn/mryao/cli-server-agent
+  IMAGE: registry.nj.cs.ac.cn/mryao/agentserver
+  AGENT_IMAGE: registry.nj.cs.ac.cn/mryao/agentserver-agent
 
 build-server:
   stage: build
@@ -34,11 +34,11 @@ deploy:
   stage: deploy
   image: alpine/helm:3.17.3
   script:
-    - helm upgrade --install cli-server ./deploy/helm/cli-server
+    - helm upgrade --install agentserver ./deploy/helm/agentserver
       --set image.repository=$IMAGE
       --set image.tag=$CI_COMMIT_SHORT_SHA
       --set agent.image=$AGENT_IMAGE:$CI_COMMIT_SHORT_SHA
-      --namespace cli-server
+      --namespace agentserver
       --create-namespace
   rules:
     - if: $CI_COMMIT_BRANCH == "master"

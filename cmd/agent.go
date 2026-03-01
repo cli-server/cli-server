@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/imryao/cli-server/internal/agent"
+	"github.com/agentserver/agentserver/internal/agent"
 	"github.com/spf13/cobra"
 )
 
@@ -29,13 +29,13 @@ var (
 var agentCmd = &cobra.Command{
 	Use:   "agent",
 	Short: "Local agent commands",
-	Long:  `Commands for connecting a local opencode instance to cli-server via a WebSocket tunnel.`,
+	Long:  `Commands for connecting a local opencode instance to agentserver via a WebSocket tunnel.`,
 }
 
 var agentConnectCmd = &cobra.Command{
 	Use:   "connect",
-	Short: "Connect local opencode to cli-server",
-	Long: `Establish a WebSocket tunnel between a local opencode instance and cli-server.
+	Short: "Connect local opencode to agentserver",
+	Long: `Establish a WebSocket tunnel between a local opencode instance and agentserver.
 
 On first run, provide --server and --code to register with the server.
 On subsequent runs, the saved credentials will be used automatically.
@@ -166,12 +166,12 @@ func init() {
 	rootCmd.AddCommand(agentCmd)
 	agentCmd.AddCommand(agentConnectCmd)
 
-	agentConnectCmd.Flags().StringVar(&agentServer, "server", "", "CLI server URL (e.g., https://cli.example.com)")
+	agentConnectCmd.Flags().StringVar(&agentServer, "server", "", "Agent server URL (e.g., https://cli.example.com)")
 	agentConnectCmd.Flags().StringVar(&agentCode, "code", "", "One-time registration code from Web UI")
 	agentConnectCmd.Flags().StringVar(&agentName, "name", "", "Name for this agent (default: hostname)")
 	agentConnectCmd.Flags().StringVar(&agentOpencodeURL, "opencode-url", "", "Local opencode server URL (default: http://localhost:{opencode-port})")
 	agentConnectCmd.Flags().StringVar(&agentOpencodePassword, "opencode-password", "", "Local opencode server password")
-	agentConnectCmd.Flags().StringVar(&agentConfigPath, "config", "", "Config file path (default: ~/.cli-server/agent.json)")
+	agentConnectCmd.Flags().StringVar(&agentConfigPath, "config", "", "Config file path (default: ~/.agentserver/agent.json)")
 	agentConnectCmd.Flags().BoolVar(&agentAutoStart, "auto-start", true, "Automatically start opencode serve")
 	agentConnectCmd.Flags().StringVar(&agentOpencodeBin, "opencode-bin", "opencode", "Path to the opencode binary")
 	agentConnectCmd.Flags().IntVar(&agentOpencodePort, "opencode-port", 4096, "Port to start opencode on")

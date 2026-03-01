@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/imryao/cli-server/internal/tunnel"
+	"github.com/agentserver/agentserver/internal/tunnel"
 	"nhooyr.io/websocket"
 )
 

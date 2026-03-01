@@ -1,12 +1,12 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/cli-server/cli-server
+  repository: ghcr.io/agentserver/agentserver
   tag: latest
   pullPolicy: Always
 
 database:
-  url: "postgres://user:pass@postgres:5432/cliserver?sslmode=disable"
+  url: "postgres://user:pass@postgres:5432/agentserver?sslmode=disable"
 
 persistence:
   sessionStorageSize: "5Gi"
@@ -19,15 +19,15 @@ idleTimeout: "30m"
 anthropicApiKey: ""
 anthropicBaseUrl: ""
 anthropicAuthToken: ""
-# URL that sandbox pods use to reach the Anthropic API proxy on cli-server.
-# If empty, defaults to http://cli-server.<namespace>.svc.cluster.local:8080/proxy/anthropic
+# URL that sandbox pods use to reach the Anthropic API proxy on agentserver.
+# If empty, defaults to http://agentserver.<namespace>.svc.cluster.local:8080/proxy/anthropic
 anthropicProxyUrl: ""
 
 # Session backend: "docker" or "k8s"
 backend: "docker"
 
 agent:
-  image: ghcr.io/cli-server/agent:latest
+  image: ghcr.io/agentserver/agent:latest
   memoryLimit: "2147483648"
   nanoCpus: "2000000000"
   pidsLimit: "256"
@@ -36,7 +36,7 @@ agent:
 
 opencode:
   # Image for the opencode agent (used by workspace sandbox pods).
-  image: ghcr.io/cli-server/opencode-agent:latest
+  image: ghcr.io/agentserver/opencode-agent:latest
   # RuntimeClass for sandbox pods (e.g. "gvisor" for gVisor isolation).
   runtimeClassName: ""
   # Opencode config injected into sandbox pods via OPENCODE_CONFIG_CONTENT.
@@ -78,8 +78,8 @@ docker:
   socketPath: /var/run/docker.sock
 
 sandbox:
-  # Prefix for per-workspace K8s namespaces (e.g. "cli-ws" → "cli-ws-a1b2c3d4").
-  namespacePrefix: "cli-ws"
+  # Prefix for per-workspace K8s namespaces (e.g. "agent-ws" → "agent-ws-a1b2c3d4").
+  namespacePrefix: "agent-ws"
 
 networkPolicy:
   enabled: false
@@ -100,7 +100,7 @@ service:
 ingress:
   enabled: false
   className: nginx
-  host: cli-server.example.com
+  host: agentserver.example.com
   tls: false
 
 gateway:
@@ -108,7 +108,7 @@ gateway:
   parentRefs:
     - name: cilium-gateway
       namespace: cilium-gateway
-  host: cli-server.example.com
+  host: agentserver.example.com
 
 oidc:
   redirectBaseUrl: ""

@@ -1,0 +1,19 @@
+apiVersion: v2
+name: agentserver
+description: Run your coding agent in the browser — a self-hosted web interface for opencode
+type: application
+version: 0.6.0
+appVersion: "0.6.0"
+home: https://github.com/agentserver/agentserver
+sources:
+  - https://github.com/agentserver/agentserver
+maintainers:
+  - name: agentserver
+    url: https://github.com/agentserver
+keywords:
+  - claude
+  - claude-code
+  - ai
+  - terminal
+  - code-server
+icon: https://raw.githubusercontent.com/agentserver/agentserver/main/docs/icon.png

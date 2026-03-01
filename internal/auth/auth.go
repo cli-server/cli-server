@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/imryao/cli-server/internal/db"
+	"github.com/agentserver/agentserver/internal/db"
 	"golang.org/x/crypto/bcrypt"
 )
 
 const (
-	cookieName = "cli-server-token"
+	cookieName = "agentserver-token"
 	tokenTTL   = 7 * 24 * time.Hour
 )
 

@@ -59,7 +59,7 @@ export function Login({ onSuccess }: LoginProps) {
     <div className="flex min-h-screen items-center justify-center">
       <div className="w-full max-w-sm rounded-lg border border-[var(--border)] bg-[var(--card)] p-6 shadow-lg">
         <h1 className="mb-6 text-center text-xl font-semibold text-[var(--card-foreground)]">
-          cli-server
+          agentserver
         </h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

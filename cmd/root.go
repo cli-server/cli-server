@@ -7,9 +7,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "cli-server",
+	Use:   "agentserver",
 	Short: "Self-hosted coding agent server",
-	Long:  `cli-server provides a web-based interface to opencode, similar to code-server for VS Code.`,
+	Long:  `agentserver provides a web-based interface to opencode, similar to code-server for VS Code.`,
 }
 
 func Execute() {

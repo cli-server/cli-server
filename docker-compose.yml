@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: cliserver
-      POSTGRES_PASSWORD: cliserver
-      POSTGRES_DB: cliserver
+      POSTGRES_USER: agentserver
+      POSTGRES_PASSWORD: agentserver
+      POSTGRES_DB: agentserver
     ports:
       - "5432:5432"
     volumes:
@@ -16,10 +16,10 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: "postgres://cliserver:cliserver@postgres:5432/cliserver?sslmode=disable"
+      DATABASE_URL: "postgres://agentserver:agentserver@postgres:5432/agentserver?sslmode=disable"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
-      AGENT_IMAGE: "${AGENT_IMAGE:-cli-server-agent:latest}"
+      AGENT_IMAGE: "${AGENT_IMAGE:-agentserver-agent:latest}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:

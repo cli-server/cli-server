@@ -7,7 +7,7 @@ import (
 
 // Config holds configuration for the K8s sandbox backend.
 type Config struct {
-	CliServerNamespace    string
+	AgentserverNamespace    string
 	Image                 string
 	MemoryLimit           string
 	CPULimit              string
@@ -23,8 +23,8 @@ type Config struct {
 // DefaultConfig returns a Config populated from environment variables with sensible defaults.
 func DefaultConfig() Config {
 	return Config{
-		CliServerNamespace:    envOrDefault("CLI_SERVER_NAMESPACE", "default"),
-		Image:                 envOrDefault("AGENT_IMAGE", "cli-server-agent:latest"),
+		AgentserverNamespace:    envOrDefault("AGENTSERVER_NAMESPACE", "default"),
+		Image:                 envOrDefault("AGENT_IMAGE", "agentserver-agent:latest"),
 		MemoryLimit:           envOrDefault("AGENT_MEMORY_LIMIT", "2Gi"),
 		CPULimit:              envOrDefault("AGENT_CPU_LIMIT", "2"),
 		SessionStorageSize:    envOrDefault("SESSION_STORAGE_SIZE", "5Gi"),

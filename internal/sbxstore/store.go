@@ -3,7 +3,7 @@ package sbxstore
 import (
 	"time"
 
-	"github.com/imryao/cli-server/internal/db"
+	"github.com/agentserver/agentserver/internal/db"
 )
 
 // Sandbox represents a sandbox with its current state.

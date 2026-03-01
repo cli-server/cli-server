@@ -15,14 +15,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
-	"github.com/imryao/cli-server/internal/auth"
-	"github.com/imryao/cli-server/internal/db"
-	"github.com/imryao/cli-server/internal/namespace"
-	"github.com/imryao/cli-server/internal/process"
-	"github.com/imryao/cli-server/internal/sbxstore"
-	"github.com/imryao/cli-server/internal/shortid"
-	"github.com/imryao/cli-server/internal/storage"
-	"github.com/imryao/cli-server/internal/tunnel"
+	"github.com/agentserver/agentserver/internal/auth"
+	"github.com/agentserver/agentserver/internal/db"
+	"github.com/agentserver/agentserver/internal/namespace"
+	"github.com/agentserver/agentserver/internal/process"
+	"github.com/agentserver/agentserver/internal/sbxstore"
+	"github.com/agentserver/agentserver/internal/shortid"
+	"github.com/agentserver/agentserver/internal/storage"
+	"github.com/agentserver/agentserver/internal/tunnel"
 )
 
 type Server struct {
@@ -277,7 +277,7 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     "cli-server-token",
+		Name:     "agentserver-token",
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
@@ -388,7 +388,7 @@ func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sand
 
 // authTokenFromRequest extracts the raw auth token from the request cookie.
 func authTokenFromRequest(r *http.Request) string {
-	c, err := r.Cookie("cli-server-token")
+	c, err := r.Cookie("agentserver-token")
 	if err != nil {
 		return ""
 	}
@@ -750,7 +750,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := uuid.New().String()
-	sandboxName := "cli-sandbox-" + shortID(id)
+	sandboxName := "agent-sandbox-" + shortID(id)
 
 	// Generate auth credentials based on sandbox type.
 	var opencodePassword, gatewayToken string

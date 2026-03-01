@@ -327,7 +327,7 @@ export function SandboxList({
               try {
                 const data = await createAgentCode(selectedWorkspaceId)
                 const serverUrl = window.location.origin
-                const command = `cli-server agent connect --server ${serverUrl} --code ${data.code} --name "My PC" --opencode-url http://localhost:4096`
+                const command = `agentserver agent connect --server ${serverUrl} --code ${data.code} --name "My PC" --opencode-url http://localhost:4096`
                 setAgentCodeData({ ...data, command })
               } catch {
                 // ignore

@@ -12,7 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/imryao/cli-server/internal/db"
+	"github.com/agentserver/agentserver/internal/db"
 )
 
 // WorkspaceDriveManager handles workspace persistent volume creation.
@@ -44,7 +44,7 @@ func (m *WorkspaceDriveManager) EnsurePVC(ctx context.Context, workspaceID, name
 		return "", fmt.Errorf("workspace %s not found", workspaceID)
 	}
 
-	pvcName := "cli-ws-" + shortID(workspaceID) + "-disk"
+	pvcName := "agent-ws-" + shortID(workspaceID) + "-disk"
 	if ws.DiskPVCName.Valid && ws.DiskPVCName.String != "" {
 		pvcName = ws.DiskPVCName.String
 	}
@@ -69,7 +69,7 @@ func (m *WorkspaceDriveManager) EnsurePVC(ctx context.Context, workspaceID, name
 			Name:      pvcName,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"managed-by":   "cli-server",
+				"managed-by":   "agentserver",
 				"workspace-id": workspaceID,
 			},
 		},
