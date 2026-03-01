@@ -135,8 +135,9 @@ var serveCmd = &cobra.Command{
 			nsMgr = namespace.NewManager(nsClientset, namespace.Config{
 				Prefix: nsPrefix,
 				NetworkPolicy: namespace.NetworkPolicyConfig{
-					Enabled:   npEnabled,
-					DenyCIDRs: npDenyCIDRs,
+					Enabled:            npEnabled,
+					DenyCIDRs:          npDenyCIDRs,
+					CliServerNamespace: os.Getenv("CLI_SERVER_NAMESPACE"),
 				},
 			})
 

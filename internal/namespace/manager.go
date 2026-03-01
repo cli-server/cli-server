@@ -22,8 +22,9 @@ type Config struct {
 
 // NetworkPolicyConfig holds NetworkPolicy settings applied to each workspace namespace.
 type NetworkPolicyConfig struct {
-	Enabled  bool
-	DenyCIDRs []string
+	Enabled            bool
+	DenyCIDRs          []string
+	CliServerNamespace string // Allow egress to cli-server namespace (for Anthropic API proxy).
 }
 
 // Manager handles per-workspace K8s namespace lifecycle.
@@ -141,7 +142,20 @@ func (m *Manager) buildNetworkPolicy(namespace string) *networkingv1.NetworkPoli
 		},
 	}
 
-	// 3. Allow internet, optionally blocking denied CIDRs.
+	// 3. Allow traffic to cli-server namespace (for Anthropic API proxy).
+	if m.config.NetworkPolicy.CliServerNamespace != "" {
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+			To: []networkingv1.NetworkPolicyPeer{{
+				NamespaceSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"kubernetes.io/metadata.name": m.config.NetworkPolicy.CliServerNamespace,
+					},
+				},
+			}},
+		})
+	}
+
+	// 4. Allow internet, optionally blocking denied CIDRs.
 	if len(m.config.NetworkPolicy.DenyCIDRs) > 0 {
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 			To: []networkingv1.NetworkPolicyPeer{{
