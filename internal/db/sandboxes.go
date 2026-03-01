@@ -63,7 +63,7 @@ func (db *DB) GetSandbox(id string) (*Sandbox, error) {
 
 func (db *DB) GetSandboxByShortID(shortID string) (*Sandbox, error) {
 	s, err := scanSandbox(db.QueryRow(
-		`SELECT `+sandboxColumns+` FROM sandboxes WHERE short_id = $1`, shortID,
+		`SELECT `+sandboxColumns+` FROM sandboxes WHERE LOWER(short_id) = LOWER($1)`, shortID,
 	))
 	if err == sql.ErrNoRows {
 		return nil, nil

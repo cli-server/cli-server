@@ -80,9 +80,9 @@ func (s *Store) GetByShortID(shortID string) (*Sandbox, bool) {
 }
 
 // Resolve finds a sandbox by either short ID or UUID.
-// Short IDs (<=8 chars) are tried first, then UUID; for longer strings the order is reversed.
+// UUIDs are 36 chars; short IDs are 16 chars or fewer. We use 20 as the threshold.
 func (s *Store) Resolve(idOrShortID string) (*Sandbox, bool) {
-	if len(idOrShortID) <= 8 {
+	if len(idOrShortID) <= 20 {
 		if sbx, ok := s.GetByShortID(idOrShortID); ok {
 			return sbx, true
 		}
