@@ -1,0 +1,44 @@
+{{- if and (eq .Values.backend "k8s") (default false .Values.networkPolicy.enabled) }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-sandbox-egress
+  namespace: {{ .Values.sandbox.namespace | default .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      managed-by: cli-server
+  policyTypes:
+    - Egress
+  egress:
+    # 1. Allow DNS to kube-system (kube-dns)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # 2. Allow traffic within the same namespace (cli-server service, other sandbox pods)
+    - to:
+        - podSelector: {}
+    # 3. Allow internet but block denied CIDRs (internal/private networks)
+    {{- if .Values.networkPolicy.denyCIDRs }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- range .Values.networkPolicy.denyCIDRs }}
+              - {{ . }}
+              {{- end }}
+    {{- else }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+    {{- end }}
+    {{- range .Values.networkPolicy.extraEgressRules }}
+    - {{ toYaml . | nindent 6 | trim }}
+    {{- end }}
+{{- end }}

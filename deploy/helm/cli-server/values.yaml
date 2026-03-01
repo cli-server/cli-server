@@ -67,6 +67,13 @@ docker:
 sandbox:
   namespace: "cli-server"
 
+networkPolicy:
+  enabled: false
+  # CIDR ranges to deny egress to (internal/private networks).
+  denyCIDRs: []
+  # Additional egress rules (raw NetworkPolicyEgressRule objects).
+  extraEgressRules: []
+
 agentSandbox:
   # Set to false to skip installing the agent-sandbox controller (if already installed cluster-wide)
   install: true
