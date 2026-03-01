@@ -3,11 +3,13 @@ import { Loader2, ExternalLink, Clock, Activity } from 'lucide-react'
 import { checkAuth, listWorkspaces, listSandboxes, getMe, type Workspace, type Sandbox } from './lib/api'
 import { Login } from './components/Login'
 import { SandboxList } from './components/SandboxList'
+import { AdminPanel } from './components/AdminPanel'
 
 export interface UserInfo {
   id: string
   username: string
   email?: string | null
+  role: string
 }
 
 export default function App() {
@@ -18,6 +20,7 @@ export default function App() {
   const [sandboxes, setSandboxes] = useState<Sandbox[]>([])
   const [activeSandboxId, setActiveSandboxId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [showAdmin, setShowAdmin] = useState(false)
 
   const refreshSandboxes = useCallback(async () => {
     if (!selectedWorkspaceId) return
@@ -197,9 +200,14 @@ export default function App() {
         setCreating={setCreating}
         user={user}
         onLogout={handleLogout}
+        onShowAdmin={user?.role === 'admin' ? () => setShowAdmin(true) : undefined}
       />
       <div className="flex flex-1 items-center justify-center bg-[var(--background)]">
-        {mainContent}
+        {showAdmin ? (
+          <AdminPanel onBack={() => setShowAdmin(false)} />
+        ) : (
+          mainContent
+        )}
       </div>
     </div>
   )

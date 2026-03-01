@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Trash2, Pause, Play, Loader2, LogOut, ChevronDown, Sun, Moon, Monitor, Settings, Laptop } from 'lucide-react'
+import { Plus, Trash2, Pause, Play, Loader2, LogOut, ChevronDown, Sun, Moon, Monitor, Settings, Laptop, Shield } from 'lucide-react'
 import {
   type Workspace,
   type Sandbox,
@@ -32,6 +32,7 @@ interface SandboxListProps {
   setCreating: (v: boolean) => void
   user: UserInfo | null
   onLogout: () => void
+  onShowAdmin?: () => void
 }
 
 function StatusDot({ status }: { status: string }) {
@@ -74,6 +75,7 @@ export function SandboxList({
   setCreating,
   user,
   onLogout,
+  onShowAdmin,
 }: SandboxListProps) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -415,6 +417,17 @@ export function SandboxList({
           </div>
         )}
       </div>
+
+      {/* Admin link */}
+      {onShowAdmin && (
+        <button
+          onClick={onShowAdmin}
+          className="flex w-full items-center gap-2 border-t border-[var(--border)] px-3 py-2 text-sm text-[var(--muted-foreground)] hover:bg-[var(--secondary)]"
+        >
+          <Shield size={14} />
+          Admin
+        </button>
+      )}
 
       {/* Workspace detail */}
       {selectedWorkspaceId && (

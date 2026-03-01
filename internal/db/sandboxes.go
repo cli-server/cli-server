@@ -292,3 +292,23 @@ func (db *DB) ConsumeAgentRegistrationCode(code string) (*AgentRegistrationCode,
 	}
 	return arc, nil
 }
+
+func (db *DB) ListAllSandboxes() ([]*Sandbox, error) {
+	rows, err := db.Query(
+		`SELECT ` + sandboxColumns + ` FROM sandboxes ORDER BY created_at ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list all sandboxes: %w", err)
+	}
+	defer rows.Close()
+
+	var sandboxes []*Sandbox
+	for rows.Next() {
+		s, err := scanSandbox(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan sandbox: %w", err)
+		}
+		sandboxes = append(sandboxes, s)
+	}
+	return sandboxes, rows.Err()
+}

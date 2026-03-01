@@ -240,3 +240,24 @@ func (db *DB) ListWorkspacesWithoutNamespace() ([]*Workspace, error) {
 	}
 	return workspaces, rows.Err()
 }
+
+func (db *DB) ListAllWorkspaces() ([]*Workspace, error) {
+	rows, err := db.Query(
+		`SELECT id, name, disk_pvc_name, k8s_namespace, created_at, updated_at
+		 FROM workspaces ORDER BY created_at ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list all workspaces: %w", err)
+	}
+	defer rows.Close()
+
+	var workspaces []*Workspace
+	for rows.Next() {
+		w := &Workspace{}
+		if err := rows.Scan(&w.ID, &w.Name, &w.DiskPVCName, &w.K8sNamespace, &w.CreatedAt, &w.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan workspace: %w", err)
+		}
+		workspaces = append(workspaces, w)
+	}
+	return workspaces, rows.Err()
+}

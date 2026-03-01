@@ -189,6 +189,15 @@ func (s *Server) Router() http.Handler {
 
 		// Agent registration code generation
 		r.Post("/api/workspaces/{wid}/agent-code", s.handleCreateAgentCode)
+
+		// Admin routes
+		r.Route("/api/admin", func(r chi.Router) {
+			r.Use(s.requireAdmin)
+			r.Get("/users", s.handleAdminListUsers)
+			r.Get("/workspaces", s.handleAdminListWorkspaces)
+			r.Get("/sandboxes", s.handleAdminListSandboxes)
+			r.Put("/users/{id}/role", s.handleAdminUpdateUserRole)
+		})
 	})
 
 	// Static files
@@ -300,6 +309,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"id":       user.ID,
 		"username": user.Username,
 		"email":    user.Email,
+		"role":     user.Role,
 	})
 }
 

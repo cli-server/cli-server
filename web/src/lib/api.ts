@@ -60,7 +60,7 @@ export async function getOIDCProviders(): Promise<string[]> {
   return data.providers || []
 }
 
-export async function getMe(): Promise<{ id: string; username: string; email?: string | null }> {
+export async function getMe(): Promise<{ id: string; username: string; email?: string | null; role: string }> {
   const res = await fetch('/api/auth/me')
   if (!res.ok) throw new Error('Failed to get user info')
   return res.json()
@@ -188,4 +188,59 @@ export async function createAgentCode(workspaceId: string): Promise<{ code: stri
   })
   if (!res.ok) throw new Error('Failed to create agent code')
   return res.json()
+}
+
+// Admin API
+
+export interface AdminUser {
+  id: string
+  username: string
+  email: string | null
+  role: string
+  createdAt: string
+}
+
+export interface AdminWorkspace {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AdminSandbox {
+  id: string
+  name: string
+  workspaceId: string
+  type: string
+  status: string
+  createdAt: string
+  lastActivityAt: string | null
+  isLocal: boolean
+}
+
+export async function adminListUsers(): Promise<AdminUser[]> {
+  const res = await fetch('/api/admin/users')
+  if (!res.ok) throw new Error('Failed to list users')
+  return res.json()
+}
+
+export async function adminListWorkspaces(): Promise<AdminWorkspace[]> {
+  const res = await fetch('/api/admin/workspaces')
+  if (!res.ok) throw new Error('Failed to list workspaces')
+  return res.json()
+}
+
+export async function adminListSandboxes(): Promise<AdminSandbox[]> {
+  const res = await fetch('/api/admin/sandboxes')
+  if (!res.ok) throw new Error('Failed to list sandboxes')
+  return res.json()
+}
+
+export async function adminUpdateUserRole(userId: string, role: string): Promise<void> {
+  const res = await fetch(`/api/admin/users/${userId}/role`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  })
+  if (!res.ok) throw new Error('Failed to update user role')
 }
