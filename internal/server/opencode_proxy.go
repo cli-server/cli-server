@@ -40,12 +40,12 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 		// Verify workspace membership.
 		sbx, found := s.Sandboxes.Get(sandboxID)
 		if !found {
-			http.Error(w, "sandbox not found", http.StatusNotFound)
+			writeErrorPage(w, errPageSandboxNotFound)
 			return
 		}
 		isMember, err := s.DB.IsWorkspaceMember(sbx.WorkspaceID, userID)
 		if err != nil || !isMember {
-			http.Error(w, "sandbox not found", http.StatusNotFound)
+			writeErrorPage(w, errPageSandboxNotFound)
 			return
 		}
 		// Set a per-subdomain auth cookie (no Domain attr — scoped to this subdomain only).
@@ -80,18 +80,18 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 	sbx, found := s.Sandboxes.Get(sandboxID)
 	if !found {
 		log.Printf("subdomain proxy: sandbox %s not found in store", sandboxID)
-		http.Error(w, "sandbox not found", http.StatusNotFound)
+		writeErrorPage(w, errPageSandboxNotFound)
 		return
 	}
 	isMember, err := s.DB.IsWorkspaceMember(sbx.WorkspaceID, userID)
 	if err != nil || !isMember {
 		log.Printf("subdomain proxy: user %s not a member of workspace %s for sandbox %s", userID, sbx.WorkspaceID, sandboxID)
-		http.Error(w, "sandbox not found", http.StatusNotFound)
+		writeErrorPage(w, errPageSandboxNotFound)
 		return
 	}
 
 	if sbx.Status != "running" {
-		http.Error(w, "sandbox is not running", http.StatusServiceUnavailable)
+		writeErrorPage(w, errPageSandboxNotRunning)
 		return
 	}
 
@@ -106,7 +106,7 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 	if sbx.IsLocal {
 		tunnel, ok := s.TunnelRegistry.Get(sandboxID)
 		if !ok {
-			http.Error(w, "agent offline", http.StatusServiceUnavailable)
+			writeErrorPage(w, errPageAgentOffline)
 			return
 		}
 		s.proxyViaTunnel(w, r, sbx, tunnel)
@@ -114,7 +114,7 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 	}
 
 	if sbx.PodIP == "" {
-		http.Error(w, "sandbox pod not ready", http.StatusServiceUnavailable)
+		writeErrorPage(w, errPagePodNotReady)
 		return
 	}
 
