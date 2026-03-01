@@ -25,6 +25,22 @@ const (
 //  2. All other requests — validated via the per-subdomain cookie, then proxied
 //     to the sandbox pod.
 func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sandboxID string) {
+	// Step 0: serve real static files from embedded FS without requiring auth.
+	// These are public frontend assets (JS, CSS, images, manifest, etc.) that
+	// browsers may fetch without cookies (e.g. site.webmanifest, favicons).
+	// Only exact file matches are served — SPA fallback still requires auth.
+	if s.OpencodeStaticFS != nil {
+		upath := path.Clean(r.URL.Path)
+		if upath == "/" {
+			upath = "/index.html"
+		}
+		filePath := upath[1:] // strip leading "/"
+		if f, err := fs.Stat(s.OpencodeStaticFS, filePath); err == nil && !f.IsDir() {
+			s.serveOpencodeFile(w, r, filePath)
+			return
+		}
+	}
+
 	// Step 1: handle /auth?token=xxx — exchange main-site token for subdomain cookie.
 	if r.URL.Path == "/auth" {
 		token := r.URL.Query().Get("token")
@@ -95,9 +111,11 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 		return
 	}
 
-	// Try serving from embedded opencode frontend before proxying to pod.
+	// Try SPA fallback from embedded opencode frontend before proxying to pod.
+	// Real static files were already served above (before auth); here we only
+	// handle SPA client-side routes that need index.html.
 	if s.OpencodeStaticFS != nil {
-		if s.tryServeOpencodeStatic(w, r) {
+		if s.tryServeOpencodeSPAFallback(w, r) {
 			return
 		}
 	}
@@ -154,41 +172,28 @@ var opencodeAPIPrefixes = []string{
 	"/instance",
 }
 
-// tryServeOpencodeStatic attempts to serve a request from the embedded opencode
-// frontend (SPA). Returns true if the response was handled, false if the request
-// should be proxied to the pod.
+// tryServeOpencodeSPAFallback handles SPA client-side routes by serving
+// index.html. Real static files are already served before auth (step 0 in
+// handleSubdomainProxy). This only handles the fallback case: paths that are
+// neither real files nor known API routes.
 //
-// Decision flow:
-//  1. If the cleaned path matches a real file in OpencodeStaticFS → serve it.
-//  2. If the path starts with a known API prefix → return false (proxy to pod).
-//  3. Otherwise → serve index.html (SPA client-side route fallback).
-func (s *Server) tryServeOpencodeStatic(w http.ResponseWriter, r *http.Request) bool {
+// Returns true if index.html was served, false if the request should be proxied.
+func (s *Server) tryServeOpencodeSPAFallback(w http.ResponseWriter, r *http.Request) bool {
 	upath := path.Clean(r.URL.Path)
-	if upath == "/" {
-		upath = "/index.html"
-	}
 
-	// 1. Check if the path matches a real file in the embedded FS.
-	filePath := upath[1:] // strip leading "/"
-	if f, err := fs.Stat(s.OpencodeStaticFS, filePath); err == nil && !f.IsDir() {
-		s.serveOpencodeFile(w, r, filePath)
-		return true
-	}
-
-	// 2. If the path starts with a known API prefix, let the proxy handle it.
+	// If the path starts with a known API prefix, let the proxy handle it.
 	for _, prefix := range opencodeAPIPrefixes {
 		if upath == prefix || strings.HasPrefix(upath, prefix+"/") {
 			return false
 		}
 	}
 
-	// 3. If the path has a file extension but didn't match a real file, proxy it.
-	// This handles cases like sourcemaps or other assets not in the embedded FS.
+	// If the path has a file extension but didn't match a real file, proxy it.
 	if ext := path.Ext(upath); ext != "" {
 		return false
 	}
 
-	// 4. No extension and not an API route — serve index.html as SPA fallback.
+	// No extension and not an API route — serve index.html as SPA fallback.
 	if _, err := fs.Stat(s.OpencodeStaticFS, "index.html"); err != nil {
 		return false
 	}
