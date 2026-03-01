@@ -3,18 +3,29 @@ FROM debian:trixie-slim
 ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
 
+# Disable runtime fetch of models.dev — the binary already bundles a snapshot.
+ENV OPENCODE_DISABLE_MODELS_FETCH=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ripgrep git ca-certificates \
+    ripgrep git ca-certificates curl unzip \
     golang rustc cargo \
     build-essential clang llvm \
     nodejs npm python3 python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/* \
-    && corepack enable && corepack prepare pnpm@latest --activate
+    && corepack enable && corepack prepare pnpm@latest --activate \
+    && curl -fsSL https://bun.sh/install | bash && mv /root/.bun/bin/bun /usr/local/bin/bun
 
 COPY opencode /usr/local/bin/opencode
 
 RUN useradd -m -d /home/agent agent
+
+# Pre-install default plugins so first request doesn't trigger bun install.
 USER agent
+RUN mkdir -p /home/agent/.cache/opencode && \
+    cd /home/agent/.cache/opencode && \
+    echo '{"dependencies":{}}' > package.json && \
+    bun add --exact opencode-anthropic-auth@0.0.13
+
 WORKDIR /home/agent
 
 EXPOSE 4096
