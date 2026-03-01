@@ -2,8 +2,8 @@ apiVersion: v2
 name: cli-server
 description: Run your coding agent in the browser — a self-hosted web interface for opencode
 type: application
-version: 0.5.2
-appVersion: "0.5.2"
+version: 0.5.3
+appVersion: "0.5.3"
 home: https://github.com/cli-server/cli-server
 sources:
   - https://github.com/cli-server/cli-server
