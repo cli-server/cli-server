@@ -141,15 +141,17 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 	proxy.ServeHTTP(w, r)
 }
 
-// opencodeAPIPrefixes lists path prefixes that should always be proxied to
-// the opencode pod rather than served from the embedded frontend.
+// opencodeAPIPrefixes lists path segments that should always be proxied to
+// the opencode pod rather than served from the embedded frontend. A request
+// matches if its path equals the prefix exactly (e.g. "/project") or starts
+// with the prefix followed by "/" (e.g. "/project/current").
 var opencodeAPIPrefixes = []string{
-	"/global/", "/auth/", "/project/", "/session/", "/pty/",
-	"/file", "/find", "/config/", "/mcp/", "/provider/",
-	"/question/", "/permission/", "/tui/", "/experimental/",
+	"/global", "/auth", "/project", "/session", "/pty",
+	"/file", "/find", "/config", "/mcp", "/provider",
+	"/question", "/permission", "/tui", "/experimental",
 	"/doc", "/path", "/vcs", "/command", "/log",
 	"/agent", "/skill", "/lsp", "/formatter", "/event",
-	"/instance/",
+	"/instance",
 }
 
 // tryServeOpencodeStatic attempts to serve a request from the embedded opencode
@@ -175,7 +177,7 @@ func (s *Server) tryServeOpencodeStatic(w http.ResponseWriter, r *http.Request) 
 
 	// 2. If the path starts with a known API prefix, let the proxy handle it.
 	for _, prefix := range opencodeAPIPrefixes {
-		if strings.HasPrefix(upath, prefix) {
+		if upath == prefix || strings.HasPrefix(upath, prefix+"/") {
 			return false
 		}
 	}
