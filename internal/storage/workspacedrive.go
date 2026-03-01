@@ -43,13 +43,13 @@ func (m *WorkspaceDriveManager) EnsurePVC(ctx context.Context, workspaceID, name
 	if ws == nil {
 		return "", fmt.Errorf("workspace %s not found", workspaceID)
 	}
-	if ws.DiskPVCName.Valid && ws.DiskPVCName.String != "" {
-		return ws.DiskPVCName.String, nil
-	}
 
 	pvcName := "cli-ws-" + shortID(workspaceID) + "-disk"
+	if ws.DiskPVCName.Valid && ws.DiskPVCName.String != "" {
+		pvcName = ws.DiskPVCName.String
+	}
 
-	// Check if PVC already exists in K8s.
+	// Check if PVC already exists in the target namespace.
 	_, err = m.clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
 	if err == nil {
 		// PVC exists, just record in DB.
