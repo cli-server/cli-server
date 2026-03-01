@@ -91,8 +91,16 @@ spec:
               value: {{ .Values.agent.networkMode | quote }}
             {{- end }}
             {{- if eq .Values.backend "k8s" }}
-            - name: SANDBOX_NAMESPACE
-              value: {{ .Values.sandbox.namespace | quote }}
+            - name: SANDBOX_NAMESPACE_PREFIX
+              value: {{ .Values.sandbox.namespacePrefix | default "cli-ws" | quote }}
+            - name: CLI_SERVER_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: NETWORKPOLICY_ENABLED
+              value: {{ .Values.networkPolicy.enabled | default false | quote }}
+            {{- if .Values.networkPolicy.denyCIDRs }}
+            - name: NETWORKPOLICY_DENY_CIDRS
+              value: {{ join "," .Values.networkPolicy.denyCIDRs | quote }}
+            {{- end }}
             {{- if or .Values.opencode.runtimeClassName .Values.agent.runtimeClassName }}
             - name: RUNTIME_CLASS
               value: {{ .Values.opencode.runtimeClassName | default .Values.agent.runtimeClassName | quote }}

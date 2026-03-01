@@ -19,24 +19,22 @@ import (
 type WorkspaceDriveManager struct {
 	db               *db.DB
 	clientset        kubernetes.Interface
-	namespace        string
 	storageSize      string
 	storageClassName string
 }
 
 // NewWorkspaceDriveManager creates a K8s-backed workspace drive manager.
-func NewWorkspaceDriveManager(database *db.DB, clientset kubernetes.Interface, namespace, storageSize, storageClassName string) *WorkspaceDriveManager {
+func NewWorkspaceDriveManager(database *db.DB, clientset kubernetes.Interface, storageSize, storageClassName string) *WorkspaceDriveManager {
 	return &WorkspaceDriveManager{
 		db:               database,
 		clientset:        clientset,
-		namespace:        namespace,
 		storageSize:      storageSize,
 		storageClassName: storageClassName,
 	}
 }
 
-// EnsurePVC creates a PVC for the workspace if it doesn't exist and records it in the DB.
-func (m *WorkspaceDriveManager) EnsurePVC(ctx context.Context, workspaceID string) (string, error) {
+// EnsurePVC creates a PVC for the workspace in the given namespace if it doesn't exist and records it in the DB.
+func (m *WorkspaceDriveManager) EnsurePVC(ctx context.Context, workspaceID, namespace string) (string, error) {
 	// Check DB first.
 	ws, err := m.db.GetWorkspace(workspaceID)
 	if err != nil {
@@ -52,7 +50,7 @@ func (m *WorkspaceDriveManager) EnsurePVC(ctx context.Context, workspaceID strin
 	pvcName := "cli-ws-" + shortID(workspaceID) + "-disk"
 
 	// Check if PVC already exists in K8s.
-	_, err = m.clientset.CoreV1().PersistentVolumeClaims(m.namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	_, err = m.clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
 	if err == nil {
 		// PVC exists, just record in DB.
 		if err := m.db.UpdateWorkspaceDiskPVC(workspaceID, pvcName); err != nil {
@@ -69,7 +67,7 @@ func (m *WorkspaceDriveManager) EnsurePVC(ctx context.Context, workspaceID strin
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pvcName,
-			Namespace: m.namespace,
+			Namespace: namespace,
 			Labels: map[string]string{
 				"managed-by":   "cli-server",
 				"workspace-id": workspaceID,
@@ -86,7 +84,7 @@ func (m *WorkspaceDriveManager) EnsurePVC(ctx context.Context, workspaceID strin
 		pvc.Spec.StorageClassName = &m.storageClassName
 	}
 
-	if _, err := m.clientset.CoreV1().PersistentVolumeClaims(m.namespace).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
+	if _, err := m.clientset.CoreV1().PersistentVolumeClaims(namespace).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
 		return "", fmt.Errorf("create workspace drive PVC: %w", err)
 	}
 	log.Printf("Created workspace drive PVC %s for workspace %s", pvcName, workspaceID)
@@ -138,7 +136,7 @@ func (m *DockerWorkspaceDriveManager) EnsureVolume(workspaceID string) (string, 
 
 // DriveManager is a backend-agnostic interface for workspace drive management.
 type DriveManager interface {
-	EnsureDrive(ctx context.Context, workspaceID string) (string, error)
+	EnsureDrive(ctx context.Context, workspaceID, namespace string) (string, error)
 }
 
 // K8sDriveAdapter adapts WorkspaceDriveManager to the DriveManager interface.
@@ -150,8 +148,8 @@ func NewK8sDriveAdapter(mgr *WorkspaceDriveManager) DriveManager {
 	return &K8sDriveAdapter{mgr: mgr}
 }
 
-func (a *K8sDriveAdapter) EnsureDrive(ctx context.Context, workspaceID string) (string, error) {
-	return a.mgr.EnsurePVC(ctx, workspaceID)
+func (a *K8sDriveAdapter) EnsureDrive(ctx context.Context, workspaceID, namespace string) (string, error) {
+	return a.mgr.EnsurePVC(ctx, workspaceID, namespace)
 }
 
 // DockerDriveAdapter adapts DockerWorkspaceDriveManager to the DriveManager interface.
@@ -163,17 +161,19 @@ func NewDockerDriveAdapter(mgr *DockerWorkspaceDriveManager) DriveManager {
 	return &DockerDriveAdapter{mgr: mgr}
 }
 
-func (a *DockerDriveAdapter) EnsureDrive(ctx context.Context, workspaceID string) (string, error) {
+func (a *DockerDriveAdapter) EnsureDrive(ctx context.Context, workspaceID, namespace string) (string, error) {
 	_ = ctx
+	_ = namespace
 	return a.mgr.EnsureVolume(workspaceID)
 }
 
 // NilDriveManager is a no-op drive manager for when storage is not configured.
 type NilDriveManager struct{}
 
-func (NilDriveManager) EnsureDrive(ctx context.Context, workspaceID string) (string, error) {
+func (NilDriveManager) EnsureDrive(ctx context.Context, workspaceID, namespace string) (string, error) {
 	_ = ctx
 	_ = workspaceID
+	_ = namespace
 	return "", nil
 }
 
@@ -185,8 +185,8 @@ var (
 )
 
 // EnsureDriveWithTimeout wraps EnsureDrive with a default timeout.
-func EnsureDriveWithTimeout(dm DriveManager, workspaceID string) (string, error) {
+func EnsureDriveWithTimeout(dm DriveManager, workspaceID, namespace string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return dm.EnsureDrive(ctx, workspaceID)
+	return dm.EnsureDrive(ctx, workspaceID, namespace)
 }

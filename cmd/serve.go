@@ -18,6 +18,7 @@ import (
 	"github.com/imryao/cli-server/internal/auth"
 	"github.com/imryao/cli-server/internal/container"
 	"github.com/imryao/cli-server/internal/db"
+	"github.com/imryao/cli-server/internal/namespace"
 	"github.com/imryao/cli-server/internal/process"
 	"github.com/imryao/cli-server/internal/sandbox"
 	"github.com/imryao/cli-server/internal/sbxstore"
@@ -85,6 +86,7 @@ var serveCmd = &cobra.Command{
 
 		var procMgr process.Manager
 		var driveMgr storage.DriveManager
+		var nsMgr *namespace.Manager
 
 		// Load known sandbox/container names from DB to avoid cleaning paused sandboxes.
 		knownNames, err := database.ListAllActiveSandboxNames()
@@ -112,12 +114,58 @@ var serveCmd = &cobra.Command{
 			if agentImage != "" {
 				cfg.Image = agentImage
 			}
-			mgr, err := sandbox.NewManager(cfg)
+			mgr, err := sandbox.NewManager(cfg, database)
 			if err != nil {
 				log.Fatalf("K8s backend unavailable: %v", err)
 			}
-			mgr.CleanOrphans(knownNames)
-			log.Printf("Using K8s sandbox backend (namespace: %s, image: %s)", cfg.Namespace, cfg.Image)
+
+			// Set up namespace manager for per-workspace namespace isolation.
+			nsPrefix := envOrDefault("SANDBOX_NAMESPACE_PREFIX", "cli-ws")
+			npEnabled := os.Getenv("NETWORKPOLICY_ENABLED") == "true"
+			npDenyCIDRs := namespace.ParseDenyCIDRs(os.Getenv("NETWORKPOLICY_DENY_CIDRS"))
+
+			restCfg, err := buildRESTConfig()
+			if err != nil {
+				log.Fatalf("K8s config for namespace manager: %v", err)
+			}
+			nsClientset, err := kubernetes.NewForConfig(restCfg)
+			if err != nil {
+				log.Fatalf("K8s clientset for namespace manager: %v", err)
+			}
+			nsMgr = namespace.NewManager(nsClientset, namespace.Config{
+				Prefix: nsPrefix,
+				NetworkPolicy: namespace.NetworkPolicyConfig{
+					Enabled:   npEnabled,
+					DenyCIDRs: npDenyCIDRs,
+				},
+			})
+
+			// Backfill k8s_namespace for existing workspaces that don't have one.
+			existingWs, err := database.ListWorkspacesWithoutNamespace()
+			if err != nil {
+				log.Printf("Warning: failed to list workspaces without namespace: %v", err)
+			} else {
+				for _, ws := range existingWs {
+					ns, err := nsMgr.EnsureNamespace(context.Background(), ws.ID)
+					if err != nil {
+						log.Printf("Warning: failed to create namespace for workspace %s: %v", ws.ID, err)
+						continue
+					}
+					if err := database.SetWorkspaceNamespace(ws.ID, ns); err != nil {
+						log.Printf("Warning: failed to set namespace for workspace %s: %v", ws.ID, err)
+					} else {
+						log.Printf("Backfilled namespace %s for workspace %s", ns, ws.ID)
+					}
+				}
+			}
+
+			// Clean orphan sandboxes across all workspace namespaces.
+			allNamespaces, err := database.GetAllWorkspaceNamespaces()
+			if err != nil {
+				log.Printf("Warning: failed to get workspace namespaces: %v", err)
+			}
+			mgr.CleanOrphans(knownNames, allNamespaces)
+			log.Printf("Using K8s sandbox backend (namespace prefix: %s, cli-server ns: %s, image: %s)", nsPrefix, cfg.CliServerNamespace, cfg.Image)
 			procMgr = mgr
 
 			workspaceDriveSize := envOrDefault("USER_DRIVE_SIZE", "10Gi")
@@ -126,7 +174,7 @@ var serveCmd = &cobra.Command{
 			if workspaceDriveStorageClass == "" {
 				workspaceDriveStorageClass = storageClass
 			}
-			driveMgr = createK8sDriveManager(database, cfg.Namespace, workspaceDriveSize, workspaceDriveStorageClass)
+			driveMgr = createK8sDriveManager(database, workspaceDriveSize, workspaceDriveStorageClass)
 
 		default:
 			log.Fatalf("Unknown backend: %s (supported: docker, k8s)", backend)
@@ -169,7 +217,7 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
-		srv := server.New(authSvc, oidcMgr, database, sandboxStore, procMgr, driveMgr, tunnel.NewRegistry(), staticFS, opencodeStaticFS)
+		srv := server.New(authSvc, oidcMgr, database, sandboxStore, procMgr, driveMgr, nsMgr, tunnel.NewRegistry(), staticFS, opencodeStaticFS)
 		addr := fmt.Sprintf(":%d", port)
 
 		// Start idle watcher.
@@ -203,7 +251,7 @@ var serveCmd = &cobra.Command{
 	},
 }
 
-func createK8sDriveManager(database *db.DB, namespace, storageSize, storageClassName string) storage.DriveManager {
+func createK8sDriveManager(database *db.DB, storageSize, storageClassName string) storage.DriveManager {
 	restCfg, err := buildRESTConfig()
 	if err != nil {
 		log.Printf("Warning: K8s workspace drive manager unavailable: %v", err)
@@ -214,7 +262,7 @@ func createK8sDriveManager(database *db.DB, namespace, storageSize, storageClass
 		log.Printf("Warning: K8s workspace drive manager unavailable: %v", err)
 		return storage.NilDriveManager{}
 	}
-	mgr := storage.NewWorkspaceDriveManager(database, clientset, namespace, storageSize, storageClassName)
+	mgr := storage.NewWorkspaceDriveManager(database, clientset, storageSize, storageClassName)
 	return storage.NewK8sDriveAdapter(mgr)
 }
 

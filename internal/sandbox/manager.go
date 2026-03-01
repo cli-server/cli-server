@@ -24,6 +24,7 @@ import (
 
 	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 
+	"github.com/imryao/cli-server/internal/db"
 	"github.com/imryao/cli-server/internal/process"
 )
 
@@ -42,11 +43,13 @@ var _ process.Manager = (*Manager)(nil)
 type sessionEntry struct {
 	proc        *execProcess
 	sandboxName string
+	namespace   string
 }
 
 // Manager manages Sandbox CRs and remotecommand exec sessions.
 type Manager struct {
 	cfg       Config
+	db        *db.DB
 	restCfg   *rest.Config
 	k8s       client.Client
 	clientset kubernetes.Interface
@@ -55,7 +58,7 @@ type Manager struct {
 }
 
 // NewManager creates a sandbox Manager using in-cluster or KUBECONFIG config.
-func NewManager(cfg Config) (*Manager, error) {
+func NewManager(cfg Config, database *db.DB) (*Manager, error) {
 	restCfg, err := buildRESTConfig()
 	if err != nil {
 		return nil, fmt.Errorf("k8s config: %w", err)
@@ -77,6 +80,7 @@ func NewManager(cfg Config) (*Manager, error) {
 
 	m := &Manager{
 		cfg:       cfg,
+		db:        database,
 		restCfg:   restCfg,
 		k8s:       k8sClient,
 		clientset: clientset,
@@ -99,7 +103,8 @@ func buildRESTConfig() (*rest.Config, error) {
 }
 
 // CleanOrphans deletes Sandbox CRs labelled managed-by=cli-server that are NOT in the known set.
-func (m *Manager) CleanOrphans(knownSandboxNames []string) {
+// It iterates all provided workspace namespaces.
+func (m *Manager) CleanOrphans(knownSandboxNames []string, namespaces []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -108,22 +113,24 @@ func (m *Manager) CleanOrphans(knownSandboxNames []string) {
 		known[name] = true
 	}
 
-	var list sandboxv1alpha1.SandboxList
-	if err := m.k8s.List(ctx, &list,
-		client.InNamespace(m.cfg.Namespace),
-		client.MatchingLabels{labelManagedBy: labelValue},
-	); err != nil {
-		log.Printf("failed to list orphan sandboxes: %v", err)
-		return
-	}
-	for i := range list.Items {
-		name := list.Items[i].Name
-		if known[name] {
+	for _, ns := range namespaces {
+		var list sandboxv1alpha1.SandboxList
+		if err := m.k8s.List(ctx, &list,
+			client.InNamespace(ns),
+			client.MatchingLabels{labelManagedBy: labelValue},
+		); err != nil {
+			log.Printf("failed to list orphan sandboxes in %s: %v", ns, err)
 			continue
 		}
-		log.Printf("cleaning orphan sandbox %s", name)
-		if err := m.k8s.Delete(ctx, &list.Items[i]); err != nil {
-			log.Printf("failed to delete orphan sandbox %s: %v", name, err)
+		for i := range list.Items {
+			name := list.Items[i].Name
+			if known[name] {
+				continue
+			}
+			log.Printf("cleaning orphan sandbox %s in namespace %s", name, ns)
+			if err := m.k8s.Delete(ctx, &list.Items[i]); err != nil {
+				log.Printf("failed to delete orphan sandbox %s: %v", name, err)
+			}
 		}
 	}
 }
@@ -131,6 +138,7 @@ func (m *Manager) CleanOrphans(knownSandboxNames []string) {
 func (m *Manager) Start(id, command string, args, env []string, opts process.StartOptions) (process.Process, error) {
 	ctx := context.Background()
 	sandboxName := "cli-sandbox-" + shortID(id)
+	ns := opts.Namespace
 
 	// Build environment variables for the sandbox pod.
 	containerEnv := []corev1.EnvVar{{Name: "TERM", Value: "xterm-256color"}}
@@ -139,7 +147,7 @@ func (m *Manager) Start(id, command string, args, env []string, opts process.Sta
 	// instead of the real Anthropic API key.
 	proxyBaseURL := os.Getenv("ANTHROPIC_PROXY_URL")
 	if proxyBaseURL == "" {
-		proxyBaseURL = "http://cli-server." + m.cfg.Namespace + ".svc.cluster.local:8080/proxy/anthropic/v1"
+		proxyBaseURL = "http://cli-server." + m.cfg.CliServerNamespace + ".svc.cluster.local:8080/proxy/anthropic/v1"
 	}
 	if opts.ProxyToken != "" {
 		containerEnv = append(containerEnv,
@@ -223,7 +231,7 @@ chown -R 1000:1000 /mnt/workspace-drive
 	sb := &sandboxv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxName,
-			Namespace: m.cfg.Namespace,
+			Namespace: ns,
 			Labels:    map[string]string{labelManagedBy: labelValue},
 		},
 		Spec: sandboxv1alpha1.SandboxSpec{
@@ -261,7 +269,7 @@ chown -R 1000:1000 /mnt/workspace-drive
 	}
 
 	// Wait for sandbox to become ready.
-	podName, _, err := m.waitForReady(ctx, sandboxName)
+	podName, _, err := m.waitForReady(ctx, ns, sandboxName)
 	if err != nil {
 		_ = m.k8s.Delete(ctx, sb)
 		return nil, fmt.Errorf("sandbox not ready: %w", err)
@@ -271,14 +279,14 @@ chown -R 1000:1000 /mnt/workspace-drive
 	fullCmd := append([]string{command}, args...)
 
 	// Start remotecommand exec into the pod.
-	proc, err := startExec(m.restCfg, m.clientset, m.cfg.Namespace, podName, sandboxContainerName, fullCmd)
+	proc, err := startExec(m.restCfg, m.clientset, ns, podName, sandboxContainerName, fullCmd)
 	if err != nil {
 		_ = m.k8s.Delete(ctx, sb)
 		return nil, fmt.Errorf("exec into sandbox: %w", err)
 	}
 
 	m.mu.Lock()
-	m.sessions[id] = &sessionEntry{proc: proc, sandboxName: sandboxName}
+	m.sessions[id] = &sessionEntry{proc: proc, sandboxName: sandboxName, namespace: ns}
 	m.mu.Unlock()
 
 	return proc, nil
@@ -295,6 +303,7 @@ func (m *Manager) StartContainer(id string, opts process.StartOptions) error {
 func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (string, error) {
 	ctx := context.Background()
 	sandboxName := "cli-sandbox-" + shortID(id)
+	ns := opts.Namespace
 
 	// Build environment variables for the sandbox pod.
 	containerEnv := []corev1.EnvVar{{Name: "TERM", Value: "xterm-256color"}}
@@ -303,7 +312,7 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 	// instead of the real Anthropic API key.
 	proxyBaseURL := os.Getenv("ANTHROPIC_PROXY_URL")
 	if proxyBaseURL == "" {
-		proxyBaseURL = "http://cli-server." + m.cfg.Namespace + ".svc.cluster.local:8080/proxy/anthropic/v1"
+		proxyBaseURL = "http://cli-server." + m.cfg.CliServerNamespace + ".svc.cluster.local:8080/proxy/anthropic/v1"
 	}
 	if opts.ProxyToken != "" {
 		containerEnv = append(containerEnv,
@@ -445,7 +454,7 @@ chown -R 1000:1000 /mnt/workspace-drive
 	sb := &sandboxv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxName,
-			Namespace: m.cfg.Namespace,
+			Namespace: ns,
 			Labels:    map[string]string{labelManagedBy: labelValue},
 		},
 		Spec: sandboxv1alpha1.SandboxSpec{
@@ -469,7 +478,7 @@ chown -R 1000:1000 /mnt/workspace-drive
 		return "", fmt.Errorf("create sandbox CR: %w", err)
 	}
 
-	_, podIP, err := m.waitForReady(ctx, sandboxName)
+	_, podIP, err := m.waitForReady(ctx, ns, sandboxName)
 	if err != nil {
 		_ = m.k8s.Delete(ctx, sb)
 		return "", fmt.Errorf("sandbox not ready: %w", err)
@@ -491,12 +500,17 @@ func (m *Manager) ResumeContainerWithIP(id string) (string, error) {
 	sandboxName := "cli-sandbox-" + shortID(id)
 	ctx := context.Background()
 
+	ns, err := m.lookupNamespace(id)
+	if err != nil {
+		return "", fmt.Errorf("resolve namespace for resume: %w", err)
+	}
+
 	// Patch sandbox replicas to 1.
 	patch := []byte(`{"spec":{"replicas":1}}`)
 	sb := &sandboxv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxName,
-			Namespace: m.cfg.Namespace,
+			Namespace: ns,
 		},
 	}
 	if err := m.k8s.Patch(ctx, sb, client.RawPatch(types.MergePatchType, patch)); err != nil {
@@ -504,7 +518,7 @@ func (m *Manager) ResumeContainerWithIP(id string) (string, error) {
 	}
 
 	// Wait for pod to be ready.
-	_, podIP, err := m.waitForReady(ctx, sandboxName)
+	_, podIP, err := m.waitForReady(ctx, ns, sandboxName)
 	if err != nil {
 		return "", fmt.Errorf("sandbox not ready after resume: %w", err)
 	}
@@ -527,8 +541,17 @@ func (m *Manager) Pause(id string) error {
 
 	// Patch sandbox replicas to 0.
 	sandboxName := "cli-sandbox-" + shortID(id)
+	var ns string
 	if ok {
 		sandboxName = entry.sandboxName
+		ns = entry.namespace
+	}
+	if ns == "" {
+		var err error
+		ns, err = m.lookupNamespace(id)
+		if err != nil {
+			return fmt.Errorf("resolve namespace for pause: %w", err)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -538,7 +561,7 @@ func (m *Manager) Pause(id string) error {
 	sb := &sandboxv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxName,
-			Namespace: m.cfg.Namespace,
+			Namespace: ns,
 		},
 	}
 	if err := m.k8s.Patch(ctx, sb, client.RawPatch(types.MergePatchType, patch)); err != nil {
@@ -551,12 +574,17 @@ func (m *Manager) Pause(id string) error {
 func (m *Manager) Resume(id, sandboxName, command string, args []string) (process.Process, error) {
 	ctx := context.Background()
 
+	ns, err := m.lookupNamespace(id)
+	if err != nil {
+		return nil, fmt.Errorf("resolve namespace for resume: %w", err)
+	}
+
 	// Patch sandbox replicas to 1.
 	patch := []byte(`{"spec":{"replicas":1}}`)
 	sb := &sandboxv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxName,
-			Namespace: m.cfg.Namespace,
+			Namespace: ns,
 		},
 	}
 	if err := m.k8s.Patch(ctx, sb, client.RawPatch(types.MergePatchType, patch)); err != nil {
@@ -564,40 +592,40 @@ func (m *Manager) Resume(id, sandboxName, command string, args []string) (proces
 	}
 
 	// Wait for pod to be ready.
-	podName, _, err := m.waitForReady(ctx, sandboxName)
+	podName, _, err := m.waitForReady(ctx, ns, sandboxName)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox not ready after resume: %w", err)
 	}
 
 	// Start remotecommand exec.
 	fullCmd := append([]string{command}, args...)
-	proc, err := startExec(m.restCfg, m.clientset, m.cfg.Namespace, podName, sandboxContainerName, fullCmd)
+	proc, err := startExec(m.restCfg, m.clientset, ns, podName, sandboxContainerName, fullCmd)
 	if err != nil {
 		return nil, fmt.Errorf("exec into resumed sandbox: %w", err)
 	}
 
 	m.mu.Lock()
-	m.sessions[id] = &sessionEntry{proc: proc, sandboxName: sandboxName}
+	m.sessions[id] = &sessionEntry{proc: proc, sandboxName: sandboxName, namespace: ns}
 	m.mu.Unlock()
 
 	return proc, nil
 }
 
 // waitForReady polls until the Sandbox has Ready=True and returns the backing pod name and IP.
-func (m *Manager) waitForReady(ctx context.Context, sandboxName string) (podName string, podIP string, err error) {
+func (m *Manager) waitForReady(ctx context.Context, namespace, sandboxName string) (podName string, podIP string, err error) {
 	deadline := time.Now().Add(pollTimeout)
 	nameHash := nameHash(sandboxName)
 
 	for time.Now().Before(deadline) {
 		var sb sandboxv1alpha1.Sandbox
-		key := client.ObjectKey{Namespace: m.cfg.Namespace, Name: sandboxName}
+		key := client.ObjectKey{Namespace: namespace, Name: sandboxName}
 		if err := m.k8s.Get(ctx, key, &sb); err != nil {
 			time.Sleep(pollInterval)
 			continue
 		}
 
 		if isSandboxReady(&sb) {
-			podList, err := m.clientset.CoreV1().Pods(m.cfg.Namespace).List(ctx, metav1.ListOptions{
+			podList, err := m.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 				LabelSelector: sandboxNameHashLabel + "=" + nameHash,
 			})
 			if err != nil {
@@ -647,6 +675,32 @@ func (m *Manager) runtimeClassName() *string {
 	return strPtr(m.cfg.RuntimeClassName)
 }
 
+// lookupNamespace resolves the K8s namespace for a sandbox by looking up
+// sandbox → workspace → k8s_namespace in the database.
+func (m *Manager) lookupNamespace(sandboxID string) (string, error) {
+	if m.db == nil {
+		return "", fmt.Errorf("no database reference for namespace lookup")
+	}
+	sbx, err := m.db.GetSandbox(sandboxID)
+	if err != nil {
+		return "", fmt.Errorf("get sandbox %s: %w", sandboxID, err)
+	}
+	if sbx == nil {
+		return "", fmt.Errorf("sandbox %s not found", sandboxID)
+	}
+	ws, err := m.db.GetWorkspace(sbx.WorkspaceID)
+	if err != nil {
+		return "", fmt.Errorf("get workspace %s: %w", sbx.WorkspaceID, err)
+	}
+	if ws == nil {
+		return "", fmt.Errorf("workspace %s not found", sbx.WorkspaceID)
+	}
+	if !ws.K8sNamespace.Valid || ws.K8sNamespace.String == "" {
+		return "", fmt.Errorf("workspace %s has no k8s namespace", ws.ID)
+	}
+	return ws.K8sNamespace.String, nil
+}
+
 func (m *Manager) Get(id string) (process.Process, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -670,8 +724,18 @@ func (m *Manager) Stop(id string) error {
 	}
 
 	sandboxName := "cli-sandbox-" + shortID(id)
+	var ns string
 	if ok {
 		sandboxName = entry.sandboxName
+		ns = entry.namespace
+	}
+	if ns == "" {
+		var err error
+		ns, err = m.lookupNamespace(id)
+		if err != nil {
+			log.Printf("failed to resolve namespace for stop %s: %v", id, err)
+			return nil
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -680,7 +744,7 @@ func (m *Manager) Stop(id string) error {
 	sb := &sandboxv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxName,
-			Namespace: m.cfg.Namespace,
+			Namespace: ns,
 		},
 	}
 	if err := m.k8s.Delete(ctx, sb); err != nil {
@@ -689,15 +753,15 @@ func (m *Manager) Stop(id string) error {
 	return nil
 }
 
-// StopBySandboxName deletes a Sandbox CR by its name (for paused sessions with no active process).
-func (m *Manager) StopBySandboxName(sandboxName string) error {
+// StopBySandboxName deletes a Sandbox CR by its name in the given namespace.
+func (m *Manager) StopBySandboxName(namespace, sandboxName string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	sb := &sandboxv1alpha1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sandboxName,
-			Namespace: m.cfg.Namespace,
+			Namespace: namespace,
 		},
 	}
 	return m.k8s.Delete(ctx, sb)

@@ -7,13 +7,18 @@ metadata:
     app: {{ .Release.Name }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
   name: {{ .Release.Name }}-sandbox
-  namespace: {{ .Values.sandbox.namespace }}
   labels:
     app: {{ .Release.Name }}
 rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "create", "update", "delete"]
   - apiGroups: ["agents.x-k8s.io"]
     resources: ["sandboxes"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -31,15 +36,14 @@ rules:
     verbs: ["get", "list", "create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: {{ .Release.Name }}-sandbox
-  namespace: {{ .Values.sandbox.namespace }}
   labels:
     app: {{ .Release.Name }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
+  kind: ClusterRole
   name: {{ .Release.Name }}-sandbox
 subjects:
   - kind: ServiceAccount

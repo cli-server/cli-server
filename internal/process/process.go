@@ -10,6 +10,7 @@ type Process interface {
 
 // StartOptions holds optional parameters for starting a process.
 type StartOptions struct {
+	Namespace        string // K8s namespace to create sandbox in
 	WorkspaceDiskPVC string // pre-existing PVC name for workspace drive mount
 	OpencodePassword string // per-sandbox password for opencode server auth
 	ProxyToken       string // per-sandbox token for Anthropic API proxy auth

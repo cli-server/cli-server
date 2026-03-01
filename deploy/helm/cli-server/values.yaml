@@ -65,7 +65,8 @@ docker:
   socketPath: /var/run/docker.sock
 
 sandbox:
-  namespace: "cli-server"
+  # Prefix for per-workspace K8s namespaces (e.g. "cli-ws" → "cli-ws-a1b2c3d4").
+  namespacePrefix: "cli-ws"
 
 networkPolicy:
   enabled: false

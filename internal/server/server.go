@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/imryao/cli-server/internal/auth"
 	"github.com/imryao/cli-server/internal/db"
+	"github.com/imryao/cli-server/internal/namespace"
 	"github.com/imryao/cli-server/internal/process"
 	"github.com/imryao/cli-server/internal/sbxstore"
 	"github.com/imryao/cli-server/internal/storage"
@@ -24,23 +25,24 @@ import (
 )
 
 type Server struct {
-	Auth           *auth.Auth
-	OIDC           *auth.OIDCManager
-	DB             *db.DB
-	Sandboxes      *sbxstore.Store
-	ProcessManager process.Manager
-	DriveManager   storage.DriveManager
-	TunnelRegistry *tunnel.Registry
-	StaticFS          fs.FS
-	OpencodeStaticFS  fs.FS // embedded opencode frontend dist (served on subdomain requests)
-	BaseDomain        string // e.g. "cli.cs.ac.cn" — used for subdomain routing
-	BaseScheme     string // e.g. "https" — scheme for generated URLs
+	Auth             *auth.Auth
+	OIDC             *auth.OIDCManager
+	DB               *db.DB
+	Sandboxes        *sbxstore.Store
+	ProcessManager   process.Manager
+	DriveManager     storage.DriveManager
+	NamespaceManager *namespace.Manager
+	TunnelRegistry   *tunnel.Registry
+	StaticFS         fs.FS
+	OpencodeStaticFS fs.FS // embedded opencode frontend dist (served on subdomain requests)
+	BaseDomain       string // e.g. "cli.cs.ac.cn" — used for subdomain routing
+	BaseScheme       string // e.g. "https" — scheme for generated URLs
 	// activityThrottle prevents excessive DB writes for activity tracking.
 	activityMu   sync.Mutex
 	activityLast map[string]time.Time
 }
 
-func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, tunnelReg *tunnel.Registry, staticFS fs.FS, opcodeStaticFS fs.FS) *Server {
+func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, nsMgr *namespace.Manager, tunnelReg *tunnel.Registry, staticFS fs.FS, opcodeStaticFS fs.FS) *Server {
 	baseDomain := os.Getenv("BASE_DOMAIN")
 	baseScheme := os.Getenv("BASE_SCHEME")
 	if baseScheme == "" {
@@ -54,6 +56,7 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 		Sandboxes:        sandboxStore,
 		ProcessManager:   processManager,
 		DriveManager:     driveManager,
+		NamespaceManager: nsMgr,
 		TunnelRegistry:   tunnelReg,
 		StaticFS:         staticFS,
 		OpencodeStaticFS: opcodeStaticFS,
@@ -447,6 +450,24 @@ func (s *Server) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Create per-workspace K8s namespace if namespace manager is configured.
+	if s.NamespaceManager != nil {
+		ns, err := s.NamespaceManager.EnsureNamespace(r.Context(), id)
+		if err != nil {
+			log.Printf("failed to create namespace for workspace %s: %v", id, err)
+			s.DB.DeleteWorkspace(id)
+			http.Error(w, "failed to create workspace namespace", http.StatusInternalServerError)
+			return
+		}
+		if err := s.DB.SetWorkspaceNamespace(id, ns); err != nil {
+			log.Printf("failed to set namespace for workspace %s: %v", id, err)
+			s.NamespaceManager.DeleteNamespace(r.Context(), ns)
+			s.DB.DeleteWorkspace(id)
+			http.Error(w, "failed to create workspace", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	ws, err := s.DB.GetWorkspace(id)
 	if err != nil || ws == nil {
 		http.Error(w, "failed to get workspace", http.StatusInternalServerError)
@@ -480,6 +501,20 @@ func (s *Server) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Look up workspace for namespace info.
+	ws, err := s.DB.GetWorkspace(id)
+	if err != nil {
+		log.Printf("failed to get workspace %s: %v", id, err)
+		http.Error(w, "failed to delete workspace", http.StatusInternalServerError)
+		return
+	}
+
+	// Resolve namespace for StopBySandboxName calls.
+	var wsNamespace string
+	if ws != nil && ws.K8sNamespace.Valid {
+		wsNamespace = ws.K8sNamespace.String
+	}
+
 	// Stop all sandboxes in the workspace.
 	sandboxes := s.Sandboxes.ListByWorkspace(id)
 	for _, sbx := range sandboxes {
@@ -495,12 +530,19 @@ func (s *Server) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		case sbxstore.StatusPaused:
 			if sbx.SandboxName != "" {
 				switch mgr := s.ProcessManager.(type) {
-				case interface{ StopBySandboxName(string) error }:
-					mgr.StopBySandboxName(sbx.SandboxName)
+				case interface{ StopBySandboxName(string, string) error }:
+					mgr.StopBySandboxName(wsNamespace, sbx.SandboxName)
 				case interface{ StopByContainerName(string) error }:
 					mgr.StopByContainerName(sbx.SandboxName)
 				}
 			}
+		}
+	}
+
+	// Delete the K8s namespace (cascades all resources).
+	if s.NamespaceManager != nil && wsNamespace != "" {
+		if err := s.NamespaceManager.DeleteNamespace(r.Context(), wsNamespace); err != nil {
+			log.Printf("failed to delete namespace %s for workspace %s: %v", wsNamespace, id, err)
 		}
 	}
 
@@ -668,8 +710,20 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Look up workspace namespace.
+	ws, err := s.DB.GetWorkspace(wsID)
+	if err != nil || ws == nil {
+		log.Printf("failed to get workspace %s: %v", wsID, err)
+		http.Error(w, "workspace not found", http.StatusNotFound)
+		return
+	}
+	var wsNamespace string
+	if ws.K8sNamespace.Valid {
+		wsNamespace = ws.K8sNamespace.String
+	}
+
 	// Ensure workspace drive exists.
-	workspaceDiskPVC, err := s.DriveManager.EnsureDrive(r.Context(), wsID)
+	workspaceDiskPVC, err := s.DriveManager.EnsureDrive(r.Context(), wsID, wsNamespace)
 	if err != nil {
 		log.Printf("failed to ensure workspace drive for %s: %v", wsID, err)
 		// Non-fatal: sandbox can still work without workspace drive.
@@ -704,6 +758,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		}); ok {
 			var err error
 			podIP, err = sc.StartContainerWithIP(id, process.StartOptions{
+				Namespace:        wsNamespace,
 				WorkspaceDiskPVC: workspaceDiskPVC,
 				OpencodePassword: opencodePassword,
 				ProxyToken:       proxyToken,
@@ -718,6 +773,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			if err := s.ProcessManager.StartContainer(id, process.StartOptions{
+				Namespace:        wsNamespace,
 				WorkspaceDiskPVC: workspaceDiskPVC,
 				OpencodePassword: opencodePassword,
 				ProxyToken:       proxyToken,
@@ -780,9 +836,14 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 			s.ProcessManager.Stop(id)
 		case sbxstore.StatusPaused:
 			if sbx.SandboxName != "" {
+				// Look up workspace namespace for sandbox deletion.
+				var sbxNs string
+				if ws, err := s.DB.GetWorkspace(sbx.WorkspaceID); err == nil && ws != nil && ws.K8sNamespace.Valid {
+					sbxNs = ws.K8sNamespace.String
+				}
 				switch mgr := s.ProcessManager.(type) {
-				case interface{ StopBySandboxName(string) error }:
-					mgr.StopBySandboxName(sbx.SandboxName)
+				case interface{ StopBySandboxName(string, string) error }:
+					mgr.StopBySandboxName(sbxNs, sbx.SandboxName)
 				case interface{ StopByContainerName(string) error }:
 					mgr.StopByContainerName(sbx.SandboxName)
 				}
