@@ -229,6 +229,9 @@ chown -R 1000:1000 /mnt/workspace-drive
 		Spec: sandboxv1alpha1.SandboxSpec{
 			VolumeClaimTemplates: vcts,
 			PodTemplate: sandboxv1alpha1.PodTemplate{
+				ObjectMeta: sandboxv1alpha1.PodMetadata{
+					Labels: map[string]string{labelManagedBy: labelValue},
+				},
 				Spec: corev1.PodSpec{
 					InitContainers: initContainers,
 					Containers: []corev1.Container{{
@@ -448,6 +451,9 @@ chown -R 1000:1000 /mnt/workspace-drive
 		Spec: sandboxv1alpha1.SandboxSpec{
 			VolumeClaimTemplates: vcts,
 			PodTemplate: sandboxv1alpha1.PodTemplate{
+				ObjectMeta: sandboxv1alpha1.PodMetadata{
+					Labels: map[string]string{labelManagedBy: labelValue},
+				},
 				Spec: corev1.PodSpec{
 					InitContainers:   initContainers,
 					Containers:       []corev1.Container{mainContainer},
