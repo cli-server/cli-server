@@ -13,6 +13,9 @@ spec:
   tls:
     - hosts:
         - {{ .Values.ingress.host }}
+        {{- if .Values.sandbox.baseDomain }}
+        - {{ printf "*.%s" .Values.sandbox.baseDomain | quote }}
+        {{- end }}
       secretName: {{ .Release.Name }}-tls
   {{- end }}
   rules:
@@ -26,4 +29,16 @@ spec:
                 name: {{ .Release.Name }}
                 port:
                   number: {{ .Values.service.port }}
+    {{- if .Values.sandbox.baseDomain }}
+    - host: {{ printf "*.%s" .Values.sandbox.baseDomain | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}
+                port:
+                  number: {{ .Values.service.port }}
+    {{- end }}
 {{- end }}

@@ -1,4 +1,4 @@
-{{- if and (eq .Values.backend "k8s") .Values.agentSandbox.install }}
+{{- if .Values.agentSandbox.install }}
 ---
 kind: Namespace
 apiVersion: v1

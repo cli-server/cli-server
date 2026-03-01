@@ -36,10 +36,11 @@ type Server struct {
 	NamespaceManager *namespace.Manager
 	TunnelRegistry   *tunnel.Registry
 	StaticFS         fs.FS
-	OpencodeStaticFS    fs.FS  // embedded opencode frontend dist (served on subdomain requests)
-	BaseDomain          string // e.g. "cli.cs.ac.cn" — used for subdomain routing
-	BaseScheme          string // e.g. "https" — scheme for generated URLs
-	OpencodeAssetDomain string // e.g. "opencodeapp.agentserver.dev" — shared static asset domain
+	OpencodeStaticFS         fs.FS  // embedded opencode frontend dist (served on subdomain requests)
+	BaseDomain               string // e.g. "agentserver.dev" — used for subdomain routing
+	OpencodeAssetDomain      string // e.g. "opencodeapp.agentserver.dev" — shared static asset domain
+	OpencodeSubdomainPrefix  string // e.g. "code" — subdomain: code-{id}.{baseDomain}
+	OpenclawSubdomainPrefix  string // e.g. "claw" — subdomain: claw-{id}.{baseDomain}
 	// activityThrottle prevents excessive DB writes for activity tracking.
 	activityMu   sync.Mutex
 	activityLast map[string]time.Time
@@ -47,31 +48,37 @@ type Server struct {
 
 func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, nsMgr *namespace.Manager, tunnelReg *tunnel.Registry, staticFS fs.FS, opcodeStaticFS fs.FS) *Server {
 	baseDomain := os.Getenv("BASE_DOMAIN")
-	baseScheme := os.Getenv("BASE_SCHEME")
-	if baseScheme == "" {
-		baseScheme = "https"
-	}
 
 	opencodeAssetDomain := os.Getenv("OPENCODE_ASSET_DOMAIN")
 	if opencodeAssetDomain == "" && baseDomain != "" {
 		opencodeAssetDomain = "opencodeapp." + baseDomain
 	}
 
+	opcodePrefix := os.Getenv("OPENCODE_SUBDOMAIN_PREFIX")
+	if opcodePrefix == "" {
+		opcodePrefix = "code"
+	}
+	openclawPrefix := os.Getenv("OPENCLAW_SUBDOMAIN_PREFIX")
+	if openclawPrefix == "" {
+		openclawPrefix = "claw"
+	}
+
 	s := &Server{
-		Auth:                a,
-		OIDC:                oidcMgr,
-		DB:                  database,
-		Sandboxes:           sandboxStore,
-		ProcessManager:      processManager,
-		DriveManager:        driveManager,
-		NamespaceManager:    nsMgr,
-		TunnelRegistry:      tunnelReg,
-		StaticFS:            staticFS,
-		OpencodeStaticFS:    opcodeStaticFS,
-		BaseDomain:          baseDomain,
-		BaseScheme:          baseScheme,
-		OpencodeAssetDomain: opencodeAssetDomain,
-		activityLast:        make(map[string]time.Time),
+		Auth:                    a,
+		OIDC:                    oidcMgr,
+		DB:                      database,
+		Sandboxes:               sandboxStore,
+		ProcessManager:          processManager,
+		DriveManager:            driveManager,
+		NamespaceManager:        nsMgr,
+		TunnelRegistry:          tunnelReg,
+		StaticFS:                staticFS,
+		OpencodeStaticFS:        opcodeStaticFS,
+		BaseDomain:              baseDomain,
+		OpencodeAssetDomain:     opencodeAssetDomain,
+		OpencodeSubdomainPrefix: opcodePrefix,
+		OpenclawSubdomainPrefix: openclawPrefix,
+		activityLast:            make(map[string]time.Time),
 	}
 	s.initOpencodeAssetIndex()
 	return s
@@ -96,11 +103,13 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// Subdomain middleware: if the Host matches oc-{sandboxID}.{baseDomain},
+	// Subdomain middleware: if the Host matches {prefix}-{sandboxID}.{baseDomain},
 	// proxy the entire request to the sandbox pod and skip all other routes.
 	if s.BaseDomain != "" {
 		r.Use(func(next http.Handler) http.Handler {
 			suffix := "." + s.BaseDomain
+			opcodePrefix := s.OpencodeSubdomainPrefix + "-"
+			clawPrefix := s.OpenclawSubdomainPrefix + "-"
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				host := r.Host
 				// Strip port if present.
@@ -114,13 +123,13 @@ func (s *Server) Router() http.Handler {
 						s.handleAssetDomainRequest(w, r)
 						return
 					}
-					if strings.HasPrefix(sub, "oc-") {
-						sandboxID := sub[3:] // strip "oc-" prefix
+					if strings.HasPrefix(sub, opcodePrefix) {
+						sandboxID := sub[len(opcodePrefix):]
 						s.handleSubdomainProxy(w, r, sandboxID)
 						return
 					}
-					if strings.HasPrefix(sub, "claw-") {
-						sandboxID := sub[5:] // strip "claw-" prefix
+					if strings.HasPrefix(sub, clawPrefix) {
+						sandboxID := sub[len(clawPrefix):]
 						s.handleOpenclawSubdomainProxy(w, r, sandboxID)
 						return
 					}
@@ -391,9 +400,9 @@ func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sand
 		}
 		switch sbx.Type {
 		case "openclaw":
-			resp.OpenclawURL = s.BaseScheme + "://claw-" + subID + "." + s.BaseDomain + "/auth?token=" + authToken
+			resp.OpenclawURL = "https://" + s.OpenclawSubdomainPrefix + "-" + subID + "." + s.BaseDomain + "/auth?token=" + authToken
 		default: // "opencode"
-			resp.OpencodeURL = s.BaseScheme + "://oc-" + subID + "." + s.BaseDomain + "/auth?token=" + authToken
+			resp.OpencodeURL = "https://" + s.OpencodeSubdomainPrefix + "-" + subID + "." + s.BaseDomain + "/auth?token=" + authToken
 		}
 	}
 	if sbx.LastActivityAt != nil {

@@ -31,11 +31,10 @@ import (
 )
 
 var (
-	port        int
-	agentImage  string
-	backend     string
-	dbURL       string
-	idleTimeout time.Duration
+	port       int
+	agentImage string
+	backend    string
+	dbURL      string
 )
 
 var serveCmd = &cobra.Command{
@@ -49,15 +48,6 @@ var serveCmd = &cobra.Command{
 		}
 		if dbURL == "" {
 			log.Fatal("--db-url or DATABASE_URL is required")
-		}
-
-		// Resolve idle timeout from env if not set via flag.
-		if !cmd.Flags().Changed("idle-timeout") {
-			if envTimeout := os.Getenv("IDLE_TIMEOUT"); envTimeout != "" {
-				if d, err := time.ParseDuration(envTimeout); err == nil {
-					idleTimeout = d
-				}
-			}
 		}
 
 		// Connect to PostgreSQL.
@@ -226,7 +216,7 @@ var serveCmd = &cobra.Command{
 			return srv.GetEffectiveIdleTimeout()
 		})
 		idleWatcher.Start()
-		log.Printf("Idle watcher started (initial timeout: %s)", idleTimeout)
+		log.Printf("Idle watcher started (effective timeout: %s)", srv.GetEffectiveIdleTimeout())
 
 		httpServer := &http.Server{Addr: addr, Handler: srv.Router()}
 
@@ -289,5 +279,4 @@ func init() {
 	serveCmd.Flags().StringVar(&agentImage, "agent-image", "", "Container image for agent sessions")
 	serveCmd.Flags().StringVar(&backend, "backend", "docker", "Session backend: docker or k8s")
 	serveCmd.Flags().StringVar(&dbURL, "db-url", "", "PostgreSQL connection URL (or use DATABASE_URL env)")
-	serveCmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 30*time.Minute, "Idle session auto-pause timeout (0 to disable)")
 }

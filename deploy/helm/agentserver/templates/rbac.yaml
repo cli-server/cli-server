@@ -1,4 +1,3 @@
-{{- if eq .Values.backend "k8s" }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -49,4 +48,3 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Release.Name }}
     namespace: {{ .Release.Namespace }}
-{{- end }}

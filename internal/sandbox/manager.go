@@ -253,8 +253,8 @@ chown -R 1000:1000 /mnt/workspace-drive
 						ImagePullPolicy: corev1.PullAlways,
 						Resources: corev1.ResourceRequirements{
 							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse(resolveMemLimit(m.cfg.MemoryLimit, opts)),
-								corev1.ResourceCPU:    resource.MustParse(resolveCPULimit(m.cfg.CPULimit, opts)),
+								corev1.ResourceMemory: resource.MustParse(defaultIfEmpty(opts.MemoryLimit, "2Gi")),
+								corev1.ResourceCPU:    resource.MustParse(defaultIfEmpty(opts.CPULimit, "2")),
 							},
 						},
 					}},
@@ -449,8 +449,8 @@ chown -R 1000:1000 /mnt/workspace-drive
 		},
 		Resources: corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
-				corev1.ResourceMemory: resource.MustParse(resolveMemLimit(m.cfg.MemoryLimit, opts)),
-				corev1.ResourceCPU:    resource.MustParse(resolveCPULimit(m.cfg.CPULimit, opts)),
+				corev1.ResourceMemory: resource.MustParse(defaultIfEmpty(opts.MemoryLimit, "2Gi")),
+				corev1.ResourceCPU:    resource.MustParse(defaultIfEmpty(opts.CPULimit, "2")),
 			},
 		},
 	}
@@ -474,7 +474,7 @@ chown -R 1000:1000 /mnt/workspace-drive
 					InitContainers:   initContainers,
 					Containers:       []corev1.Container{mainContainer},
 					Volumes:          volumes,
-					RuntimeClassName: m.runtimeClassName(),
+					RuntimeClassName: m.runtimeClassNameFor(opts.SandboxType),
 					RestartPolicy:    corev1.RestartPolicyNever,
 				},
 			},
@@ -675,11 +675,28 @@ func shortID(id string) string {
 func strPtr(s string) *string { return &s }
 func int64Ptr(i int64) *int64 { return &i }
 
+func defaultIfEmpty(val, fallback string) string {
+	if val != "" {
+		return val
+	}
+	return fallback
+}
+
 func (m *Manager) runtimeClassName() *string {
 	if m.cfg.RuntimeClassName == "" {
 		return nil
 	}
 	return strPtr(m.cfg.RuntimeClassName)
+}
+
+func (m *Manager) runtimeClassNameFor(sandboxType string) *string {
+	switch sandboxType {
+	case "openclaw":
+		if m.cfg.OpenclawRuntimeClassName != "" {
+			return strPtr(m.cfg.OpenclawRuntimeClassName)
+		}
+	}
+	return m.runtimeClassName()
 }
 
 // lookupNamespace resolves the K8s namespace for a sandbox by looking up
@@ -786,20 +803,4 @@ func (m *Manager) Close() error {
 		m.Stop(id)
 	}
 	return nil
-}
-
-// resolveMemLimit returns the opts override if set, otherwise the config default.
-func resolveMemLimit(cfgDefault string, opts process.StartOptions) string {
-	if opts.MemoryLimit != "" {
-		return opts.MemoryLimit
-	}
-	return cfgDefault
-}
-
-// resolveCPULimit returns the opts override if set, otherwise the config default.
-func resolveCPULimit(cfgDefault string, opts process.StartOptions) string {
-	if opts.CPULimit != "" {
-		return opts.CPULimit
-	}
-	return cfgDefault
 }

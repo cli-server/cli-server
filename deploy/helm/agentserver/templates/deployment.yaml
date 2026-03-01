@@ -14,16 +14,14 @@ spec:
       labels:
         app: {{ .Release.Name }}
     spec:
-      {{- if eq .Values.backend "k8s" }}
       serviceAccountName: {{ .Release.Name }}
-      {{- end }}
       containers:
         - name: agentserver
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - "--backend"
-            - "$(SANDBOX_BACKEND)"
+            - "k8s"
           ports:
             - containerPort: 8080
               protocol: TCP
@@ -34,23 +32,23 @@ spec:
                   name: {{ .Release.Name }}-secret
                   key: database-url
             - name: SANDBOX_BACKEND
-              value: {{ .Values.backend | quote }}
-            - name: IDLE_TIMEOUT
-              value: {{ .Values.idleTimeout | quote }}
+              value: "k8s"
             - name: QUOTA_MAX_WORKSPACES_PER_USER
-              value: {{ .Values.defaultQuotas.userMaxWorkspaces | quote }}
+              value: {{ .Values.platform.defaultQuotas.userMaxWorkspaces | quote }}
             - name: QUOTA_MAX_SANDBOXES_PER_WORKSPACE
-              value: {{ .Values.defaultQuotas.workspaceMaxSandboxes | quote }}
+              value: {{ .Values.platform.defaultQuotas.workspaceMaxSandboxes | quote }}
             - name: QUOTA_DEFAULT_SANDBOX_CPU
-              value: {{ .Values.defaultQuotas.sandboxCpu | quote }}
+              value: {{ .Values.platform.defaultQuotas.sandboxCpu | quote }}
             - name: QUOTA_DEFAULT_SANDBOX_MEMORY
-              value: {{ .Values.defaultQuotas.sandboxMemory | quote }}
+              value: {{ .Values.platform.defaultQuotas.sandboxMemory | quote }}
+            - name: USER_DRIVE_SIZE
+              value: {{ .Values.platform.defaultQuotas.workspaceDriveSize | quote }}
             - name: QUOTA_WS_MAX_TOTAL_CPU
-              value: {{ .Values.defaultQuotas.workspaceMaxTotalCpu | quote }}
+              value: {{ .Values.platform.defaultQuotas.workspaceMaxTotalCpu | quote }}
             - name: QUOTA_WS_MAX_TOTAL_MEMORY
-              value: {{ .Values.defaultQuotas.workspaceMaxTotalMemory | quote }}
+              value: {{ .Values.platform.defaultQuotas.workspaceMaxTotalMemory | quote }}
             - name: QUOTA_WS_MAX_IDLE_TIMEOUT
-              value: {{ .Values.defaultQuotas.workspaceMaxIdleTimeout | quote }}
+              value: {{ .Values.platform.defaultQuotas.workspaceMaxIdleTimeout | quote }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -66,97 +64,80 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secret
                   key: anthropic-auth-token
-            {{- if .Values.anthropicProxyUrl }}
+            {{- if .Values.models.anthropicProxyUrl }}
             - name: ANTHROPIC_PROXY_URL
-              value: {{ .Values.anthropicProxyUrl | quote }}
+              value: {{ .Values.models.anthropicProxyUrl | quote }}
             {{- end }}
             - name: AGENT_IMAGE
-              value: {{ .Values.opencode.image | default .Values.agent.image | quote }}
-            {{- if .Values.openclaw.image }}
+              value: {{ .Values.sandbox.opencode.image | quote }}
+            {{- if .Values.sandbox.openclaw.image }}
             - name: OPENCLAW_IMAGE
-              value: {{ .Values.openclaw.image | quote }}
+              value: {{ .Values.sandbox.openclaw.image | quote }}
             {{- end }}
-            {{- if .Values.baseDomain }}
+            {{- if .Values.sandbox.baseDomain }}
             - name: BASE_DOMAIN
-              value: {{ .Values.baseDomain | quote }}
-            - name: BASE_SCHEME
-              value: {{ .Values.baseScheme | default "https" | quote }}
-            {{- end }}
-            {{- if .Values.opencodeAssetDomain }}
-            - name: OPENCODE_ASSET_DOMAIN
-              value: {{ .Values.opencodeAssetDomain | quote }}
+              value: {{ .Values.sandbox.baseDomain | quote }}
             {{- end }}
             - name: SESSION_STORAGE_SIZE
-              value: {{ .Values.persistence.sessionStorageSize | quote }}
-            - name: USER_DRIVE_SIZE
-              value: {{ .Values.persistence.userDriveSize | quote }}
-            {{- if .Values.persistence.storageClassName }}
+              value: {{ .Values.sandbox.sessionStorageSize | quote }}
+            {{- if .Values.sandbox.sessionStorageClassName }}
             - name: STORAGE_CLASS
-              value: {{ .Values.persistence.storageClassName | quote }}
+              value: {{ .Values.sandbox.sessionStorageClassName | quote }}
             {{- end }}
-            {{- if .Values.persistence.userDriveStorageClassName }}
+            {{- if .Values.sandbox.workspaceStorageClassName }}
             - name: USER_DRIVE_STORAGE_CLASS
-              value: {{ .Values.persistence.userDriveStorageClassName | quote }}
+              value: {{ .Values.sandbox.workspaceStorageClassName | quote }}
             {{- end }}
-            {{- if eq .Values.backend "docker" }}
-            - name: AGENT_MEMORY_LIMIT
-              value: {{ .Values.agent.memoryLimit | quote }}
-            - name: AGENT_NANO_CPUS
-              value: {{ .Values.agent.nanoCpus | quote }}
-            - name: AGENT_PIDS_LIMIT
-              value: {{ .Values.agent.pidsLimit | quote }}
-            - name: AGENT_NETWORK_MODE
-              value: {{ .Values.agent.networkMode | quote }}
-            {{- end }}
-            {{- if eq .Values.backend "k8s" }}
             - name: SANDBOX_NAMESPACE_PREFIX
               value: {{ .Values.sandbox.namespacePrefix | default "agent-ws" | quote }}
             - name: AGENTSERVER_NAMESPACE
               value: {{ .Release.Namespace | quote }}
             - name: NETWORKPOLICY_ENABLED
-              value: {{ .Values.networkPolicy.enabled | default false | quote }}
-            {{- if .Values.networkPolicy.denyCIDRs }}
+              value: {{ .Values.sandbox.networkPolicy.enabled | default false | quote }}
+            {{- if .Values.sandbox.networkPolicy.denyCIDRs }}
             - name: NETWORKPOLICY_DENY_CIDRS
-              value: {{ join "," .Values.networkPolicy.denyCIDRs | quote }}
+              value: {{ join "," .Values.sandbox.networkPolicy.denyCIDRs | quote }}
             {{- end }}
-            {{- if or .Values.opencode.runtimeClassName .Values.agent.runtimeClassName }}
+            {{- if .Values.sandbox.opencode.runtimeClassName }}
             - name: RUNTIME_CLASS
-              value: {{ .Values.opencode.runtimeClassName | default .Values.agent.runtimeClassName | quote }}
+              value: {{ .Values.sandbox.opencode.runtimeClassName | quote }}
             {{- end }}
+            {{- if .Values.sandbox.openclaw.runtimeClassName }}
+            - name: OPENCLAW_RUNTIME_CLASS
+              value: {{ .Values.sandbox.openclaw.runtimeClassName | quote }}
             {{- end }}
-            {{- if gt (len .Values.opencode.config) 0 }}
+            - name: OPENCODE_SUBDOMAIN_PREFIX
+              value: {{ .Values.sandbox.opencode.subdomainPrefix | default "code" | quote }}
+            - name: OPENCLAW_SUBDOMAIN_PREFIX
+              value: {{ .Values.sandbox.openclaw.subdomainPrefix | default "claw" | quote }}
+            {{- if gt (len .Values.sandbox.opencode.config) 0 }}
             - name: OPENCODE_CONFIG_CONTENT
-              value: {{ .Values.opencode.config | toJson | quote }}
+              value: {{ .Values.sandbox.opencode.config | toJson | quote }}
             {{- end }}
-            {{- if .Values.oidc.redirectBaseUrl }}
+            {{- if and .Values.platform.domain (or .Values.platform.auth.oidc.github.enabled .Values.platform.auth.oidc.generic.enabled) }}
             - name: OIDC_REDIRECT_BASE_URL
-              value: {{ .Values.oidc.redirectBaseUrl | quote }}
+              value: {{ printf "https://%s" .Values.platform.domain | quote }}
             {{- end }}
-            {{- if .Values.oidc.github.enabled }}
+            {{- if .Values.platform.auth.oidc.github.enabled }}
             - name: GITHUB_CLIENT_ID
-              value: {{ .Values.oidc.github.clientId | quote }}
+              value: {{ .Values.platform.auth.oidc.github.clientId | quote }}
             - name: GITHUB_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secret
                   key: github-client-secret
             {{- end }}
-            {{- if .Values.oidc.generic.enabled }}
+            {{- if .Values.platform.auth.oidc.generic.enabled }}
             - name: OIDC_ISSUER_URL
-              value: {{ .Values.oidc.generic.issuerUrl | quote }}
+              value: {{ .Values.platform.auth.oidc.generic.issuerUrl | quote }}
             - name: OIDC_CLIENT_ID
-              value: {{ .Values.oidc.generic.clientId | quote }}
+              value: {{ .Values.platform.auth.oidc.generic.clientId | quote }}
             - name: OIDC_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secret
                   key: oidc-client-secret
             {{- end }}
-          {{- if eq .Values.backend "docker" }}
-          volumeMounts:
-            - name: docker-socket
-              mountPath: {{ .Values.docker.socketPath }}
-          {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -169,13 +150,6 @@ spec:
               port: 8080
             initialDelaySeconds: 3
             periodSeconds: 5
-      {{- if eq .Values.backend "docker" }}
-      volumes:
-        - name: docker-socket
-          hostPath:
-            path: {{ .Values.docker.socketPath }}
-            type: Socket
-      {{- end }}
 ---
 apiVersion: v1
 kind: Secret
@@ -184,12 +158,12 @@ metadata:
 type: Opaque
 stringData:
   database-url: {{ .Values.database.url | quote }}
-  anthropic-api-key: {{ .Values.anthropicApiKey | quote }}
-  anthropic-base-url: {{ .Values.anthropicBaseUrl | quote }}
-  anthropic-auth-token: {{ .Values.anthropicAuthToken | quote }}
-  {{- if .Values.oidc.github.enabled }}
-  github-client-secret: {{ .Values.oidc.github.clientSecret | quote }}
+  anthropic-api-key: {{ .Values.models.anthropicApiKey | quote }}
+  anthropic-base-url: {{ .Values.models.anthropicBaseUrl | quote }}
+  anthropic-auth-token: {{ .Values.models.anthropicAuthToken | quote }}
+  {{- if .Values.platform.auth.oidc.github.enabled }}
+  github-client-secret: {{ .Values.platform.auth.oidc.github.clientSecret | quote }}
   {{- end }}
-  {{- if .Values.oidc.generic.enabled }}
-  oidc-client-secret: {{ .Values.oidc.generic.clientSecret | quote }}
+  {{- if .Values.platform.auth.oidc.generic.enabled }}
+  oidc-client-secret: {{ .Values.platform.auth.oidc.generic.clientSecret | quote }}
   {{- end }}

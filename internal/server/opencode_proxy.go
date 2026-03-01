@@ -84,13 +84,13 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 	cookie, err := r.Cookie(subdomainCookieKey)
 	if err != nil {
 		// No subdomain cookie — redirect to main site login.
-		loginURL := s.BaseScheme + "://" + s.BaseDomain + "/"
+		loginURL := "https://" + s.BaseDomain + "/"
 		http.Redirect(w, r, loginURL, http.StatusFound)
 		return
 	}
 	userID, ok := s.Auth.ValidateToken(cookie.Value)
 	if !ok {
-		loginURL := s.BaseScheme + "://" + s.BaseDomain + "/"
+		loginURL := "https://" + s.BaseDomain + "/"
 		http.Redirect(w, r, loginURL, http.StatusFound)
 		return
 	}

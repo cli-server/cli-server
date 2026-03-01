@@ -8,94 +8,66 @@ image:
 database:
   url: "postgres://user:pass@postgres:5432/agentserver?sslmode=disable"
 
-persistence:
-  sessionStorageSize: "5Gi"
-  userDriveSize: "10Gi"
-  storageClassName: ""  # empty = cluster default
-  userDriveStorageClassName: ""  # empty = falls back to storageClassName
+models:
+  anthropicApiKey: ""
+  anthropicBaseUrl: ""
+  anthropicAuthToken: ""
+  # URL that sandbox pods use to reach the Anthropic API proxy on agentserver.
+  # If empty, defaults to http://agentserver.<namespace>.svc.cluster.local:8080/proxy/anthropic
+  anthropicProxyUrl: ""
 
-idleTimeout: "30m"
-
-defaultQuotas:
-  userMaxWorkspaces: 10
-  workspaceMaxSandboxes: 20
-  sandboxCpu: "2"
-  sandboxMemory: "2Gi"
-  workspaceMaxTotalCpu: "0"
-  workspaceMaxTotalMemory: "0"
-  workspaceMaxIdleTimeout: "0"
-
-anthropicApiKey: ""
-anthropicBaseUrl: ""
-anthropicAuthToken: ""
-# URL that sandbox pods use to reach the Anthropic API proxy on agentserver.
-# If empty, defaults to http://agentserver.<namespace>.svc.cluster.local:8080/proxy/anthropic
-anthropicProxyUrl: ""
-
-# Session backend: "docker" or "k8s"
-backend: "docker"
-
-agent:
-  image: ghcr.io/agentserver/agent:latest
-  memoryLimit: "2147483648"
-  nanoCpus: "2000000000"
-  pidsLimit: "256"
-  networkMode: "bridge"
-  runtimeClassName: ""  # e.g. "gvisor" to enable gVisor sandbox isolation
-
-opencode:
-  # Image for the opencode agent (used by workspace sandbox pods).
-  image: ghcr.io/agentserver/opencode-agent:latest
-  # RuntimeClass for sandbox pods (e.g. "gvisor" for gVisor isolation).
-  runtimeClassName: ""
-  # Opencode config injected into sandbox pods via OPENCODE_CONFIG_CONTENT.
-  # Accepts any valid opencode.json fields as structured YAML.
-  # Example: restrict to specific providers/models:
-  #   config:
-  #     enabled_providers: ["anthropic"]
-  #     provider:
-  #       anthropic:
-  #         whitelist: ["claude-sonnet-4-20250514"]
-  config: {}
-
-openclaw:
-  # Image for openclaw gateway sandboxes.
-  image: ""
-  # Port for openclaw gateway.
-  port: 18789
-
-# Base domain for subdomain-based opencode routing (e.g. "cli.cs.ac.cn").
-# Each session gets a subdomain: oc-{sessionID}.{baseDomain}
-baseDomain: ""
-baseScheme: "https"
-
-# Shared asset domain for cross-sandbox browser caching of static assets.
-# Defaults to "opencodeapp.{baseDomain}" when baseDomain is set.
-opencodeAssetDomain: ""
-
-# Resource limits for workspace pods running opencode serve.
-workspace:
-  resources:
-    limits:
-      memory: "1Gi"
-      cpu: "1"
-    requests:
-      memory: "512Mi"
-      cpu: "100m"
-
-docker:
-  socketPath: /var/run/docker.sock
+platform:
+  # Domain for the platform web UI (e.g. "platform.agentserver.dev").
+  # Used for OIDC redirect URLs (auto-derived as https://<domain>).
+  domain: ""
+  defaultQuotas:
+    userMaxWorkspaces: 10
+    workspaceMaxSandboxes: 20
+    sandboxCpu: "2"
+    sandboxMemory: "2Gi"
+    workspaceDriveSize: "10Gi"
+    workspaceMaxTotalCpu: "0"
+    workspaceMaxTotalMemory: "0"
+    workspaceMaxIdleTimeout: "0"
+  auth:
+    oidc:
+      github:
+        enabled: false
+        clientId: ""
+        clientSecret: ""
+      generic:
+        enabled: false
+        issuerUrl: ""
+        clientId: ""
+        clientSecret: ""
 
 sandbox:
+  # Base domain for subdomain-based sandbox routing (e.g. "agentserver.dev").
+  # Each sandbox gets a subdomain: {prefix}-{sessionID}.{baseDomain}
+  baseDomain: ""
   # Prefix for per-workspace K8s namespaces (e.g. "agent-ws" → "agent-ws-a1b2c3d4").
   namespacePrefix: "agent-ws"
-
-networkPolicy:
-  enabled: false
-  # CIDR ranges to deny egress to (internal/private networks).
-  denyCIDRs: []
-  # Additional egress rules (raw NetworkPolicyEgressRule objects).
-  extraEgressRules: []
+  # StorageClass for sandbox session volumes (empty = cluster default).
+  sessionStorageClassName: ""
+  # StorageClass for workspace drive PVCs (empty = falls back to sessionStorageClassName).
+  workspaceStorageClassName: ""
+  # Size of the session PVC for each sandbox pod.
+  sessionStorageSize: "5Gi"
+  opencode:
+    image: ghcr.io/agentserver/opencode-agent:latest
+    runtimeClassName: ""  # e.g. "gvisor" for gVisor isolation
+    subdomainPrefix: "code"  # subdomain: {prefix}-{sessionID}.{baseDomain}
+    # Opencode config injected into sandbox pods via OPENCODE_CONFIG_CONTENT.
+    # Accepts any valid opencode.json fields as structured YAML.
+    config: {}
+  openclaw:
+    image: ""
+    runtimeClassName: ""
+    subdomainPrefix: "claw"  # subdomain: {prefix}-{sessionID}.{baseDomain}
+  networkPolicy:
+    enabled: false
+    # CIDR ranges to deny egress to (internal/private networks).
+    denyCIDRs: []
 
 agentSandbox:
   # Set to false to skip installing the agent-sandbox controller (if already installed cluster-wide)
@@ -118,15 +90,3 @@ gateway:
     - name: cilium-gateway
       namespace: cilium-gateway
   host: agentserver.example.com
-
-oidc:
-  redirectBaseUrl: ""
-  github:
-    enabled: false
-    clientId: ""
-    clientSecret: ""
-  generic:
-    enabled: false
-    issuerUrl: ""
-    clientId: ""
-    clientSecret: ""
