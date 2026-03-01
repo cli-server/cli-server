@@ -34,7 +34,7 @@ func (s *Server) handleOpenclawSubdomainProxy(w http.ResponseWriter, r *http.Req
 			return
 		}
 		// Verify workspace membership.
-		sbx, found := s.Sandboxes.Get(sandboxID)
+		sbx, found := s.Sandboxes.Resolve(sandboxID)
 		if !found {
 			writeErrorPage(w, errPageSandboxNotFound)
 			return
@@ -79,7 +79,7 @@ func (s *Server) handleOpenclawSubdomainProxy(w http.ResponseWriter, r *http.Req
 	}
 
 	// Validate workspace membership.
-	sbx, found := s.Sandboxes.Get(sandboxID)
+	sbx, found := s.Sandboxes.Resolve(sandboxID)
 	if !found {
 		log.Printf("openclaw proxy: sandbox %s not found in store", sandboxID)
 		writeErrorPage(w, errPageSandboxNotFound)

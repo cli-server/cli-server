@@ -20,6 +20,7 @@ import (
 	"github.com/imryao/cli-server/internal/namespace"
 	"github.com/imryao/cli-server/internal/process"
 	"github.com/imryao/cli-server/internal/sbxstore"
+	"github.com/imryao/cli-server/internal/shortid"
 	"github.com/imryao/cli-server/internal/storage"
 	"github.com/imryao/cli-server/internal/tunnel"
 )
@@ -307,6 +308,7 @@ type workspaceMemberResponse struct {
 
 type sandboxResponse struct {
 	ID              string  `json:"id"`
+	ShortID         string  `json:"shortId,omitempty"`
 	WorkspaceID     string  `json:"workspaceId"`
 	Name            string  `json:"name"`
 	Type            string  `json:"type"`
@@ -336,6 +338,7 @@ func (s *Server) toWorkspaceResponse(ws *db.Workspace) workspaceResponse {
 func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sandboxResponse {
 	resp := sandboxResponse{
 		ID:          sbx.ID,
+		ShortID:     sbx.ShortID,
 		WorkspaceID: sbx.WorkspaceID,
 		Name:        sbx.Name,
 		Type:        sbx.Type,
@@ -344,11 +347,15 @@ func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sand
 		IsLocal:     sbx.IsLocal,
 	}
 	if s.BaseDomain != "" {
+		subID := sbx.ShortID
+		if subID == "" {
+			subID = sbx.ID
+		}
 		switch sbx.Type {
 		case "openclaw":
-			resp.OpenclawURL = s.BaseScheme + "://claw-" + sbx.ID + "." + s.BaseDomain + "/auth?token=" + authToken
+			resp.OpenclawURL = s.BaseScheme + "://claw-" + subID + "." + s.BaseDomain + "/auth?token=" + authToken
 		default: // "opencode"
-			resp.OpencodeURL = s.BaseScheme + "://oc-" + sbx.ID + "." + s.BaseDomain + "/auth?token=" + authToken
+			resp.OpencodeURL = s.BaseScheme + "://oc-" + subID + "." + s.BaseDomain + "/auth?token=" + authToken
 		}
 	}
 	if sbx.LastActivityAt != nil {
@@ -742,9 +749,19 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		opencodePassword = generatePassword()
 	}
 
-	sbx, err := s.Sandboxes.Create(id, wsID, req.Name, sandboxType, sandboxName, opencodePassword, proxyToken, req.TelegramBotToken, gatewayToken)
-	if err != nil {
-		log.Printf("failed to create sandbox: %v", err)
+	// Generate a short ID for subdomain routing (retry on collision).
+	sid := shortid.Generate()
+	var sbx *sbxstore.Sandbox
+	var createErr error
+	for attempts := 0; attempts < 3; attempts++ {
+		sbx, createErr = s.Sandboxes.Create(id, wsID, req.Name, sandboxType, sandboxName, opencodePassword, proxyToken, req.TelegramBotToken, gatewayToken, sid)
+		if createErr == nil {
+			break
+		}
+		sid = shortid.Generate()
+	}
+	if createErr != nil {
+		log.Printf("failed to create sandbox: %v", createErr)
 		http.Error(w, "failed to create sandbox", http.StatusInternalServerError)
 		return
 	}

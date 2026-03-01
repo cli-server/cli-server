@@ -54,7 +54,7 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 			return
 		}
 		// Verify workspace membership.
-		sbx, found := s.Sandboxes.Get(sandboxID)
+		sbx, found := s.Sandboxes.Resolve(sandboxID)
 		if !found {
 			writeErrorPage(w, errPageSandboxNotFound)
 			return
@@ -93,7 +93,7 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 	}
 
 	// Validate workspace membership.
-	sbx, found := s.Sandboxes.Get(sandboxID)
+	sbx, found := s.Sandboxes.Resolve(sandboxID)
 	if !found {
 		log.Printf("subdomain proxy: sandbox %s not found in store", sandboxID)
 		writeErrorPage(w, errPageSandboxNotFound)

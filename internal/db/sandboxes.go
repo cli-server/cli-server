@@ -12,6 +12,7 @@ type Sandbox struct {
 	Name             string
 	Type             string
 	Status           string
+	ShortID          sql.NullString
 	SandboxName      sql.NullString
 	PodIP            sql.NullString
 	OpencodePassword sql.NullString
@@ -26,11 +27,11 @@ type Sandbox struct {
 	LastHeartbeatAt  sql.NullTime
 }
 
-func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken string) error {
+func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken, shortID string) error {
 	_, err := db.Exec(
-		`INSERT INTO sandboxes (id, workspace_id, name, type, status, sandbox_name, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at)
-		 VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, NOW())`,
-		id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, nullIfEmpty(telegramBotToken), nullIfEmpty(gatewayToken),
+		`INSERT INTO sandboxes (id, workspace_id, name, type, status, sandbox_name, opencode_password, proxy_token, telegram_bot_token, gateway_token, short_id, last_activity_at)
+		 VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, $10, NOW())`,
+		id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, nullIfEmpty(telegramBotToken), nullIfEmpty(gatewayToken), nullIfEmpty(shortID),
 	)
 	if err != nil {
 		return fmt.Errorf("create sandbox: %w", err)
@@ -39,11 +40,11 @@ func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, ope
 }
 
 // sandboxColumns is the list of columns selected for sandbox queries.
-const sandboxColumns = `id, workspace_id, name, type, status, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at, is_local, tunnel_token, last_heartbeat_at`
+const sandboxColumns = `id, workspace_id, name, type, status, short_id, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at, is_local, tunnel_token, last_heartbeat_at`
 
 func scanSandbox(scanner interface{ Scan(...interface{}) error }) (*Sandbox, error) {
 	s := &Sandbox{}
-	err := scanner.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt, &s.IsLocal, &s.TunnelToken, &s.LastHeartbeatAt)
+	err := scanner.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.ShortID, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt, &s.IsLocal, &s.TunnelToken, &s.LastHeartbeatAt)
 	return s, err
 }
 
@@ -56,6 +57,19 @@ func (db *DB) GetSandbox(id string) (*Sandbox, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get sandbox: %w", err)
+	}
+	return s, nil
+}
+
+func (db *DB) GetSandboxByShortID(shortID string) (*Sandbox, error) {
+	s, err := scanSandbox(db.QueryRow(
+		`SELECT `+sandboxColumns+` FROM sandboxes WHERE short_id = $1`, shortID,
+	))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get sandbox by short id: %w", err)
 	}
 	return s, nil
 }
@@ -199,11 +213,11 @@ func nullIfEmpty(s string) interface{} {
 }
 
 // CreateLocalSandbox inserts a local agent sandbox with is_local=true.
-func (db *DB) CreateLocalSandbox(id, workspaceID, name, sandboxType, opencodePassword, proxyToken, tunnelToken string) error {
+func (db *DB) CreateLocalSandbox(id, workspaceID, name, sandboxType, opencodePassword, proxyToken, tunnelToken, shortID string) error {
 	_, err := db.Exec(
-		`INSERT INTO sandboxes (id, workspace_id, name, type, status, opencode_password, proxy_token, is_local, tunnel_token, last_activity_at, last_heartbeat_at)
-		 VALUES ($1, $2, $3, $4, 'running', $5, $6, TRUE, $7, NOW(), NOW())`,
-		id, workspaceID, name, sandboxType, opencodePassword, proxyToken, tunnelToken,
+		`INSERT INTO sandboxes (id, workspace_id, name, type, status, opencode_password, proxy_token, is_local, tunnel_token, short_id, last_activity_at, last_heartbeat_at)
+		 VALUES ($1, $2, $3, $4, 'running', $5, $6, TRUE, $7, $8, NOW(), NOW())`,
+		id, workspaceID, name, sandboxType, opencodePassword, proxyToken, tunnelToken, nullIfEmpty(shortID),
 	)
 	if err != nil {
 		return fmt.Errorf("create local sandbox: %w", err)

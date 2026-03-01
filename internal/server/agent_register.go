@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/imryao/cli-server/internal/auth"
+	"github.com/imryao/cli-server/internal/shortid"
 )
 
 // handleCreateAgentCode generates a one-time registration code for connecting a local agent.
@@ -79,8 +80,18 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	opencodePassword := generatePassword()
 	proxyToken := generatePassword()
 
-	if err := s.DB.CreateLocalSandbox(sandboxID, arc.WorkspaceID, req.Name, "opencode", opencodePassword, proxyToken, tunnelToken); err != nil {
-		log.Printf("failed to create local sandbox: %v", err)
+	// Generate a short ID for subdomain routing (retry on collision).
+	sid := shortid.Generate()
+	var createErr error
+	for attempts := 0; attempts < 3; attempts++ {
+		createErr = s.DB.CreateLocalSandbox(sandboxID, arc.WorkspaceID, req.Name, "opencode", opencodePassword, proxyToken, tunnelToken, sid)
+		if createErr == nil {
+			break
+		}
+		sid = shortid.Generate()
+	}
+	if createErr != nil {
+		log.Printf("failed to create local sandbox: %v", createErr)
 		http.Error(w, "failed to register agent", http.StatusInternalServerError)
 		return
 	}

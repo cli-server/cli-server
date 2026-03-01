@@ -9,6 +9,7 @@ import (
 // Sandbox represents a sandbox with its current state.
 type Sandbox struct {
 	ID               string     `json:"id"`
+	ShortID          string     `json:"shortId,omitempty"`
 	WorkspaceID      string     `json:"workspaceId"`
 	Name             string     `json:"name"`
 	Type             string     `json:"type"`
@@ -37,14 +38,15 @@ func NewStore(database *db.DB) *Store {
 }
 
 // Create inserts a new sandbox into the DB with 'creating' status.
-func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken string) (*Sandbox, error) {
-	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken); err != nil {
+func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken, shortID string) (*Sandbox, error) {
+	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken, shortID); err != nil {
 		return nil, err
 	}
 
 	now := time.Now()
 	return &Sandbox{
 		ID:               id,
+		ShortID:          shortID,
 		WorkspaceID:      workspaceID,
 		Name:             name,
 		Type:             sandboxType,
@@ -66,6 +68,30 @@ func (s *Store) Get(id string) (*Sandbox, bool) {
 		return nil, false
 	}
 	return dbSandboxToSandbox(dbSbx), true
+}
+
+// GetByShortID returns a sandbox looked up by its short ID.
+func (s *Store) GetByShortID(shortID string) (*Sandbox, bool) {
+	dbSbx, err := s.db.GetSandboxByShortID(shortID)
+	if err != nil || dbSbx == nil {
+		return nil, false
+	}
+	return dbSandboxToSandbox(dbSbx), true
+}
+
+// Resolve finds a sandbox by either short ID or UUID.
+// Short IDs (<=8 chars) are tried first, then UUID; for longer strings the order is reversed.
+func (s *Store) Resolve(idOrShortID string) (*Sandbox, bool) {
+	if len(idOrShortID) <= 8 {
+		if sbx, ok := s.GetByShortID(idOrShortID); ok {
+			return sbx, true
+		}
+		return s.Get(idOrShortID)
+	}
+	if sbx, ok := s.Get(idOrShortID); ok {
+		return sbx, true
+	}
+	return s.GetByShortID(idOrShortID)
 }
 
 // ListByWorkspace returns all sandboxes for a workspace from the database.
@@ -105,6 +131,9 @@ func dbSandboxToSandbox(ds *db.Sandbox) *Sandbox {
 		Status:      ds.Status,
 		CreatedAt:   ds.CreatedAt,
 		IsLocal:     ds.IsLocal,
+	}
+	if ds.ShortID.Valid {
+		sbx.ShortID = ds.ShortID.String
 	}
 	if ds.SandboxName.Valid {
 		sbx.SandboxName = ds.SandboxName.String
