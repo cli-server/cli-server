@@ -38,19 +38,19 @@ spec:
             - name: IDLE_TIMEOUT
               value: {{ .Values.idleTimeout | quote }}
             - name: QUOTA_MAX_WORKSPACES_PER_USER
-              value: {{ .Values.quotas.maxWorkspacesPerUser | quote }}
+              value: {{ .Values.defaultQuotas.userMaxWorkspaces | quote }}
             - name: QUOTA_MAX_SANDBOXES_PER_WORKSPACE
-              value: {{ .Values.quotas.maxSandboxesPerWorkspace | quote }}
+              value: {{ .Values.defaultQuotas.workspaceMaxSandboxes | quote }}
             - name: QUOTA_DEFAULT_SANDBOX_CPU
-              value: {{ .Values.quotas.defaultSandboxCpu | quote }}
+              value: {{ .Values.defaultQuotas.sandboxCpu | quote }}
             - name: QUOTA_DEFAULT_SANDBOX_MEMORY
-              value: {{ .Values.quotas.defaultSandboxMemory | quote }}
+              value: {{ .Values.defaultQuotas.sandboxMemory | quote }}
             - name: QUOTA_WS_MAX_TOTAL_CPU
-              value: {{ .Values.quotas.wsMaxTotalCpu | quote }}
+              value: {{ .Values.defaultQuotas.workspaceMaxTotalCpu | quote }}
             - name: QUOTA_WS_MAX_TOTAL_MEMORY
-              value: {{ .Values.quotas.wsMaxTotalMemory | quote }}
+              value: {{ .Values.defaultQuotas.workspaceMaxTotalMemory | quote }}
             - name: QUOTA_WS_MAX_IDLE_TIMEOUT
-              value: {{ .Values.quotas.wsMaxIdleTimeout | quote }}
+              value: {{ .Values.defaultQuotas.workspaceMaxIdleTimeout | quote }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
