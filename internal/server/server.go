@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -197,6 +198,13 @@ func (s *Server) Router() http.Handler {
 			r.Get("/workspaces", s.handleAdminListWorkspaces)
 			r.Get("/sandboxes", s.handleAdminListSandboxes)
 			r.Put("/users/{id}/role", s.handleAdminUpdateUserRole)
+
+			// Quota management
+			r.Get("/quotas/defaults", s.handleAdminGetQuotaDefaults)
+			r.Put("/quotas/defaults", s.handleAdminSetQuotaDefaults)
+			r.Get("/users/{id}/quota", s.handleAdminGetUserQuota)
+			r.Put("/users/{id}/quota", s.handleAdminSetUserQuota)
+			r.Delete("/users/{id}/quota", s.handleAdminDeleteUserQuota)
 		})
 	})
 
@@ -462,6 +470,25 @@ func (s *Server) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
+
+	// Quota check.
+	allowed, current, max, err := s.checkWorkspaceQuota(userID)
+	if err != nil {
+		log.Printf("failed to check workspace quota: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if !allowed {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   "quota_exceeded",
+			"message": fmt.Sprintf("Workspace limit reached (%d/%d). Contact an admin to increase your quota.", current, max),
+			"quota":   map[string]int{"current": current, "max": max},
+		})
+		return
+	}
+
 	var req struct {
 		Name string `json:"name"`
 	}
@@ -727,6 +754,53 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Quota check.
+	userID := auth.UserIDFromContext(r.Context())
+	allowed, current, max, err := s.checkSandboxQuota(userID, wsID)
+	if err != nil {
+		log.Printf("failed to check sandbox quota: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if !allowed {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   "quota_exceeded",
+			"message": fmt.Sprintf("Sandbox limit reached (%d/%d). Contact an admin to increase your quota.", current, max),
+			"quota":   map[string]int{"current": current, "max": max},
+		})
+		return
+	}
+
+	// Resolve effective resource defaults for this user.
+	rd, err := s.effectiveResourceDefaults(userID)
+	if err != nil {
+		log.Printf("failed to get resource defaults: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	cpuMillis := parseCPUMillicores(rd.SandboxCPU)
+	memBytes := parseMemoryBytes(rd.SandboxMemory)
+
+	// Check workspace resource budget.
+	budgetOk, err := s.checkWorkspaceResourceBudget(userID, wsID, cpuMillis, memBytes)
+	if err != nil {
+		log.Printf("failed to check workspace resource budget: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if !budgetOk {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   "resource_budget_exceeded",
+			"message": "Workspace resource budget exceeded. Delete or pause existing sandboxes to free resources.",
+		})
+		return
+	}
+
 	var req struct {
 		Name             string `json:"name"`
 		Type             string `json:"type"`
@@ -784,7 +858,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	var sbx *sbxstore.Sandbox
 	var createErr error
 	for attempts := 0; attempts < 3; attempts++ {
-		sbx, createErr = s.Sandboxes.Create(id, wsID, req.Name, sandboxType, sandboxName, opencodePassword, proxyToken, req.TelegramBotToken, gatewayToken, sid)
+		sbx, createErr = s.Sandboxes.Create(id, wsID, req.Name, sandboxType, sandboxName, opencodePassword, proxyToken, req.TelegramBotToken, gatewayToken, sid, cpuMillis, memBytes)
 		if createErr == nil {
 			break
 		}
@@ -812,6 +886,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 				SandboxType:      sandboxType,
 				TelegramBotToken: req.TelegramBotToken,
 				GatewayToken:     gatewayToken,
+				CPULimit:         rd.SandboxCPU,
+				MemoryLimit:      rd.SandboxMemory,
 			})
 			if err != nil {
 				log.Printf("failed to start container for sandbox %s: %v", id, err)
@@ -827,6 +903,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 				SandboxType:      sandboxType,
 				TelegramBotToken: req.TelegramBotToken,
 				GatewayToken:     gatewayToken,
+				CPULimit:         rd.SandboxCPU,
+				MemoryLimit:      rd.SandboxMemory,
 			}); err != nil {
 				log.Printf("failed to start container for sandbox %s: %v", id, err)
 				s.Sandboxes.Delete(id)

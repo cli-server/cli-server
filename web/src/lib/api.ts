@@ -72,6 +72,17 @@ export async function logout(): Promise<void> {
 
 // Workspace API
 
+async function checkQuotaError(res: Response): Promise<QuotaExceededError | null> {
+  if (res.status !== 403) return null
+  try {
+    const body = await res.json()
+    if (body.error === 'quota_exceeded') return body as QuotaExceededError
+  } catch {
+    // not a quota error
+  }
+  return null
+}
+
 export async function listWorkspaces(): Promise<Workspace[]> {
   const res = await fetch('/api/workspaces')
   if (!res.ok) throw new Error('Failed to list workspaces')
@@ -84,7 +95,11 @@ export async function createWorkspace(name?: string): Promise<Workspace> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: name || 'New Workspace' }),
   })
-  if (!res.ok) throw new Error('Failed to create workspace')
+  if (!res.ok) {
+    const err = await checkQuotaError(res)
+    if (err) throw err
+    throw new Error('Failed to create workspace')
+  }
   return res.json()
 }
 
@@ -154,7 +169,11 @@ export async function createSandbox(
       ...(telegramBotToken ? { telegramBotToken } : {}),
     }),
   })
-  if (!res.ok) throw new Error('Failed to create sandbox')
+  if (!res.ok) {
+    const err = await checkQuotaError(res)
+    if (err) throw err
+    throw new Error('Failed to create sandbox')
+  }
   return res.json()
 }
 
@@ -243,4 +262,93 @@ export async function adminUpdateUserRole(userId: string, role: string): Promise
     body: JSON.stringify({ role }),
   })
   if (!res.ok) throw new Error('Failed to update user role')
+}
+
+// Quota types
+
+export interface QuotaDefaults {
+  maxWorkspacesPerUser: number
+  maxSandboxesPerWorkspace: number
+  workspaceDriveSize: string
+  sandboxCpu: string
+  sandboxMemory: string
+  idleTimeout: string
+  wsMaxTotalCpu: string
+  wsMaxTotalMemory: string
+  wsMaxIdleTimeout: string
+}
+
+export interface UserQuotaOverrides {
+  maxWorkspaces: number | null
+  maxSandboxesPerWorkspace: number | null
+  workspaceDriveSize: string | null
+  sandboxCpu: string | null
+  sandboxMemory: string | null
+  idleTimeout: string | null
+  wsMaxTotalCpu: string | null
+  wsMaxTotalMemory: string | null
+  wsMaxIdleTimeout: string | null
+  updatedAt: string
+}
+
+export interface UserQuotaResponse {
+  defaults: QuotaDefaults
+  overrides: UserQuotaOverrides | null
+}
+
+export interface QuotaExceededError {
+  error: 'quota_exceeded'
+  message: string
+  quota: { current: number; max: number }
+}
+
+// Admin quota API
+
+export async function adminGetQuotaDefaults(): Promise<QuotaDefaults> {
+  const res = await fetch('/api/admin/quotas/defaults')
+  if (!res.ok) throw new Error('Failed to get quota defaults')
+  return res.json()
+}
+
+export async function adminSetQuotaDefaults(defaults: Partial<QuotaDefaults>): Promise<QuotaDefaults> {
+  const res = await fetch('/api/admin/quotas/defaults', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(defaults),
+  })
+  if (!res.ok) throw new Error('Failed to set quota defaults')
+  return res.json()
+}
+
+export async function adminGetUserQuota(userId: string): Promise<UserQuotaResponse> {
+  const res = await fetch(`/api/admin/users/${userId}/quota`)
+  if (!res.ok) throw new Error('Failed to get user quota')
+  return res.json()
+}
+
+export async function adminSetUserQuota(
+  userId: string,
+  overrides: {
+    maxWorkspaces?: number
+    maxSandboxesPerWorkspace?: number
+    workspaceDriveSize?: string
+    sandboxCpu?: string
+    sandboxMemory?: string
+    idleTimeout?: string
+    wsMaxTotalCpu?: string
+    wsMaxTotalMemory?: string
+    wsMaxIdleTimeout?: string
+  }
+): Promise<void> {
+  const res = await fetch(`/api/admin/users/${userId}/quota`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(overrides),
+  })
+  if (!res.ok) throw new Error('Failed to set user quota')
+}
+
+export async function adminDeleteUserQuota(userId: string): Promise<void> {
+  const res = await fetch(`/api/admin/users/${userId}/quota`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete user quota')
 }

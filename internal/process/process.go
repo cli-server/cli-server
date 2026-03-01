@@ -17,6 +17,8 @@ type StartOptions struct {
 	SandboxType      string // "opencode" or "openclaw"
 	TelegramBotToken string // openclaw only: Telegram bot token
 	GatewayToken     string // openclaw only: gateway auth token
+	CPULimit         string // optional K8s resource string override (e.g. "2", "500m")
+	MemoryLimit      string // optional K8s resource string override (e.g. "2Gi", "512Mi")
 }
 
 // Manager manages process lifecycles.

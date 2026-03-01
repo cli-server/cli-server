@@ -16,6 +16,15 @@ persistence:
 
 idleTimeout: "30m"
 
+quotas:
+  maxWorkspacesPerUser: "10"
+  maxSandboxesPerWorkspace: "20"
+  defaultSandboxCpu: "2"
+  defaultSandboxMemory: "2Gi"
+  wsMaxTotalCpu: "0"
+  wsMaxTotalMemory: "0"
+  wsMaxIdleTimeout: "0"
+
 anthropicApiKey: ""
 anthropicBaseUrl: ""
 anthropicAuthToken: ""

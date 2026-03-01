@@ -221,13 +221,12 @@ var serveCmd = &cobra.Command{
 		srv := server.New(authSvc, oidcMgr, database, sandboxStore, procMgr, driveMgr, nsMgr, tunnel.NewRegistry(), staticFS, opencodeStaticFS)
 		addr := fmt.Sprintf(":%d", port)
 
-		// Start idle watcher.
-		var idleWatcher *sbxstore.IdleWatcher
-		if idleTimeout > 0 {
-			idleWatcher = sbxstore.NewIdleWatcher(database, procMgr, sandboxStore, idleTimeout)
-			idleWatcher.Start()
-			log.Printf("Idle watcher started (timeout: %s)", idleTimeout)
-		}
+		// Start idle watcher with a dynamic timeout getter that reads from the settings chain.
+		idleWatcher := sbxstore.NewIdleWatcher(database, procMgr, sandboxStore, func() time.Duration {
+			return srv.GetEffectiveIdleTimeout()
+		})
+		idleWatcher.Start()
+		log.Printf("Idle watcher started (initial timeout: %s)", idleTimeout)
 
 		httpServer := &http.Server{Addr: addr, Handler: srv.Router()}
 
@@ -238,9 +237,7 @@ var serveCmd = &cobra.Command{
 			sig := <-sigCh
 			log.Printf("Received %v, shutting down...", sig)
 			httpServer.Shutdown(context.Background())
-			if idleWatcher != nil {
-				idleWatcher.Stop()
-			}
+			idleWatcher.Stop()
 			log.Println("Cleaning up active sandboxes...")
 			procMgr.Close()
 		}()

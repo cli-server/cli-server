@@ -10,21 +10,23 @@ import (
 
 // IdleWatcher monitors sandboxes and auto-pauses idle ones.
 type IdleWatcher struct {
-	db      *db.DB
-	procMgr process.Manager
-	store   *Store
-	timeout time.Duration
-	stop    chan struct{}
+	db         *db.DB
+	procMgr    process.Manager
+	store      *Store
+	getTimeout func() time.Duration
+	stop       chan struct{}
 }
 
 // NewIdleWatcher creates a new idle sandbox watcher.
-func NewIdleWatcher(database *db.DB, procMgr process.Manager, store *Store, timeout time.Duration) *IdleWatcher {
+// The getTimeout function is called each check cycle to resolve the current idle timeout.
+// If it returns 0, idle checking is skipped (disabled).
+func NewIdleWatcher(database *db.DB, procMgr process.Manager, store *Store, getTimeout func() time.Duration) *IdleWatcher {
 	return &IdleWatcher{
-		db:      database,
-		procMgr: procMgr,
-		store:   store,
-		timeout: timeout,
-		stop:    make(chan struct{}),
+		db:         database,
+		procMgr:    procMgr,
+		store:      store,
+		getTimeout: getTimeout,
+		stop:       make(chan struct{}),
 	}
 }
 
@@ -53,7 +55,12 @@ func (w *IdleWatcher) loop() {
 }
 
 func (w *IdleWatcher) check() {
-	sandboxes, err := w.db.ListIdleSandboxes(w.timeout)
+	timeout := w.getTimeout()
+	if timeout <= 0 {
+		return // idle checking disabled
+	}
+
+	sandboxes, err := w.db.ListIdleSandboxes(timeout)
 	if err != nil {
 		log.Printf("idle watcher: failed to list idle sandboxes: %v", err)
 		return

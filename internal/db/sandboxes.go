@@ -25,13 +25,15 @@ type Sandbox struct {
 	IsLocal          bool
 	TunnelToken      sql.NullString
 	LastHeartbeatAt  sql.NullTime
+	CPUMillicores    *int
+	MemoryBytes      *int64
 }
 
-func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken, shortID string) error {
+func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken, shortID string, cpuMillicores int, memoryBytes int64) error {
 	_, err := db.Exec(
-		`INSERT INTO sandboxes (id, workspace_id, name, type, status, sandbox_name, opencode_password, proxy_token, telegram_bot_token, gateway_token, short_id, last_activity_at)
-		 VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, $10, NOW())`,
-		id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, nullIfEmpty(telegramBotToken), nullIfEmpty(gatewayToken), nullIfEmpty(shortID),
+		`INSERT INTO sandboxes (id, workspace_id, name, type, status, sandbox_name, opencode_password, proxy_token, telegram_bot_token, gateway_token, short_id, last_activity_at, cpu_millicores, memory_bytes)
+		 VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, $10, NOW(), $11, $12)`,
+		id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, nullIfEmpty(telegramBotToken), nullIfEmpty(gatewayToken), nullIfEmpty(shortID), cpuMillicores, memoryBytes,
 	)
 	if err != nil {
 		return fmt.Errorf("create sandbox: %w", err)
@@ -40,11 +42,11 @@ func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, ope
 }
 
 // sandboxColumns is the list of columns selected for sandbox queries.
-const sandboxColumns = `id, workspace_id, name, type, status, short_id, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at, is_local, tunnel_token, last_heartbeat_at`
+const sandboxColumns = `id, workspace_id, name, type, status, short_id, sandbox_name, pod_ip, opencode_password, proxy_token, telegram_bot_token, gateway_token, last_activity_at, created_at, paused_at, is_local, tunnel_token, last_heartbeat_at, cpu_millicores, memory_bytes`
 
 func scanSandbox(scanner interface{ Scan(...interface{}) error }) (*Sandbox, error) {
 	s := &Sandbox{}
-	err := scanner.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.ShortID, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt, &s.IsLocal, &s.TunnelToken, &s.LastHeartbeatAt)
+	err := scanner.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.ShortID, &s.SandboxName, &s.PodIP, &s.OpencodePassword, &s.ProxyToken, &s.TelegramBotToken, &s.GatewayToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt, &s.IsLocal, &s.TunnelToken, &s.LastHeartbeatAt, &s.CPUMillicores, &s.MemoryBytes)
 	return s, err
 }
 

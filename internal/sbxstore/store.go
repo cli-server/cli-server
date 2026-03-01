@@ -26,6 +26,8 @@ type Sandbox struct {
 	IsLocal          bool       `json:"isLocal"`
 	TunnelToken      string     `json:"-"`
 	LastHeartbeatAt  *time.Time `json:"lastHeartbeatAt,omitempty"`
+	CPUMillicores    int        `json:"cpuMillicores,omitempty"`
+	MemoryBytes      int64      `json:"memoryBytes,omitempty"`
 }
 
 // Store manages sandboxes via PostgreSQL.
@@ -38,8 +40,8 @@ func NewStore(database *db.DB) *Store {
 }
 
 // Create inserts a new sandbox into the DB with 'creating' status.
-func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken, shortID string) (*Sandbox, error) {
-	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken, shortID); err != nil {
+func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken, shortID string, cpuMillicores int, memoryBytes int64) (*Sandbox, error) {
+	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken, shortID, cpuMillicores, memoryBytes); err != nil {
 		return nil, err
 	}
 
@@ -58,6 +60,8 @@ func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencode
 		GatewayToken:     gatewayToken,
 		CreatedAt:        now,
 		LastActivityAt:   &now,
+		CPUMillicores:    cpuMillicores,
+		MemoryBytes:      memoryBytes,
 	}, nil
 }
 
@@ -167,6 +171,12 @@ func dbSandboxToSandbox(ds *db.Sandbox) *Sandbox {
 	if ds.LastHeartbeatAt.Valid {
 		t := ds.LastHeartbeatAt.Time
 		sbx.LastHeartbeatAt = &t
+	}
+	if ds.CPUMillicores != nil {
+		sbx.CPUMillicores = *ds.CPUMillicores
+	}
+	if ds.MemoryBytes != nil {
+		sbx.MemoryBytes = *ds.MemoryBytes
 	}
 	return sbx
 }

@@ -253,8 +253,8 @@ chown -R 1000:1000 /mnt/workspace-drive
 						ImagePullPolicy: corev1.PullAlways,
 						Resources: corev1.ResourceRequirements{
 							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse(m.cfg.MemoryLimit),
-								corev1.ResourceCPU:    resource.MustParse(m.cfg.CPULimit),
+								corev1.ResourceMemory: resource.MustParse(resolveMemLimit(m.cfg.MemoryLimit, opts)),
+								corev1.ResourceCPU:    resource.MustParse(resolveCPULimit(m.cfg.CPULimit, opts)),
 							},
 						},
 					}},
@@ -449,8 +449,8 @@ chown -R 1000:1000 /mnt/workspace-drive
 		},
 		Resources: corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
-				corev1.ResourceMemory: resource.MustParse(m.cfg.MemoryLimit),
-				corev1.ResourceCPU:    resource.MustParse(m.cfg.CPULimit),
+				corev1.ResourceMemory: resource.MustParse(resolveMemLimit(m.cfg.MemoryLimit, opts)),
+				corev1.ResourceCPU:    resource.MustParse(resolveCPULimit(m.cfg.CPULimit, opts)),
 			},
 		},
 	}
@@ -786,4 +786,20 @@ func (m *Manager) Close() error {
 		m.Stop(id)
 	}
 	return nil
+}
+
+// resolveMemLimit returns the opts override if set, otherwise the config default.
+func resolveMemLimit(cfgDefault string, opts process.StartOptions) string {
+	if opts.MemoryLimit != "" {
+		return opts.MemoryLimit
+	}
+	return cfgDefault
+}
+
+// resolveCPULimit returns the opts override if set, otherwise the config default.
+func resolveCPULimit(cfgDefault string, opts process.StartOptions) string {
+	if opts.CPULimit != "" {
+		return opts.CPULimit
+	}
+	return cfgDefault
 }

@@ -37,6 +37,20 @@ spec:
               value: {{ .Values.backend | quote }}
             - name: IDLE_TIMEOUT
               value: {{ .Values.idleTimeout | quote }}
+            - name: QUOTA_MAX_WORKSPACES_PER_USER
+              value: {{ .Values.quotas.maxWorkspacesPerUser | quote }}
+            - name: QUOTA_MAX_SANDBOXES_PER_WORKSPACE
+              value: {{ .Values.quotas.maxSandboxesPerWorkspace | quote }}
+            - name: QUOTA_DEFAULT_SANDBOX_CPU
+              value: {{ .Values.quotas.defaultSandboxCpu | quote }}
+            - name: QUOTA_DEFAULT_SANDBOX_MEMORY
+              value: {{ .Values.quotas.defaultSandboxMemory | quote }}
+            - name: QUOTA_WS_MAX_TOTAL_CPU
+              value: {{ .Values.quotas.wsMaxTotalCpu | quote }}
+            - name: QUOTA_WS_MAX_TOTAL_MEMORY
+              value: {{ .Values.quotas.wsMaxTotalMemory | quote }}
+            - name: QUOTA_WS_MAX_IDLE_TIMEOUT
+              value: {{ .Values.quotas.wsMaxIdleTimeout | quote }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:

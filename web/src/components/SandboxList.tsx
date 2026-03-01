@@ -87,6 +87,7 @@ export function SandboxList({
   const [showCreateWs, setShowCreateWs] = useState(false)
   const [wsDetail, setWsDetail] = useState<{ name: string; members: WorkspaceMember[]; createdAt: string } | null>(null)
   const [agentCodeData, setAgentCodeData] = useState<{ code: string; expiresAt: string; command: string } | null>(null)
+  const [quotaError, setQuotaError] = useState<string | null>(null)
   const [theme, setThemeState] = useState<'system' | 'light' | 'dark'>(() => {
     return (localStorage.getItem('theme') as 'light' | 'dark') || 'system'
   })
@@ -151,13 +152,17 @@ export function SandboxList({
     if (creating || !selectedWorkspaceId) return
     setCreating(true)
     setShowCreateModal(false)
+    setQuotaError(null)
     onSelectSandbox('')
     try {
       const sbx = await createSandbox(selectedWorkspaceId, name, type, telegramBotToken)
       setSandboxes((prev) => [...prev, sbx])
       onSelectSandbox(sbx.id)
-    } catch {
-      // ignore
+    } catch (err: unknown) {
+      const qe = err as { error?: string; message?: string } | undefined
+      if (qe?.error === 'quota_exceeded' && qe.message) {
+        setQuotaError(qe.message)
+      }
     } finally {
       setCreating(false)
     }
@@ -219,12 +224,16 @@ export function SandboxList({
 
   const doCreateWorkspace = async (name: string) => {
     setShowCreateWs(false)
+    setQuotaError(null)
     try {
       const ws = await createWorkspace(name)
       setWorkspaces((prev) => [...prev, ws])
       onSelectWorkspace(ws.id)
-    } catch {
-      // ignore
+    } catch (err: unknown) {
+      const qe = err as { error?: string; message?: string } | undefined
+      if (qe?.error === 'quota_exceeded' && qe.message) {
+        setQuotaError(qe.message)
+      }
     }
   }
 
@@ -354,6 +363,17 @@ export function SandboxList({
 
       {/* Sandbox list */}
       <div className="flex-1 overflow-y-auto">
+        {quotaError && (
+          <div className="mx-3 mt-2 flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+            <span className="flex-1">{quotaError}</span>
+            <button
+              onClick={() => setQuotaError(null)}
+              className="shrink-0 font-medium hover:text-red-300"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         {sandboxes.map((sbx) => (
           <div
             key={sbx.id}
