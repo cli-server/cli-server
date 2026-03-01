@@ -35,9 +35,10 @@ type Server struct {
 	NamespaceManager *namespace.Manager
 	TunnelRegistry   *tunnel.Registry
 	StaticFS         fs.FS
-	OpencodeStaticFS fs.FS // embedded opencode frontend dist (served on subdomain requests)
-	BaseDomain       string // e.g. "cli.cs.ac.cn" — used for subdomain routing
-	BaseScheme       string // e.g. "https" — scheme for generated URLs
+	OpencodeStaticFS    fs.FS  // embedded opencode frontend dist (served on subdomain requests)
+	BaseDomain          string // e.g. "cli.cs.ac.cn" — used for subdomain routing
+	BaseScheme          string // e.g. "https" — scheme for generated URLs
+	OpencodeAssetDomain string // e.g. "opencodeapp.agentserver.dev" — shared static asset domain
 	// activityThrottle prevents excessive DB writes for activity tracking.
 	activityMu   sync.Mutex
 	activityLast map[string]time.Time
@@ -50,21 +51,28 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 		baseScheme = "https"
 	}
 
-	s := &Server{
-		Auth:             a,
-		OIDC:             oidcMgr,
-		DB:               database,
-		Sandboxes:        sandboxStore,
-		ProcessManager:   processManager,
-		DriveManager:     driveManager,
-		NamespaceManager: nsMgr,
-		TunnelRegistry:   tunnelReg,
-		StaticFS:         staticFS,
-		OpencodeStaticFS: opcodeStaticFS,
-		BaseDomain:       baseDomain,
-		BaseScheme:       baseScheme,
-		activityLast:     make(map[string]time.Time),
+	opencodeAssetDomain := os.Getenv("OPENCODE_ASSET_DOMAIN")
+	if opencodeAssetDomain == "" && baseDomain != "" {
+		opencodeAssetDomain = "opencodeapp." + baseDomain
 	}
+
+	s := &Server{
+		Auth:                a,
+		OIDC:                oidcMgr,
+		DB:                  database,
+		Sandboxes:           sandboxStore,
+		ProcessManager:      processManager,
+		DriveManager:        driveManager,
+		NamespaceManager:    nsMgr,
+		TunnelRegistry:      tunnelReg,
+		StaticFS:            staticFS,
+		OpencodeStaticFS:    opcodeStaticFS,
+		BaseDomain:          baseDomain,
+		BaseScheme:          baseScheme,
+		OpencodeAssetDomain: opencodeAssetDomain,
+		activityLast:        make(map[string]time.Time),
+	}
+	s.initOpencodeAssetIndex()
 	return s
 }
 
@@ -100,6 +108,11 @@ func (s *Server) Router() http.Handler {
 				}
 				if strings.HasSuffix(host, suffix) {
 					sub := strings.TrimSuffix(host, suffix)
+					// Shared static asset domain (e.g. "opencodeapp.{baseDomain}").
+					if s.OpencodeAssetDomain != "" && host == s.OpencodeAssetDomain {
+						s.handleAssetDomainRequest(w, r)
+						return
+					}
 					if strings.HasPrefix(sub, "oc-") {
 						sandboxID := sub[3:] // strip "oc-" prefix
 						s.handleSubdomainProxy(w, r, sandboxID)

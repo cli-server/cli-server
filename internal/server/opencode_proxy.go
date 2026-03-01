@@ -1,13 +1,16 @@
 package server
 
 import (
+	"bytes"
 	"encoding/base64"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -238,3 +241,154 @@ type readSeeker interface {
 	Read([]byte) (int, error)
 	Seek(int64, int) (int64, error)
 }
+
+// handleAssetDomainRequest serves static assets from the shared asset domain
+// (e.g. opencodeapp.agentserver.dev). All sandbox subdomains reference this
+// domain for JS/CSS/images so browsers can share cached assets across sandboxes.
+//
+// index.html is blocked (404) — it must be served from each sandbox's subdomain
+// so that per-subdomain auth cookies and SPA routing work correctly.
+func (s *Server) handleAssetDomainRequest(w http.ResponseWriter, r *http.Request) {
+	// Handle CORS preflight.
+	if r.Method == http.MethodOptions {
+		s.setAssetCORSHeaders(w, r)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if s.OpencodeStaticFS == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	upath := path.Clean(r.URL.Path)
+	if upath == "/" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	filePath := upath[1:] // strip leading "/"
+
+	// Block index.html — must be served from sandbox subdomain.
+	if filePath == "index.html" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	// Check file exists in embedded FS.
+	fi, err := fs.Stat(s.OpencodeStaticFS, filePath)
+	if err != nil || fi.IsDir() {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	s.setAssetCORSHeaders(w, r)
+	s.serveOpencodeFile(w, r, filePath)
+}
+
+// setAssetCORSHeaders sets CORS headers for the shared asset domain.
+// Uses wildcard origin since these are public, cacheable static assets.
+func (s *Server) setAssetCORSHeaders(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Origin, Accept, Content-Type")
+	w.Header().Set("Access-Control-Max-Age", "86400")
+}
+
+// crossoriginTagRe matches <script src="..."> and <link ... href="..."> tags
+// that don't already have a crossorigin attribute.
+var crossoriginTagRe = regexp.MustCompile(`(<(?:script|link)\b[^>]*?)(/?>)`)
+
+// initOpencodeAssetIndex processes the embedded index.html at startup to add
+// crossorigin attributes to <script> and <link> tags. This is needed because
+// assets are loaded cross-origin from the shared asset domain.
+func (s *Server) initOpencodeAssetIndex() {
+	if s.OpencodeStaticFS == nil || s.OpencodeAssetDomain == "" {
+		return
+	}
+
+	f, err := s.OpencodeStaticFS.Open("index.html")
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return
+	}
+
+	// Add crossorigin="anonymous" to <script> and <link> tags that reference
+	// the asset domain and don't already have crossorigin.
+	modified := crossoriginTagRe.ReplaceAllFunc(data, func(match []byte) []byte {
+		// Skip if already has crossorigin.
+		if bytes.Contains(match, []byte("crossorigin")) {
+			return match
+		}
+		// Only process tags that reference the asset domain or have src/href.
+		if !bytes.Contains(match, []byte("src=")) && !bytes.Contains(match, []byte("href=")) {
+			return match
+		}
+		// Insert crossorigin="anonymous" before the closing "/>".
+		parts := crossoriginTagRe.FindSubmatch(match)
+		if len(parts) < 3 {
+			return match
+		}
+		return append(append(parts[1], []byte(` crossorigin="anonymous"`)...), parts[2]...)
+	})
+
+	if bytes.Equal(data, modified) {
+		return
+	}
+
+	log.Printf("opencode: patched index.html with crossorigin attributes for asset domain %s", s.OpencodeAssetDomain)
+
+	// Replace the embedded FS with a patched version that overlays index.html.
+	s.OpencodeStaticFS = &patchedFS{
+		base:         s.OpencodeStaticFS,
+		patchedIndex: modified,
+	}
+}
+
+// patchedFS wraps an fs.FS and overrides index.html with patched content.
+type patchedFS struct {
+	base         fs.FS
+	patchedIndex []byte
+}
+
+func (p *patchedFS) Open(name string) (fs.File, error) {
+	if name == "index.html" {
+		return &memFile{
+			Reader: bytes.NewReader(p.patchedIndex),
+			name:   "index.html",
+			size:   int64(len(p.patchedIndex)),
+		}, nil
+	}
+	return p.base.Open(name)
+}
+
+// memFile implements fs.File for in-memory content.
+type memFile struct {
+	*bytes.Reader
+	name string
+	size int64
+}
+
+func (f *memFile) Stat() (fs.FileInfo, error) {
+	return &memFileInfo{name: f.name, size: f.size}, nil
+}
+
+func (f *memFile) Close() error { return nil }
+
+// memFileInfo implements fs.FileInfo for in-memory files.
+type memFileInfo struct {
+	name string
+	size int64
+}
+
+func (fi *memFileInfo) Name() string      { return fi.name }
+func (fi *memFileInfo) Size() int64       { return fi.size }
+func (fi *memFileInfo) Mode() fs.FileMode { return 0444 }
+func (fi *memFileInfo) ModTime() time.Time { return time.Time{} }
+func (fi *memFileInfo) IsDir() bool       { return false }
+func (fi *memFileInfo) Sys() interface{}  { return nil }

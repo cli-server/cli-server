@@ -60,6 +60,10 @@ openclaw:
 baseDomain: ""
 baseScheme: "https"
 
+# Shared asset domain for cross-sandbox browser caching of static assets.
+# Defaults to "opencodeapp.{baseDomain}" when baseDomain is set.
+opencodeAssetDomain: ""
+
 # Resource limits for workspace pods running opencode serve.
 workspace:
   resources:

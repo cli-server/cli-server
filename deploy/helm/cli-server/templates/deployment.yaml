@@ -68,6 +68,10 @@ spec:
             - name: BASE_SCHEME
               value: {{ .Values.baseScheme | default "https" | quote }}
             {{- end }}
+            {{- if .Values.opencodeAssetDomain }}
+            - name: OPENCODE_ASSET_DOMAIN
+              value: {{ .Values.opencodeAssetDomain | quote }}
+            {{- end }}
             - name: SESSION_STORAGE_SIZE
               value: {{ .Values.persistence.sessionStorageSize | quote }}
             - name: USER_DRIVE_SIZE
