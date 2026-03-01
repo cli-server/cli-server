@@ -270,6 +270,13 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// First registered user becomes admin.
+	if count, err := s.DB.CountUsers(); err == nil && count == 1 {
+		if err := s.DB.UpdateUserRole(id, "admin"); err != nil {
+			log.Printf("failed to set first user as admin: %v", err)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"id": id, "username": req.Username})

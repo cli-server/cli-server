@@ -211,6 +211,10 @@ func (m *OIDCManager) resolveUser(provider, subject, email, displayName string) 
 	if err := database.CreateUserWithEmail(userID, username, nil, emailPtr); err != nil {
 		return "", fmt.Errorf("create user: %w", err)
 	}
+	// First registered user becomes admin.
+	if count, err := database.CountUsers(); err == nil && count == 1 {
+		_ = database.UpdateUserRole(userID, "admin")
+	}
 	if err := database.CreateOIDCIdentity(provider, subject, userID, emailPtr); err != nil {
 		return "", fmt.Errorf("create oidc identity: %w", err)
 	}

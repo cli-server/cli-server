@@ -110,6 +110,15 @@ func (db *DB) ListAllUsers() ([]*User, error) {
 	return users, rows.Err()
 }
 
+func (db *DB) CountUsers() (int, error) {
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count users: %w", err)
+	}
+	return count, nil
+}
+
 func (db *DB) UpdateUserRole(userID, role string) error {
 	_, err := db.Exec("UPDATE users SET role = $1 WHERE id = $2", role, userID)
 	if err != nil {
