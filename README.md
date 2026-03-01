@@ -141,7 +141,7 @@ All responses are chunked, keeping each WebSocket message well under the default
 
 ### Workspaces
 
-A workspace is a collaborative unit. It has members with roles and owns a shared persistent disk (PVC in K8s, named volume in Docker). All sandboxes in a workspace share this disk at `/data/disk0`.
+A workspace is a collaborative unit. It has members with roles and owns a shared persistent disk (PVC in K8s, named volume in Docker). All sandboxes in a workspace share this disk at `/home/agent/projects`.
 
 | Role | Permissions |
 |------|-------------|

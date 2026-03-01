@@ -165,7 +165,7 @@ func (m *Manager) Start(id, command string, args, env []string, opts process.Sta
 	// Mount workspace drive PVC if provided.
 	if opts.WorkspaceDiskPVC != "" {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name: "workspace-drive", MountPath: "/data/disk0",
+			Name: "workspace-drive", MountPath: "/home/agent/projects",
 		})
 		volumes = append(volumes, corev1.Volume{
 			Name: "workspace-drive",
@@ -188,6 +188,8 @@ if [ ! -f /mnt/session-data/.initialized ]; then
   touch /mnt/session-data/.initialized
 fi
 chown -R 1000:1000 /mnt/session-data
+# Ensure projects directory exists (workspace PVC mount point)
+mkdir -p /mnt/session-data/projects
 mkdir -p /mnt/workspace-drive
 chown -R 1000:1000 /mnt/workspace-drive
 `
@@ -368,7 +370,7 @@ exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 	// Mount workspace drive PVC if provided.
 	if opts.WorkspaceDiskPVC != "" {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name: "workspace-drive", MountPath: "/data/disk0",
+			Name: "workspace-drive", MountPath: "/home/agent/projects",
 		})
 		volumes = append(volumes, corev1.Volume{
 			Name: "workspace-drive",
@@ -388,6 +390,8 @@ if [ ! -f /mnt/session-data/.initialized ]; then
   touch /mnt/session-data/.initialized
 fi
 chown -R 1000:1000 /mnt/session-data
+# Ensure projects directory exists (workspace PVC mount point)
+mkdir -p /mnt/session-data/projects
 mkdir -p /mnt/workspace-drive
 chown -R 1000:1000 /mnt/workspace-drive
 `

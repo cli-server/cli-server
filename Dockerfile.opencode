@@ -26,7 +26,9 @@ RUN mkdir -p /home/agent/.cache/opencode && \
     echo '{"dependencies":{}}' > package.json && \
     bun add --exact opencode-anthropic-auth@0.0.13
 
-WORKDIR /home/agent
+RUN mkdir -p /home/agent/projects
+
+WORKDIR /home/agent/projects
 
 EXPOSE 4096
 

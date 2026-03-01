@@ -184,7 +184,7 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 		mounts = append(mounts, dockermount.Mount{
 			Type:   dockermount.TypeVolume,
 			Source: opts.WorkspaceDiskPVC,
-			Target: "/data/disk0",
+			Target: "/home/agent/projects",
 		})
 	}
 
