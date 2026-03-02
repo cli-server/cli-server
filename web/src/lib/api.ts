@@ -150,6 +150,18 @@ export async function removeMember(workspaceId: string, userId: string): Promise
 
 // Sandbox API
 
+export interface WorkspaceSandboxDefaults {
+  maxSandboxCpu: number    // millicores
+  maxSandboxMemory: number // bytes
+  maxIdleTimeout: number   // seconds
+}
+
+export async function getWorkspaceDefaults(workspaceId: string): Promise<WorkspaceSandboxDefaults> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/defaults`)
+  if (!res.ok) throw new Error('Failed to get workspace defaults')
+  return res.json()
+}
+
 export async function listSandboxes(workspaceId: string): Promise<Sandbox[]> {
   const res = await fetch(`/api/workspaces/${workspaceId}/sandboxes`)
   if (!res.ok) throw new Error('Failed to list sandboxes')
@@ -160,14 +172,21 @@ export async function createSandbox(
   workspaceId: string,
   name?: string,
   type?: 'opencode' | 'openclaw',
+  cpu?: number,
+  memory?: number,
+  idleTimeout?: number,
 ): Promise<Sandbox> {
+  const body: Record<string, unknown> = {
+    name: name || 'New Sandbox',
+    type: type || 'opencode',
+  }
+  if (cpu !== undefined) body.cpu = cpu
+  if (memory !== undefined) body.memory = memory
+  if (idleTimeout !== undefined) body.idleTimeout = idleTimeout
   const res = await fetch(`/api/workspaces/${workspaceId}/sandboxes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: name || 'New Sandbox',
-      type: type || 'opencode',
-    }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) {
     const err = await checkQuotaError(res)

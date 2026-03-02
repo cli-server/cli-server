@@ -60,7 +60,7 @@ func (w *IdleWatcher) check() {
 		return // idle checking disabled
 	}
 
-	sandboxes, err := w.db.ListIdleSandboxes(timeout)
+	sandboxes, err := w.db.ListIdleSandboxes(int(timeout.Seconds()))
 	if err != nil {
 		log.Printf("idle watcher: failed to list idle sandboxes: %v", err)
 		return

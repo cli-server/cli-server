@@ -156,6 +156,9 @@ export function SandboxList({
   const handleCreateSandbox = async (
     name: string,
     type: 'opencode' | 'openclaw',
+    cpu?: number,
+    memory?: number,
+    idleTimeout?: number,
   ) => {
     if (creating || !selectedWorkspaceId) return
     setCreating(true)
@@ -163,7 +166,7 @@ export function SandboxList({
     setQuotaError(null)
     onSelectSandbox('')
     try {
-      const sbx = await createSandbox(selectedWorkspaceId, name, type)
+      const sbx = await createSandbox(selectedWorkspaceId, name, type, cpu, memory, idleTimeout)
       setSandboxes((prev) => [...prev, sbx])
       onSelectSandbox(sbx.id)
     } catch (err: unknown) {
@@ -446,17 +449,6 @@ export function SandboxList({
         )}
       </div>
 
-      {/* Admin link */}
-      {onShowAdmin && (
-        <button
-          onClick={onShowAdmin}
-          className="flex w-full items-center gap-2 border-t border-[var(--border)] px-3 py-2 text-sm text-[var(--muted-foreground)] hover:bg-[var(--secondary)]"
-        >
-          <Shield size={14} />
-          Admin
-        </button>
-      )}
-
       {/* Workspace detail */}
       {selectedWorkspaceId && (
         <button
@@ -498,6 +490,15 @@ export function SandboxList({
                 </button>
               </div>
             </div>
+            {onShowAdmin && (
+              <button
+                onClick={() => { onShowAdmin(); setMenuOpen(false); }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[var(--foreground)] hover:bg-[var(--secondary)]"
+              >
+                <Shield size={14} />
+                Admin
+              </button>
+            )}
             <button
               onClick={handleLogout}
               className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[var(--foreground)] hover:bg-[var(--secondary)]"
@@ -521,8 +522,9 @@ export function SandboxList({
         </button>
       </div>
 
-      {showCreateModal && (
+      {showCreateModal && selectedWorkspaceId && (
         <CreateSandboxModal
+          workspaceId={selectedWorkspaceId}
           onClose={() => setShowCreateModal(false)}
           onCreate={handleCreateSandbox}
           creating={creating}

@@ -24,15 +24,16 @@ type Sandbox struct {
 	CreatedAt       time.Time
 	PausedAt        sql.NullTime
 	LastHeartbeatAt sql.NullTime
-	CPUMillicores   *int
-	MemoryBytes     *int64
+	CPU         *int
+	Memory      *int64
+	IdleTimeout *int
 }
 
-func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID string, cpuMillicores int, memoryBytes int64) error {
+func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID string, cpu int, memory int64, idleTimeout *int) error {
 	_, err := db.Exec(
-		`INSERT INTO sandboxes (id, workspace_id, name, type, status, sandbox_name, proxy_token, opencode_token, openclaw_token, short_id, last_activity_at, cpu_millicores, memory_bytes)
-		 VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, NOW(), $10, $11)`,
-		id, workspaceID, name, sandboxType, sandboxName, proxyToken, nullIfEmpty(opencodeToken), nullIfEmpty(openclawToken), nullIfEmpty(shortID), cpuMillicores, memoryBytes,
+		`INSERT INTO sandboxes (id, workspace_id, name, type, status, sandbox_name, proxy_token, opencode_token, openclaw_token, short_id, last_activity_at, cpu, memory, idle_timeout)
+		 VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, NOW(), $10, $11, $12)`,
+		id, workspaceID, name, sandboxType, sandboxName, proxyToken, nullIfEmpty(opencodeToken), nullIfEmpty(openclawToken), nullIfEmpty(shortID), cpu, memory, idleTimeout,
 	)
 	if err != nil {
 		return fmt.Errorf("create sandbox: %w", err)
@@ -41,11 +42,11 @@ func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, ope
 }
 
 // sandboxColumns is the list of columns selected for sandbox queries.
-const sandboxColumns = `id, workspace_id, name, type, status, is_local, short_id, sandbox_name, pod_ip, proxy_token, opencode_token, openclaw_token, tunnel_token, last_activity_at, created_at, paused_at, last_heartbeat_at, cpu_millicores, memory_bytes`
+const sandboxColumns = `id, workspace_id, name, type, status, is_local, short_id, sandbox_name, pod_ip, proxy_token, opencode_token, openclaw_token, tunnel_token, last_activity_at, created_at, paused_at, last_heartbeat_at, cpu, memory, idle_timeout`
 
 func scanSandbox(scanner interface{ Scan(...interface{}) error }) (*Sandbox, error) {
 	s := &Sandbox{}
-	err := scanner.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.IsLocal, &s.ShortID, &s.SandboxName, &s.PodIP, &s.ProxyToken, &s.OpencodeToken, &s.OpenclawToken, &s.TunnelToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt, &s.LastHeartbeatAt, &s.CPUMillicores, &s.MemoryBytes)
+	err := scanner.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.IsLocal, &s.ShortID, &s.SandboxName, &s.PodIP, &s.ProxyToken, &s.OpencodeToken, &s.OpenclawToken, &s.TunnelToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt, &s.LastHeartbeatAt, &s.CPU, &s.Memory, &s.IdleTimeout)
 	return s, err
 }
 
@@ -150,12 +151,14 @@ func (db *DB) UpdateSandboxSandboxName(id, sandboxName string) error {
 	return nil
 }
 
-func (db *DB) ListIdleSandboxes(idleTimeout time.Duration) ([]*Sandbox, error) {
+func (db *DB) ListIdleSandboxes(defaultTimeoutSeconds int) ([]*Sandbox, error) {
 	rows, err := db.Query(
 		`SELECT `+sandboxColumns+`
 		 FROM sandboxes
-		 WHERE status = 'running' AND is_local = FALSE AND last_activity_at < NOW() - $1::interval`,
-		fmt.Sprintf("%d seconds", int(idleTimeout.Seconds())),
+		 WHERE status = 'running' AND is_local = FALSE
+		   AND COALESCE(idle_timeout, $1) > 0
+		   AND last_activity_at < NOW() - (COALESCE(idle_timeout, $1) || ' seconds')::interval`,
+		defaultTimeoutSeconds,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list idle sandboxes: %w", err)

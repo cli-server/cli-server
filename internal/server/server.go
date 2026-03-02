@@ -205,6 +205,7 @@ func (s *Server) Router() http.Handler {
 		// Sandbox routes
 		r.Get("/api/workspaces/{wid}/sandboxes", s.handleListSandboxes)
 		r.Post("/api/workspaces/{wid}/sandboxes", s.handleCreateSandbox)
+		r.Get("/api/workspaces/{wid}/defaults", s.handleGetWorkspaceDefaults)
 		r.Get("/api/sandboxes/{id}", s.handleGetSandbox)
 		r.Delete("/api/sandboxes/{id}", s.handleDeleteSandbox)
 		r.Post("/api/sandboxes/{id}/pause", s.handlePauseSandbox)
@@ -757,6 +758,27 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 
 // --- Sandbox handlers ---
 
+func (s *Server) handleGetWorkspaceDefaults(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "wid")
+	if !s.requireWorkspaceRole(w, r, wsID, "owner", "maintainer", "developer") {
+		return
+	}
+
+	wd, err := s.effectiveWorkspaceDefaults(wsID)
+	if err != nil {
+		log.Printf("failed to get workspace defaults: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"maxSandboxCpu":    wd.MaxSandboxCPU,
+		"maxSandboxMemory": wd.MaxSandboxMemory,
+		"maxIdleTimeout":   wd.MaxIdleTimeout,
+	})
+}
+
 func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
 	wsID := chi.URLParam(r, "wid")
 	if _, ok := s.requireWorkspaceMember(w, r, wsID); !ok {
@@ -808,6 +830,52 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	cpuMillis := wd.MaxSandboxCPU   // already int millicores
 	memBytes := wd.MaxSandboxMemory // already int64 bytes
 
+	var req struct {
+		Name        string `json:"name"`
+		Type        string `json:"type"`
+		CPU         *int   `json:"cpu"`
+		Memory      *int64 `json:"memory"`
+		IdleTimeout *int   `json:"idleTimeout"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.Name = "New Sandbox"
+	}
+	if req.Name == "" {
+		req.Name = "New Sandbox"
+	}
+	sandboxType := req.Type
+	if sandboxType == "" {
+		sandboxType = "opencode"
+	}
+	if sandboxType != "opencode" && sandboxType != "openclaw" {
+		http.Error(w, "invalid sandbox type: must be opencode or openclaw", http.StatusBadRequest)
+		return
+	}
+
+	// Override resource values if user provided them, with validation.
+	if req.CPU != nil {
+		if *req.CPU <= 0 || *req.CPU > wd.MaxSandboxCPU {
+			http.Error(w, fmt.Sprintf("cpu must be between 1 and %d millicores", wd.MaxSandboxCPU), http.StatusBadRequest)
+			return
+		}
+		cpuMillis = *req.CPU
+	}
+	if req.Memory != nil {
+		if *req.Memory <= 0 || *req.Memory > wd.MaxSandboxMemory {
+			http.Error(w, fmt.Sprintf("memory must be between 1 and %d bytes", wd.MaxSandboxMemory), http.StatusBadRequest)
+			return
+		}
+		memBytes = *req.Memory
+	}
+	var idleTimeout *int
+	if req.IdleTimeout != nil {
+		if *req.IdleTimeout < 0 || (wd.MaxIdleTimeout > 0 && *req.IdleTimeout > wd.MaxIdleTimeout) {
+			http.Error(w, fmt.Sprintf("idleTimeout must be between 0 and %d seconds", wd.MaxIdleTimeout), http.StatusBadRequest)
+			return
+		}
+		idleTimeout = req.IdleTimeout
+	}
+
 	// Check workspace resource budget.
 	budgetOk, err := s.checkWorkspaceResourceBudget(wsID, cpuMillis, memBytes)
 	if err != nil {
@@ -822,25 +890,6 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 			"error":   "resource_budget_exceeded",
 			"message": "Workspace resource budget exceeded. Delete or pause existing sandboxes to free resources.",
 		})
-		return
-	}
-
-	var req struct {
-		Name string `json:"name"`
-		Type string `json:"type"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		req.Name = "New Sandbox"
-	}
-	if req.Name == "" {
-		req.Name = "New Sandbox"
-	}
-	sandboxType := req.Type
-	if sandboxType == "" {
-		sandboxType = "opencode"
-	}
-	if sandboxType != "opencode" && sandboxType != "openclaw" {
-		http.Error(w, "invalid sandbox type: must be opencode or openclaw", http.StatusBadRequest)
 		return
 	}
 
@@ -881,7 +930,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	var sbx *sbxstore.Sandbox
 	var createErr error
 	for attempts := 0; attempts < 3; attempts++ {
-		sbx, createErr = s.Sandboxes.Create(id, wsID, req.Name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, sid, cpuMillis, memBytes)
+		sbx, createErr = s.Sandboxes.Create(id, wsID, req.Name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, sid, cpuMillis, memBytes, idleTimeout)
 		if createErr == nil {
 			break
 		}
@@ -908,8 +957,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 				ProxyToken:       proxyToken,
 				SandboxType:      sandboxType,
 				OpenclawToken:    openclawToken,
-				CPUMillicores:    wd.MaxSandboxCPU,
-				MemoryBytes:      wd.MaxSandboxMemory,
+				CPU:              cpuMillis,
+				Memory:           memBytes,
 			})
 			if err != nil {
 				log.Printf("failed to start container for sandbox %s: %v", id, err)
@@ -924,8 +973,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 				ProxyToken:       proxyToken,
 				SandboxType:      sandboxType,
 				OpenclawToken:    openclawToken,
-				CPUMillicores:    wd.MaxSandboxCPU,
-				MemoryBytes:      wd.MaxSandboxMemory,
+				CPU:              cpuMillis,
+				Memory:           memBytes,
 			}); err != nil {
 				log.Printf("failed to start container for sandbox %s: %v", id, err)
 				s.Sandboxes.Delete(id)

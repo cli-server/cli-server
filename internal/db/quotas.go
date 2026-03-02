@@ -115,7 +115,7 @@ func (db *DB) CountSandboxesByWorkspace(workspaceID string) (int, error) {
 // allocated by non-offline sandboxes in a workspace.
 func (db *DB) SumWorkspaceSandboxResources(workspaceID string) (cpuMillis int64, memBytes int64, err error) {
 	err = db.QueryRow(
-		`SELECT COALESCE(SUM(cpu_millicores),0), COALESCE(SUM(memory_bytes),0)
+		`SELECT COALESCE(SUM(cpu),0), COALESCE(SUM(memory),0)
 		 FROM sandboxes WHERE workspace_id = $1 AND status != 'offline'`,
 		workspaceID,
 	).Scan(&cpuMillis, &memBytes)

@@ -22,8 +22,8 @@ type StartOptions struct {
 	ProxyToken       string        // per-sandbox token for Anthropic API proxy auth
 	SandboxType      string        // "opencode" or "openclaw"
 	OpenclawToken    string        // openclaw only: gateway auth token
-	CPUMillicores    int           // CPU limit in millicores (e.g. 2000 = 2 cores)
-	MemoryBytes      int64         // memory limit in bytes (e.g. 2147483648 = 2Gi)
+	CPU              int           // CPU limit in millicores (e.g. 2000 = 2 cores)
+	Memory           int64         // memory limit in bytes (e.g. 2147483648 = 2Gi)
 }
 
 // Manager manages process lifecycles.

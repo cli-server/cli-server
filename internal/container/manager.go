@@ -188,11 +188,11 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 	pidsLimit := m.cfg.PidsLimit
 	memoryLimit := m.cfg.MemoryLimit
 	nanoCPUs := m.cfg.NanoCPUs
-	if opts.MemoryBytes != 0 {
-		memoryLimit = opts.MemoryBytes
+	if opts.Memory != 0 {
+		memoryLimit = opts.Memory
 	}
-	if opts.CPUMillicores != 0 {
-		nanoCPUs = int64(opts.CPUMillicores) * 1_000_000
+	if opts.CPU != 0 {
+		nanoCPUs = int64(opts.CPU) * 1_000_000
 	}
 	containerConfig := &container.Config{
 		Image:  containerImage,

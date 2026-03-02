@@ -25,8 +25,9 @@ type Sandbox struct {
 	PausedAt        *time.Time `json:"pausedAt,omitempty"`
 	IsLocal         bool       `json:"isLocal"`
 	LastHeartbeatAt *time.Time `json:"lastHeartbeatAt,omitempty"`
-	CPUMillicores   int        `json:"cpuMillicores,omitempty"`
-	MemoryBytes     int64      `json:"memoryBytes,omitempty"`
+	CPU             int        `json:"cpu,omitempty"`
+	Memory          int64      `json:"memory,omitempty"`
+	IdleTimeout     *int       `json:"idleTimeout,omitempty"`
 }
 
 // Store manages sandboxes via PostgreSQL.
@@ -39,8 +40,8 @@ func NewStore(database *db.DB) *Store {
 }
 
 // Create inserts a new sandbox into the DB with 'creating' status.
-func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID string, cpuMillicores int, memoryBytes int64) (*Sandbox, error) {
-	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID, cpuMillicores, memoryBytes); err != nil {
+func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID string, cpu int, memory int64, idleTimeout *int) (*Sandbox, error) {
+	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID, cpu, memory, idleTimeout); err != nil {
 		return nil, err
 	}
 
@@ -58,8 +59,9 @@ func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencode
 		OpenclawToken: openclawToken,
 		CreatedAt:        now,
 		LastActivityAt:   &now,
-		CPUMillicores:    cpuMillicores,
-		MemoryBytes:      memoryBytes,
+		CPU:              cpu,
+		Memory:           memory,
+		IdleTimeout:      idleTimeout,
 	}, nil
 }
 
@@ -167,11 +169,12 @@ func dbSandboxToSandbox(ds *db.Sandbox) *Sandbox {
 		t := ds.LastHeartbeatAt.Time
 		sbx.LastHeartbeatAt = &t
 	}
-	if ds.CPUMillicores != nil {
-		sbx.CPUMillicores = *ds.CPUMillicores
+	if ds.CPU != nil {
+		sbx.CPU = *ds.CPU
 	}
-	if ds.MemoryBytes != nil {
-		sbx.MemoryBytes = *ds.MemoryBytes
+	if ds.Memory != nil {
+		sbx.Memory = *ds.Memory
 	}
+	sbx.IdleTimeout = ds.IdleTimeout
 	return sbx
 }

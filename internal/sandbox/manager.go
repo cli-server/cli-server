@@ -258,8 +258,8 @@ mkdir -p /mnt/session-data/projects
 						ImagePullPolicy: corev1.PullAlways,
 						Resources: corev1.ResourceRequirements{
 							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: memoryQuantity(opts.MemoryBytes),
-								corev1.ResourceCPU:    cpuQuantity(opts.CPUMillicores),
+								corev1.ResourceMemory: memoryQuantity(opts.Memory),
+								corev1.ResourceCPU:    cpuQuantity(opts.CPU),
 							},
 						},
 					}},
@@ -456,8 +456,8 @@ mkdir -p /mnt/session-data/projects
 		},
 		Resources: corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
-				corev1.ResourceMemory: memoryQuantity(opts.MemoryBytes),
-				corev1.ResourceCPU:    cpuQuantity(opts.CPUMillicores),
+				corev1.ResourceMemory: memoryQuantity(opts.Memory),
+				corev1.ResourceCPU:    cpuQuantity(opts.CPU),
 			},
 		},
 	}
