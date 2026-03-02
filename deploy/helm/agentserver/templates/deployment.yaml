@@ -1,3 +1,9 @@
+{{- if .Values.database }}
+{{- fail "\n\nDEPRECATED: 'database.url' has been removed in chart 0.11.0.\nUse 'postgresql.enabled: true' (default) for an internal PostgreSQL instance,\nor configure 'externalDatabase' for an external database.\nSee values.yaml for details." }}
+{{- end }}
+{{- if and (not .Values.postgresql.enabled) (not .Values.externalDatabase.existingSecret) (not .Values.externalDatabase.url) (not .Values.externalDatabase.host) }}
+{{- fail "\n\nNo database configured. Either:\n  1. Set postgresql.enabled=true (default) for an internal PostgreSQL instance\n  2. Set externalDatabase.url to a PostgreSQL connection string\n  3. Set externalDatabase.host (and user/password/database) for an external database\n  4. Set externalDatabase.existingSecret to an existing secret with a 'database-url' key" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,6 +21,19 @@ spec:
         app: {{ .Release.Name }}
     spec:
       serviceAccountName: {{ .Release.Name }}
+      {{- if .Values.postgresql.enabled }}
+      initContainers:
+        - name: wait-for-postgresql
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h {{ .Release.Name }}-postgresql -p 5432 -U {{ .Values.postgresql.auth.username }}; do
+                echo "Waiting for PostgreSQL to be ready..."
+                sleep 2
+              done
+      {{- end }}
       containers:
         - name: agentserver
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -29,7 +48,7 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secret
+                  name: {{ include "agentserver.databaseSecretName" . }}
                   key: database-url
             - name: SANDBOX_BACKEND
               value: "k8s"
@@ -152,6 +171,7 @@ spec:
               port: 8080
             initialDelaySeconds: 3
             periodSeconds: 5
+{{- if not .Values.externalDatabase.existingSecret }}
 ---
 apiVersion: v1
 kind: Secret
@@ -159,7 +179,7 @@ metadata:
   name: {{ .Release.Name }}-secret
 type: Opaque
 stringData:
-  database-url: {{ .Values.database.url | quote }}
+  database-url: {{ include "agentserver.databaseUrl" . | quote }}
   anthropic-api-key: {{ .Values.models.anthropicApiKey | quote }}
   anthropic-base-url: {{ .Values.models.anthropicBaseUrl | quote }}
   anthropic-auth-token: {{ .Values.models.anthropicAuthToken | quote }}
@@ -169,3 +189,21 @@ stringData:
   {{- if .Values.platform.auth.oidc.generic.enabled }}
   oidc-client-secret: {{ .Values.platform.auth.oidc.generic.clientSecret | quote }}
   {{- end }}
+{{- else }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-secret
+type: Opaque
+stringData:
+  anthropic-api-key: {{ .Values.models.anthropicApiKey | quote }}
+  anthropic-base-url: {{ .Values.models.anthropicBaseUrl | quote }}
+  anthropic-auth-token: {{ .Values.models.anthropicAuthToken | quote }}
+  {{- if .Values.platform.auth.oidc.github.enabled }}
+  github-client-secret: {{ .Values.platform.auth.oidc.github.clientSecret | quote }}
+  {{- end }}
+  {{- if .Values.platform.auth.oidc.generic.enabled }}
+  oidc-client-secret: {{ .Values.platform.auth.oidc.generic.clientSecret | quote }}
+  {{- end }}
+{{- end }}

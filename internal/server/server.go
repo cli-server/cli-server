@@ -869,8 +869,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	var idleTimeout *int
 	if req.IdleTimeout != nil {
-		if *req.IdleTimeout < 0 || (wd.MaxIdleTimeout > 0 && *req.IdleTimeout > wd.MaxIdleTimeout) {
-			http.Error(w, fmt.Sprintf("idleTimeout must be between 0 and %d seconds", wd.MaxIdleTimeout), http.StatusBadRequest)
+		if *req.IdleTimeout < 0 || (wd.MaxIdleTimeout > 0 && (*req.IdleTimeout == 0 || *req.IdleTimeout > wd.MaxIdleTimeout)) {
+			http.Error(w, fmt.Sprintf("idleTimeout must be between 1 and %d seconds", wd.MaxIdleTimeout), http.StatusBadRequest)
 			return
 		}
 		idleTimeout = req.IdleTimeout

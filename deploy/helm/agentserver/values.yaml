@@ -5,8 +5,34 @@ image:
   tag: latest
   pullPolicy: Always
 
-database:
-  url: "postgres://user:pass@postgres:5432/agentserver?sslmode=disable"
+postgresql:
+  enabled: true
+  image:
+    repository: registry.nj.cs.ac.cn/dockerhub/postgres
+    tag: "18-alpine"
+    pullPolicy: IfNotPresent
+  auth:
+    username: agentserver
+    password: agentserver
+    database: agentserver
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: "csi-rbd-sc"
+    resources: {}
+
+externalDatabase:
+  host: ""
+  port: 5432
+  user: ""
+  password: ""
+  database: ""
+  sslmode: disable
+  # Raw connection URL (overrides individual fields above)
+  url: ""
+  # Existing K8s secret with a "database-url" key (overrides everything above)
+  existingSecret: ""
 
 models:
   anthropicApiKey: ""
