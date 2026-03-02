@@ -69,7 +69,7 @@ spec:
             - name: QUOTA_WS_MAX_IDLE_TIMEOUT
               value: {{ .Values.platform.defaultQuotas.workspaceMaxIdleTimeout | quote }}
             - name: PASSWORD_AUTH_ENABLED
-              value: {{ .Values.platform.auth.password.enabled | default true | quote }}
+              value: {{ ternary "true" "false" .Values.platform.auth.password.enabled | quote }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
