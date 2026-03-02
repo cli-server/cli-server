@@ -10,7 +10,7 @@ var (
 	agentCode             string
 	agentName             string
 	agentOpencodeURL      string
-	agentOpencodePassword string
+	agentOpencodeToken    string
 	agentConfigPath       string
 	agentAutoStart        bool
 	agentOpencodeBin      string
@@ -40,7 +40,7 @@ Use --auto-start=false to disable this and manage opencode manually.`,
 			Name:             agentName,
 			OpencodeURL:      agentOpencodeURL,
 			OpencodeURLSet:   cmd.Flags().Changed("opencode-url"),
-			OpencodePassword: agentOpencodePassword,
+			OpencodeToken:    agentOpencodeToken,
 			ConfigPath:       agentConfigPath,
 			AutoStart:        agentAutoStart,
 			OpencodeBin:      agentOpencodeBin,
@@ -57,7 +57,7 @@ func init() {
 	agentConnectCmd.Flags().StringVar(&agentCode, "code", "", "One-time registration code from Web UI")
 	agentConnectCmd.Flags().StringVar(&agentName, "name", "", "Name for this agent (default: hostname)")
 	agentConnectCmd.Flags().StringVar(&agentOpencodeURL, "opencode-url", "", "Local opencode server URL (default: http://localhost:{opencode-port})")
-	agentConnectCmd.Flags().StringVar(&agentOpencodePassword, "opencode-password", "", "Local opencode server password")
+	agentConnectCmd.Flags().StringVar(&agentOpencodeToken, "opencode-token", "", "Local opencode server token")
 	agentConnectCmd.Flags().StringVar(&agentConfigPath, "config", "", "Config file path (default: ~/.agentserver/agent.json)")
 	agentConnectCmd.Flags().BoolVar(&agentAutoStart, "auto-start", true, "Automatically start opencode serve")
 	agentConnectCmd.Flags().StringVar(&agentOpencodeBin, "opencode-bin", "opencode", "Path to the opencode binary")

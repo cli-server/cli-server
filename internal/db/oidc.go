@@ -39,3 +39,14 @@ func (db *DB) CreateOIDCIdentity(provider, subject, userID string, email *string
 	}
 	return nil
 }
+
+func (db *DB) UpdateOIDCIdentityEmail(provider, subject, email string) error {
+	_, err := db.Exec(
+		"UPDATE oidc_identities SET email = $1, updated_at = NOW() WHERE provider = $2 AND subject = $3",
+		email, provider, subject,
+	)
+	if err != nil {
+		return fmt.Errorf("update oidc identity email: %w", err)
+	}
+	return nil
+}

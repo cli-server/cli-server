@@ -184,11 +184,22 @@ func (m *OIDCManager) resolveUser(provider, subject, email, displayName, login, 
 		return "", fmt.Errorf("lookup oidc identity: %w", err)
 	}
 	if oi != nil {
-		// Update avatar on each login.
+		// Update avatar, display name, and email on each login.
 		if avatarURL != "" {
-			_ = database.UpdateUserAvatarURL(oi.UserID, avatarURL)
+			_ = database.UpdateUserPicture(oi.UserID, avatarURL)
+		}
+		if displayName != "" {
+			_ = database.UpdateUserName(oi.UserID, displayName)
+		}
+		if email != "" {
+			_ = database.UpdateOIDCIdentityEmail(provider, subject, email)
 		}
 		return oi.UserID, nil
+	}
+
+	var emailPtr *string
+	if email != "" {
+		emailPtr = &email
 	}
 
 	// 2. Try matching by email.
@@ -199,29 +210,30 @@ func (m *OIDCManager) resolveUser(provider, subject, email, displayName, login, 
 		}
 		if user != nil {
 			// Link this OIDC identity to the existing user.
-			emailPtr := &email
 			if err := database.CreateOIDCIdentity(provider, subject, user.ID, emailPtr); err != nil {
 				return "", fmt.Errorf("link oidc identity: %w", err)
 			}
 			if avatarURL != "" {
-				_ = database.UpdateUserAvatarURL(user.ID, avatarURL)
+				_ = database.UpdateUserPicture(user.ID, avatarURL)
+			}
+			if displayName != "" {
+				_ = database.UpdateUserName(user.ID, displayName)
 			}
 			return user.ID, nil
 		}
 	}
 
-	// 3. Create a new user.
+	// 3. Create a new user (email is required).
+	if email == "" {
+		return "", fmt.Errorf("OIDC provider did not return an email address")
+	}
 	userID := uuid.New().String()
 	// Prefer the provider login (e.g. GitHub username) over the display name.
 	username := login
 	if username == "" {
 		username = sanitizeUsername(displayName, userID)
 	}
-	var emailPtr *string
-	if email != "" {
-		emailPtr = &email
-	}
-	if err := database.CreateUserWithEmail(userID, username, nil, emailPtr); err != nil {
+	if err := database.CreateUserWithEmail(userID, username, nil, email); err != nil {
 		return "", fmt.Errorf("create user: %w", err)
 	}
 	// First registered user becomes admin.
@@ -229,7 +241,10 @@ func (m *OIDCManager) resolveUser(provider, subject, email, displayName, login, 
 		_ = database.UpdateUserRole(userID, "admin")
 	}
 	if avatarURL != "" {
-		_ = database.UpdateUserAvatarURL(userID, avatarURL)
+		_ = database.UpdateUserPicture(userID, avatarURL)
+	}
+	if displayName != "" {
+		_ = database.UpdateUserName(userID, displayName)
 	}
 	if err := database.CreateOIDCIdentity(provider, subject, userID, emailPtr); err != nil {
 		return "", fmt.Errorf("create oidc identity: %w", err)

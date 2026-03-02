@@ -162,16 +162,17 @@ func (m *Manager) Start(id, command string, args, env []string, opts process.Sta
 	}
 	var volumes []corev1.Volume
 
-	// Mount workspace drive PVC if provided.
-	if opts.WorkspaceDiskPVC != "" {
+	// Mount workspace drive PVCs if provided.
+	for i, vol := range opts.WorkspaceVolumes {
+		volName := fmt.Sprintf("ws-vol-%d", i)
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name: "workspace-drive", MountPath: "/home/agent/projects",
+			Name: volName, MountPath: vol.MountPath,
 		})
 		volumes = append(volumes, corev1.Volume{
-			Name: "workspace-drive",
+			Name: volName,
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: opts.WorkspaceDiskPVC,
+					ClaimName: vol.PVCName,
 				},
 			},
 		})
@@ -190,9 +191,12 @@ fi
 chown -R 1000:1000 /mnt/session-data
 # Ensure projects directory exists (workspace PVC mount point)
 mkdir -p /mnt/session-data/projects
-mkdir -p /mnt/workspace-drive
-chown -R 1000:1000 /mnt/workspace-drive
 `
+	// Add chown for each workspace volume.
+	for i := range opts.WorkspaceVolumes {
+		initScript += fmt.Sprintf("mkdir -p /mnt/ws-vol-%d\nchown -R 1000:1000 /mnt/ws-vol-%d\n", i, i)
+	}
+
 	initContainers := []corev1.Container{{
 		Name:    "fix-perms",
 		Image:   m.cfg.Image,
@@ -204,10 +208,11 @@ chown -R 1000:1000 /mnt/workspace-drive
 			RunAsUser: int64Ptr(0),
 		},
 	}}
-	// Also mount workspace drive in init container if present.
-	if opts.WorkspaceDiskPVC != "" {
+	// Also mount workspace drives in init container.
+	for i := range opts.WorkspaceVolumes {
+		volName := fmt.Sprintf("ws-vol-%d", i)
 		initContainers[0].VolumeMounts = append(initContainers[0].VolumeMounts,
-			corev1.VolumeMount{Name: "workspace-drive", MountPath: "/mnt/workspace-drive"},
+			corev1.VolumeMount{Name: volName, MountPath: fmt.Sprintf("/mnt/ws-vol-%d", i)},
 		)
 	}
 
@@ -253,8 +258,8 @@ chown -R 1000:1000 /mnt/workspace-drive
 						ImagePullPolicy: corev1.PullAlways,
 						Resources: corev1.ResourceRequirements{
 							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse(defaultIfEmpty(opts.MemoryLimit, "2Gi")),
-								corev1.ResourceCPU:    resource.MustParse(defaultIfEmpty(opts.CPULimit, "2")),
+								corev1.ResourceMemory: memoryQuantity(opts.MemoryBytes),
+								corev1.ResourceCPU:    cpuQuantity(opts.CPUMillicores),
 							},
 						},
 					}},
@@ -346,15 +351,12 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 ` + openclawCfg + `
 CFGEOF
 exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
-		if opts.GatewayToken != "" {
-			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: opts.GatewayToken})
-		}
-		if opts.TelegramBotToken != "" {
-			containerEnv = append(containerEnv, corev1.EnvVar{Name: "TELEGRAM_BOT_TOKEN", Value: opts.TelegramBotToken})
+		if opts.OpenclawToken != "" {
+			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: opts.OpenclawToken})
 		}
 	default: // "opencode"
-		if opts.OpencodePassword != "" {
-			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", Value: opts.OpencodePassword})
+		if opts.OpencodeToken != "" {
+			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", Value: opts.OpencodeToken})
 		}
 		if m.cfg.OpencodeConfigContent != "" {
 			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_CONFIG_CONTENT", Value: m.cfg.OpencodeConfigContent})
@@ -367,16 +369,17 @@ exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 	}
 	var volumes []corev1.Volume
 
-	// Mount workspace drive PVC if provided.
-	if opts.WorkspaceDiskPVC != "" {
+	// Mount workspace drive PVCs if provided.
+	for i, vol := range opts.WorkspaceVolumes {
+		volName := fmt.Sprintf("ws-vol-%d", i)
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name: "workspace-drive", MountPath: "/home/agent/projects",
+			Name: volName, MountPath: vol.MountPath,
 		})
 		volumes = append(volumes, corev1.Volume{
-			Name: "workspace-drive",
+			Name: volName,
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: opts.WorkspaceDiskPVC,
+					ClaimName: vol.PVCName,
 				},
 			},
 		})
@@ -392,9 +395,12 @@ fi
 chown -R 1000:1000 /mnt/session-data
 # Ensure projects directory exists (workspace PVC mount point)
 mkdir -p /mnt/session-data/projects
-mkdir -p /mnt/workspace-drive
-chown -R 1000:1000 /mnt/workspace-drive
 `
+	// Add chown for each workspace volume.
+	for i := range opts.WorkspaceVolumes {
+		initScript += fmt.Sprintf("mkdir -p /mnt/ws-vol-%d\nchown -R 1000:1000 /mnt/ws-vol-%d\n", i, i)
+	}
+
 	initContainers := []corev1.Container{{
 		Name:    "fix-perms",
 		Image:   sandboxImage,
@@ -406,9 +412,10 @@ chown -R 1000:1000 /mnt/workspace-drive
 			RunAsUser: int64Ptr(0),
 		},
 	}}
-	if opts.WorkspaceDiskPVC != "" {
+	for i := range opts.WorkspaceVolumes {
+		volName := fmt.Sprintf("ws-vol-%d", i)
 		initContainers[0].VolumeMounts = append(initContainers[0].VolumeMounts,
-			corev1.VolumeMount{Name: "workspace-drive", MountPath: "/mnt/workspace-drive"},
+			corev1.VolumeMount{Name: volName, MountPath: fmt.Sprintf("/mnt/ws-vol-%d", i)},
 		)
 	}
 
@@ -449,8 +456,8 @@ chown -R 1000:1000 /mnt/workspace-drive
 		},
 		Resources: corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
-				corev1.ResourceMemory: resource.MustParse(defaultIfEmpty(opts.MemoryLimit, "2Gi")),
-				corev1.ResourceCPU:    resource.MustParse(defaultIfEmpty(opts.CPULimit, "2")),
+				corev1.ResourceMemory: memoryQuantity(opts.MemoryBytes),
+				corev1.ResourceCPU:    cpuQuantity(opts.CPUMillicores),
 			},
 		},
 	}
@@ -675,11 +682,22 @@ func shortID(id string) string {
 func strPtr(s string) *string { return &s }
 func int64Ptr(i int64) *int64 { return &i }
 
-func defaultIfEmpty(val, fallback string) string {
-	if val != "" {
-		return val
+// cpuQuantity converts millicores to a K8s resource.Quantity.
+// Falls back to 2000m (2 cores) if zero.
+func cpuQuantity(millis int) resource.Quantity {
+	if millis == 0 {
+		millis = 2000
 	}
-	return fallback
+	return *resource.NewMilliQuantity(int64(millis), resource.DecimalSI)
+}
+
+// memoryQuantity converts bytes to a K8s resource.Quantity.
+// Falls back to 2Gi if zero.
+func memoryQuantity(bytes int64) resource.Quantity {
+	if bytes == 0 {
+		bytes = 2 * 1024 * 1024 * 1024
+	}
+	return *resource.NewQuantity(bytes, resource.BinarySI)
 }
 
 func (m *Manager) runtimeClassName() *string {

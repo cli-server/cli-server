@@ -3,18 +3,17 @@ import { X } from 'lucide-react'
 
 interface CreateSandboxModalProps {
   onClose: () => void
-  onCreate: (name: string, type: 'opencode' | 'openclaw', telegramBotToken?: string) => void
+  onCreate: (name: string, type: 'opencode' | 'openclaw') => void
   creating: boolean
 }
 
 export function CreateSandboxModal({ onClose, onCreate, creating }: CreateSandboxModalProps) {
   const [name, setName] = useState('New Sandbox')
   const [sandboxType, setSandboxType] = useState<'opencode' | 'openclaw'>('opencode')
-  const [telegramBotToken, setTelegramBotToken] = useState('')
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    onCreate(name, sandboxType, sandboxType === 'openclaw' ? telegramBotToken : undefined)
+    onCreate(name, sandboxType)
   }
 
   return (
@@ -71,21 +70,6 @@ export function CreateSandboxModal({ onClose, onCreate, creating }: CreateSandbo
               </button>
             </div>
           </div>
-
-          {sandboxType === 'openclaw' && (
-            <div>
-              <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-                Telegram Bot Token
-              </label>
-              <input
-                type="text"
-                value={telegramBotToken}
-                onChange={(e) => setTelegramBotToken(e.target.value)}
-                placeholder="Optional"
-                className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
-              />
-            </div>
-          )}
 
           <div className="flex gap-2 justify-end mt-2">
             <button

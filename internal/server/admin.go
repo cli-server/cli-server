@@ -40,7 +40,8 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 	type adminUserResponse struct {
 		ID        string  `json:"id"`
 		Username  string  `json:"username"`
-		Email     *string `json:"email"`
+		Email     string  `json:"email"`
+		Name      *string `json:"name"`
 		Role      string  `json:"role"`
 		CreatedAt string  `json:"createdAt"`
 	}
@@ -51,6 +52,7 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 			ID:        u.ID,
 			Username:  u.Username,
 			Email:     u.Email,
+			Name:      u.Name,
 			Role:      u.Role,
 			CreatedAt: u.CreatedAt.Format(time.RFC3339),
 		}
@@ -148,10 +150,10 @@ func (s *Server) handleAdminGetQuotaDefaults(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"maxWorkspacesPerUser":     rd.MaxWorkspacesPerUser,
 		"maxSandboxesPerWorkspace": rd.MaxSandboxesPerWorkspace,
-		"workspaceDriveSize":       rd.WorkspaceDriveSize,
-		"sandboxCpu":               rd.SandboxCPU,
-		"sandboxMemory":            rd.SandboxMemory,
-		"idleTimeout":              rd.IdleTimeout,
+		"maxWorkspaceDriveSize":    rd.MaxWorkspaceDriveSize,
+		"maxSandboxCpu":            rd.MaxSandboxCPU,
+		"maxSandboxMemory":         rd.MaxSandboxMemory,
+		"maxIdleTimeout":           rd.MaxIdleTimeout,
 		"wsMaxTotalCpu":            rd.WsMaxTotalCPU,
 		"wsMaxTotalMemory":         rd.WsMaxTotalMemory,
 		"wsMaxIdleTimeout":         rd.WsMaxIdleTimeout,
@@ -160,15 +162,15 @@ func (s *Server) handleAdminGetQuotaDefaults(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleAdminSetQuotaDefaults(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MaxWorkspacesPerUser     *int    `json:"maxWorkspacesPerUser"`
-		MaxSandboxesPerWorkspace *int    `json:"maxSandboxesPerWorkspace"`
-		WorkspaceDriveSize       *string `json:"workspaceDriveSize"`
-		SandboxCPU               *string `json:"sandboxCpu"`
-		SandboxMemory            *string `json:"sandboxMemory"`
-		IdleTimeout              *string `json:"idleTimeout"`
-		WsMaxTotalCPU            *string `json:"wsMaxTotalCpu"`
-		WsMaxTotalMemory         *string `json:"wsMaxTotalMemory"`
-		WsMaxIdleTimeout         *string `json:"wsMaxIdleTimeout"`
+		MaxWorkspacesPerUser     *int   `json:"maxWorkspacesPerUser"`
+		MaxSandboxesPerWorkspace *int   `json:"maxSandboxesPerWorkspace"`
+		MaxWorkspaceDriveSize    *int64 `json:"maxWorkspaceDriveSize"`
+		MaxSandboxCPU            *int   `json:"maxSandboxCpu"`
+		MaxSandboxMemory         *int64 `json:"maxSandboxMemory"`
+		MaxIdleTimeout           *int   `json:"maxIdleTimeout"`
+		WsMaxTotalCPU            *int   `json:"wsMaxTotalCpu"`
+		WsMaxTotalMemory         *int64 `json:"wsMaxTotalMemory"`
+		WsMaxIdleTimeout         *int   `json:"wsMaxIdleTimeout"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -197,50 +199,50 @@ func (s *Server) handleAdminSetQuotaDefaults(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
-	if req.WorkspaceDriveSize != nil {
-		if err := s.DB.SetSystemSetting(settingKeyWorkspaceDriveSize, *req.WorkspaceDriveSize); err != nil {
+	if req.MaxWorkspaceDriveSize != nil {
+		if err := s.DB.SetSystemSetting(settingKeyMaxWorkspaceDriveSize, strconv.FormatInt(*req.MaxWorkspaceDriveSize, 10)); err != nil {
 			log.Printf("admin: failed to set quota default: %v", err)
 			http.Error(w, "failed to save setting", http.StatusInternalServerError)
 			return
 		}
 	}
-	if req.SandboxCPU != nil {
-		if err := s.DB.SetSystemSetting(settingKeySandboxCPU, *req.SandboxCPU); err != nil {
+	if req.MaxSandboxCPU != nil {
+		if err := s.DB.SetSystemSetting(settingKeyMaxSandboxCPU, strconv.Itoa(*req.MaxSandboxCPU)); err != nil {
 			log.Printf("admin: failed to set quota default: %v", err)
 			http.Error(w, "failed to save setting", http.StatusInternalServerError)
 			return
 		}
 	}
-	if req.SandboxMemory != nil {
-		if err := s.DB.SetSystemSetting(settingKeySandboxMemory, *req.SandboxMemory); err != nil {
+	if req.MaxSandboxMemory != nil {
+		if err := s.DB.SetSystemSetting(settingKeyMaxSandboxMemory, strconv.FormatInt(*req.MaxSandboxMemory, 10)); err != nil {
 			log.Printf("admin: failed to set quota default: %v", err)
 			http.Error(w, "failed to save setting", http.StatusInternalServerError)
 			return
 		}
 	}
-	if req.IdleTimeout != nil {
-		if err := s.DB.SetSystemSetting(settingKeyIdleTimeout, *req.IdleTimeout); err != nil {
+	if req.MaxIdleTimeout != nil {
+		if err := s.DB.SetSystemSetting(settingKeyMaxIdleTimeout, strconv.Itoa(*req.MaxIdleTimeout)); err != nil {
 			log.Printf("admin: failed to set quota default: %v", err)
 			http.Error(w, "failed to save setting", http.StatusInternalServerError)
 			return
 		}
 	}
 	if req.WsMaxTotalCPU != nil {
-		if err := s.DB.SetSystemSetting(settingKeyWsMaxTotalCPU, *req.WsMaxTotalCPU); err != nil {
+		if err := s.DB.SetSystemSetting(settingKeyWsMaxTotalCPU, strconv.Itoa(*req.WsMaxTotalCPU)); err != nil {
 			log.Printf("admin: failed to set quota default: %v", err)
 			http.Error(w, "failed to save setting", http.StatusInternalServerError)
 			return
 		}
 	}
 	if req.WsMaxTotalMemory != nil {
-		if err := s.DB.SetSystemSetting(settingKeyWsMaxTotalMemory, *req.WsMaxTotalMemory); err != nil {
+		if err := s.DB.SetSystemSetting(settingKeyWsMaxTotalMemory, strconv.FormatInt(*req.WsMaxTotalMemory, 10)); err != nil {
 			log.Printf("admin: failed to set quota default: %v", err)
 			http.Error(w, "failed to save setting", http.StatusInternalServerError)
 			return
 		}
 	}
 	if req.WsMaxIdleTimeout != nil {
-		if err := s.DB.SetSystemSetting(settingKeyWsMaxIdleTimeout, *req.WsMaxIdleTimeout); err != nil {
+		if err := s.DB.SetSystemSetting(settingKeyWsMaxIdleTimeout, strconv.Itoa(*req.WsMaxIdleTimeout)); err != nil {
 			log.Printf("admin: failed to set quota default: %v", err)
 			http.Error(w, "failed to save setting", http.StatusInternalServerError)
 			return
@@ -252,10 +254,10 @@ func (s *Server) handleAdminSetQuotaDefaults(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"maxWorkspacesPerUser":     rd.MaxWorkspacesPerUser,
 		"maxSandboxesPerWorkspace": rd.MaxSandboxesPerWorkspace,
-		"workspaceDriveSize":       rd.WorkspaceDriveSize,
-		"sandboxCpu":               rd.SandboxCPU,
-		"sandboxMemory":            rd.SandboxMemory,
-		"idleTimeout":              rd.IdleTimeout,
+		"maxWorkspaceDriveSize":    rd.MaxWorkspaceDriveSize,
+		"maxSandboxCpu":            rd.MaxSandboxCPU,
+		"maxSandboxMemory":         rd.MaxSandboxMemory,
+		"maxIdleTimeout":           rd.MaxIdleTimeout,
 		"wsMaxTotalCpu":            rd.WsMaxTotalCPU,
 		"wsMaxTotalMemory":         rd.WsMaxTotalMemory,
 		"wsMaxIdleTimeout":         rd.WsMaxIdleTimeout,
@@ -308,37 +310,7 @@ func (s *Server) handleAdminSetUserQuota(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Fetch existing to merge partial updates — only maxWorkspaces is relevant now,
-	// but we preserve all existing columns for backward compatibility.
-	existing, err := s.DB.GetUserQuota(targetID)
-	if err != nil {
-		log.Printf("admin: failed to get user quota: %v", err)
-		http.Error(w, "failed to get user quota", http.StatusInternalServerError)
-		return
-	}
-
-	mergedWs := req.MaxWorkspaces
-	// Preserve existing workspace-scoped fields if present (backward compat).
-	var mergedSbx *int
-	var mergedDriveSize, mergedSandboxCPU, mergedSandboxMemory, mergedIdleTimeout *string
-	var mergedWsMaxCPU, mergedWsMaxMemory, mergedWsMaxIdle *string
-	if existing != nil {
-		if mergedWs == nil {
-			mergedWs = existing.MaxWorkspaces
-		}
-		mergedSbx = existing.MaxSandboxesPerWorkspace
-		mergedDriveSize = existing.WorkspaceDriveSize
-		mergedSandboxCPU = existing.SandboxCPU
-		mergedSandboxMemory = existing.SandboxMemory
-		mergedIdleTimeout = existing.IdleTimeout
-		mergedWsMaxCPU = existing.WsMaxTotalCPU
-		mergedWsMaxMemory = existing.WsMaxTotalMemory
-		mergedWsMaxIdle = existing.WsMaxIdleTimeout
-	}
-
-	if err := s.DB.SetUserQuota(targetID, mergedWs, mergedSbx,
-		mergedDriveSize, mergedSandboxCPU, mergedSandboxMemory, mergedIdleTimeout,
-		mergedWsMaxCPU, mergedWsMaxMemory, mergedWsMaxIdle); err != nil {
+	if err := s.DB.SetUserQuota(targetID, req.MaxWorkspaces); err != nil {
 		log.Printf("admin: failed to set user quota: %v", err)
 		http.Error(w, fmt.Sprintf("failed to set user quota: %v", err), http.StatusInternalServerError)
 		return
@@ -364,13 +336,13 @@ func (s *Server) handleAdminGetWorkspaceQuota(w http.ResponseWriter, r *http.Req
 
 	rd := s.getResourceDefaults()
 	defaults := map[string]interface{}{
-		"maxSandboxes": rd.MaxSandboxesPerWorkspace,
-		"sandboxCpu":   rd.SandboxCPU,
-		"sandboxMemory": rd.SandboxMemory,
-		"idleTimeout":  rd.IdleTimeout,
-		"maxTotalCpu":  rd.WsMaxTotalCPU,
-		"maxTotalMemory": rd.WsMaxTotalMemory,
-		"driveSize":    rd.WorkspaceDriveSize,
+		"maxSandboxes":     rd.MaxSandboxesPerWorkspace,
+		"maxSandboxCpu":    rd.MaxSandboxCPU,
+		"maxSandboxMemory": rd.MaxSandboxMemory,
+		"maxIdleTimeout":   rd.MaxIdleTimeout,
+		"maxTotalCpu":      rd.WsMaxTotalCPU,
+		"maxTotalMemory":   rd.WsMaxTotalMemory,
+		"maxDriveSize":     rd.MaxWorkspaceDriveSize,
 	}
 
 	wq, err := s.DB.GetWorkspaceQuota(workspaceID)
@@ -383,14 +355,14 @@ func (s *Server) handleAdminGetWorkspaceQuota(w http.ResponseWriter, r *http.Req
 	var overrides interface{}
 	if wq != nil {
 		overrides = map[string]interface{}{
-			"maxSandboxes":   wq.MaxSandboxes,
-			"sandboxCpu":     wq.SandboxCPU,
-			"sandboxMemory":  wq.SandboxMemory,
-			"idleTimeout":    wq.IdleTimeout,
-			"maxTotalCpu":    wq.MaxTotalCPU,
-			"maxTotalMemory": wq.MaxTotalMemory,
-			"driveSize":      wq.DriveSize,
-			"updatedAt":      wq.UpdatedAt.Format(time.RFC3339),
+			"maxSandboxes":     wq.MaxSandboxes,
+			"maxSandboxCpu":    wq.MaxSandboxCPU,
+			"maxSandboxMemory": wq.MaxSandboxMemory,
+			"maxIdleTimeout":   wq.MaxIdleTimeout,
+			"maxTotalCpu":      wq.MaxTotalCPU,
+			"maxTotalMemory":   wq.MaxTotalMemory,
+			"maxDriveSize":     wq.MaxDriveSize,
+			"updatedAt":        wq.UpdatedAt.Format(time.RFC3339),
 		}
 	}
 
@@ -405,13 +377,13 @@ func (s *Server) handleAdminSetWorkspaceQuota(w http.ResponseWriter, r *http.Req
 	workspaceID := chi.URLParam(r, "id")
 
 	var req struct {
-		MaxSandboxes   *int    `json:"maxSandboxes"`
-		SandboxCPU     *string `json:"sandboxCpu"`
-		SandboxMemory  *string `json:"sandboxMemory"`
-		IdleTimeout    *string `json:"idleTimeout"`
-		MaxTotalCPU    *string `json:"maxTotalCpu"`
-		MaxTotalMemory *string `json:"maxTotalMemory"`
-		DriveSize      *string `json:"driveSize"`
+		MaxSandboxes     *int   `json:"maxSandboxes"`
+		MaxSandboxCPU    *int   `json:"maxSandboxCpu"`
+		MaxSandboxMemory *int64 `json:"maxSandboxMemory"`
+		MaxIdleTimeout   *int   `json:"maxIdleTimeout"`
+		MaxTotalCPU      *int   `json:"maxTotalCpu"`
+		MaxTotalMemory   *int64 `json:"maxTotalMemory"`
+		MaxDriveSize     *int64 `json:"maxDriveSize"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -432,25 +404,25 @@ func (s *Server) handleAdminSetWorkspaceQuota(w http.ResponseWriter, r *http.Req
 	}
 
 	mergedSbx := req.MaxSandboxes
-	mergedCPU := req.SandboxCPU
-	mergedMemory := req.SandboxMemory
-	mergedIdle := req.IdleTimeout
+	mergedCPU := req.MaxSandboxCPU
+	mergedMemory := req.MaxSandboxMemory
+	mergedIdle := req.MaxIdleTimeout
 	mergedMaxCPU := req.MaxTotalCPU
 	mergedMaxMemory := req.MaxTotalMemory
-	mergedDrive := req.DriveSize
+	mergedDrive := req.MaxDriveSize
 
 	if existing != nil {
 		if mergedSbx == nil {
 			mergedSbx = existing.MaxSandboxes
 		}
 		if mergedCPU == nil {
-			mergedCPU = existing.SandboxCPU
+			mergedCPU = existing.MaxSandboxCPU
 		}
 		if mergedMemory == nil {
-			mergedMemory = existing.SandboxMemory
+			mergedMemory = existing.MaxSandboxMemory
 		}
 		if mergedIdle == nil {
-			mergedIdle = existing.IdleTimeout
+			mergedIdle = existing.MaxIdleTimeout
 		}
 		if mergedMaxCPU == nil {
 			mergedMaxCPU = existing.MaxTotalCPU
@@ -459,7 +431,7 @@ func (s *Server) handleAdminSetWorkspaceQuota(w http.ResponseWriter, r *http.Req
 			mergedMaxMemory = existing.MaxTotalMemory
 		}
 		if mergedDrive == nil {
-			mergedDrive = existing.DriveSize
+			mergedDrive = existing.MaxDriveSize
 		}
 	}
 

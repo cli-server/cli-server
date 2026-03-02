@@ -7,29 +7,21 @@ import (
 )
 
 type UserQuota struct {
-	UserID                   string
-	MaxWorkspaces            *int
-	MaxSandboxesPerWorkspace *int
-	WorkspaceDriveSize       *string
-	SandboxCPU               *string
-	SandboxMemory            *string
-	IdleTimeout              *string
-	WsMaxTotalCPU            *string
-	WsMaxTotalMemory         *string
-	WsMaxIdleTimeout         *string
-	UpdatedAt                time.Time
+	UserID        string
+	MaxWorkspaces *int
+	UpdatedAt     time.Time
 }
 
 type WorkspaceQuota struct {
-	WorkspaceID  string
-	MaxSandboxes *int
-	SandboxCPU   *string
-	SandboxMemory *string
-	IdleTimeout  *string
-	MaxTotalCPU  *string
-	MaxTotalMemory *string
-	DriveSize    *string
-	UpdatedAt    time.Time
+	WorkspaceID      string
+	MaxSandboxes     *int
+	MaxSandboxCPU    *int   // millicores
+	MaxSandboxMemory *int64 // bytes
+	MaxIdleTimeout   *int   // seconds
+	MaxTotalCPU      *int   // millicores
+	MaxTotalMemory   *int64 // bytes
+	MaxDriveSize     *int64 // bytes
+	UpdatedAt        time.Time
 }
 
 func (db *DB) GetSystemSetting(key string) (string, error) {
@@ -59,16 +51,10 @@ func (db *DB) SetSystemSetting(key, value string) error {
 func (db *DB) GetUserQuota(userID string) (*UserQuota, error) {
 	q := &UserQuota{}
 	err := db.QueryRow(
-		`SELECT user_id, max_workspaces, max_sandboxes_per_workspace,
-		        workspace_drive_size, sandbox_cpu, sandbox_memory, idle_timeout,
-		        ws_max_total_cpu, ws_max_total_memory, ws_max_idle_timeout,
-		        updated_at
+		`SELECT user_id, max_workspaces, updated_at
 		 FROM user_quotas WHERE user_id = $1`,
 		userID,
-	).Scan(&q.UserID, &q.MaxWorkspaces, &q.MaxSandboxesPerWorkspace,
-		&q.WorkspaceDriveSize, &q.SandboxCPU, &q.SandboxMemory, &q.IdleTimeout,
-		&q.WsMaxTotalCPU, &q.WsMaxTotalMemory, &q.WsMaxIdleTimeout,
-		&q.UpdatedAt)
+	).Scan(&q.UserID, &q.MaxWorkspaces, &q.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -78,28 +64,14 @@ func (db *DB) GetUserQuota(userID string) (*UserQuota, error) {
 	return q, nil
 }
 
-func (db *DB) SetUserQuota(userID string, maxWorkspaces *int, maxSandboxesPerWorkspace *int,
-	workspaceDriveSize, sandboxCPU, sandboxMemory, idleTimeout,
-	wsMaxTotalCPU, wsMaxTotalMemory, wsMaxIdleTimeout *string) error {
+func (db *DB) SetUserQuota(userID string, maxWorkspaces *int) error {
 	_, err := db.Exec(
-		`INSERT INTO user_quotas (user_id, max_workspaces, max_sandboxes_per_workspace,
-		   workspace_drive_size, sandbox_cpu, sandbox_memory, idle_timeout,
-		   ws_max_total_cpu, ws_max_total_memory, ws_max_idle_timeout, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+		`INSERT INTO user_quotas (user_id, max_workspaces, updated_at)
+		 VALUES ($1, $2, NOW())
 		 ON CONFLICT (user_id) DO UPDATE SET
 		   max_workspaces = EXCLUDED.max_workspaces,
-		   max_sandboxes_per_workspace = EXCLUDED.max_sandboxes_per_workspace,
-		   workspace_drive_size = EXCLUDED.workspace_drive_size,
-		   sandbox_cpu = EXCLUDED.sandbox_cpu,
-		   sandbox_memory = EXCLUDED.sandbox_memory,
-		   idle_timeout = EXCLUDED.idle_timeout,
-		   ws_max_total_cpu = EXCLUDED.ws_max_total_cpu,
-		   ws_max_total_memory = EXCLUDED.ws_max_total_memory,
-		   ws_max_idle_timeout = EXCLUDED.ws_max_idle_timeout,
 		   updated_at = NOW()`,
-		userID, maxWorkspaces, maxSandboxesPerWorkspace,
-		workspaceDriveSize, sandboxCPU, sandboxMemory, idleTimeout,
-		wsMaxTotalCPU, wsMaxTotalMemory, wsMaxIdleTimeout,
+		userID, maxWorkspaces,
 	)
 	if err != nil {
 		return fmt.Errorf("set user quota: %w", err)
@@ -156,12 +128,12 @@ func (db *DB) SumWorkspaceSandboxResources(workspaceID string) (cpuMillis int64,
 func (db *DB) GetWorkspaceQuota(workspaceID string) (*WorkspaceQuota, error) {
 	q := &WorkspaceQuota{}
 	err := db.QueryRow(
-		`SELECT workspace_id, max_sandboxes, sandbox_cpu, sandbox_memory, idle_timeout,
-		        max_total_cpu, max_total_memory, drive_size, updated_at
+		`SELECT workspace_id, max_sandboxes, max_sandbox_cpu, max_sandbox_memory, max_idle_timeout,
+		        max_total_cpu, max_total_memory, max_drive_size, updated_at
 		 FROM workspace_quotas WHERE workspace_id = $1`,
 		workspaceID,
-	).Scan(&q.WorkspaceID, &q.MaxSandboxes, &q.SandboxCPU, &q.SandboxMemory, &q.IdleTimeout,
-		&q.MaxTotalCPU, &q.MaxTotalMemory, &q.DriveSize, &q.UpdatedAt)
+	).Scan(&q.WorkspaceID, &q.MaxSandboxes, &q.MaxSandboxCPU, &q.MaxSandboxMemory, &q.MaxIdleTimeout,
+		&q.MaxTotalCPU, &q.MaxTotalMemory, &q.MaxDriveSize, &q.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -172,22 +144,22 @@ func (db *DB) GetWorkspaceQuota(workspaceID string) (*WorkspaceQuota, error) {
 }
 
 func (db *DB) SetWorkspaceQuota(workspaceID string, maxSandboxes *int,
-	sandboxCPU, sandboxMemory, idleTimeout, maxTotalCPU, maxTotalMemory, driveSize *string) error {
+	maxSandboxCPU *int, maxSandboxMemory *int64, maxIdleTimeout *int, maxTotalCPU *int, maxTotalMemory *int64, maxDriveSize *int64) error {
 	_, err := db.Exec(
-		`INSERT INTO workspace_quotas (workspace_id, max_sandboxes, sandbox_cpu, sandbox_memory,
-		   idle_timeout, max_total_cpu, max_total_memory, drive_size, updated_at)
+		`INSERT INTO workspace_quotas (workspace_id, max_sandboxes, max_sandbox_cpu, max_sandbox_memory,
+		   max_idle_timeout, max_total_cpu, max_total_memory, max_drive_size, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
 		 ON CONFLICT (workspace_id) DO UPDATE SET
 		   max_sandboxes = EXCLUDED.max_sandboxes,
-		   sandbox_cpu = EXCLUDED.sandbox_cpu,
-		   sandbox_memory = EXCLUDED.sandbox_memory,
-		   idle_timeout = EXCLUDED.idle_timeout,
+		   max_sandbox_cpu = EXCLUDED.max_sandbox_cpu,
+		   max_sandbox_memory = EXCLUDED.max_sandbox_memory,
+		   max_idle_timeout = EXCLUDED.max_idle_timeout,
 		   max_total_cpu = EXCLUDED.max_total_cpu,
 		   max_total_memory = EXCLUDED.max_total_memory,
-		   drive_size = EXCLUDED.drive_size,
+		   max_drive_size = EXCLUDED.max_drive_size,
 		   updated_at = NOW()`,
-		workspaceID, maxSandboxes, sandboxCPU, sandboxMemory, idleTimeout,
-		maxTotalCPU, maxTotalMemory, driveSize,
+		workspaceID, maxSandboxes, maxSandboxCPU, maxSandboxMemory, maxIdleTimeout,
+		maxTotalCPU, maxTotalMemory, maxDriveSize,
 	)
 	if err != nil {
 		return fmt.Errorf("set workspace quota: %w", err)

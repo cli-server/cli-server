@@ -145,6 +145,7 @@ function UsersTable({
           <thead>
             <tr className="border-b border-[var(--border)] bg-[var(--muted)]">
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Username</th>
+              <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Name</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Email</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Role</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Quota</th>
@@ -155,6 +156,7 @@ function UsersTable({
             {users.map((u) => (
               <tr key={u.id} className="border-b border-[var(--border)] last:border-b-0">
                 <td className="px-4 py-3 text-[var(--foreground)]">{u.username}</td>
+                <td className="px-4 py-3 text-[var(--muted-foreground)]">{u.name || '—'}</td>
                 <td className="px-4 py-3 text-[var(--muted-foreground)]">{u.email || '—'}</td>
                 <td className="px-4 py-3">
                   <select
@@ -308,13 +310,13 @@ function SettingsTab() {
   const [defaults, setDefaults] = useState<QuotaDefaults | null>(null)
   const [maxWs, setMaxWs] = useState('')
   const [maxSbx, setMaxSbx] = useState('')
-  const [sandboxCpu, setSandboxCpu] = useState('')
-  const [sandboxMemory, setSandboxMemory] = useState('')
-  const [idleTimeout, setIdleTimeout] = useState('')
+  const [maxSandboxCpu, setMaxSandboxCpu] = useState('')
+  const [maxSandboxMemory, setMaxSandboxMemory] = useState('')
+  const [maxIdleTimeout, setMaxIdleTimeout] = useState('')
   const [wsMaxTotalCpu, setWsMaxTotalCpu] = useState('')
   const [wsMaxTotalMemory, setWsMaxTotalMemory] = useState('')
   const [wsMaxIdleTimeout, setWsMaxIdleTimeout] = useState('')
-  const [workspaceDriveSize, setWorkspaceDriveSize] = useState('')
+  const [maxWorkspaceDriveSize, setMaxWorkspaceDriveSize] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -323,13 +325,13 @@ function SettingsTab() {
       setDefaults(d)
       setMaxWs(String(d.maxWorkspacesPerUser))
       setMaxSbx(String(d.maxSandboxesPerWorkspace))
-      setSandboxCpu(d.sandboxCpu)
-      setSandboxMemory(d.sandboxMemory)
-      setIdleTimeout(d.idleTimeout)
-      setWsMaxTotalCpu(d.wsMaxTotalCpu)
-      setWsMaxTotalMemory(d.wsMaxTotalMemory)
-      setWsMaxIdleTimeout(d.wsMaxIdleTimeout)
-      setWorkspaceDriveSize(d.workspaceDriveSize)
+      setMaxSandboxCpu(String(d.maxSandboxCpu))
+      setMaxSandboxMemory(String(d.maxSandboxMemory))
+      setMaxIdleTimeout(String(d.maxIdleTimeout))
+      setWsMaxTotalCpu(String(d.wsMaxTotalCpu))
+      setWsMaxTotalMemory(String(d.wsMaxTotalMemory))
+      setWsMaxIdleTimeout(String(d.wsMaxIdleTimeout))
+      setMaxWorkspaceDriveSize(String(d.maxWorkspaceDriveSize))
     }).catch(() => {})
   }, [])
 
@@ -339,16 +341,23 @@ function SettingsTab() {
     if (isNaN(ws) || ws < 0 || isNaN(sbx) || sbx < 0) return
     setSaving(true)
     try {
+      const cpu = parseInt(maxSandboxCpu, 10)
+      const mem = parseInt(maxSandboxMemory, 10)
+      const idle = parseInt(maxIdleTimeout, 10)
+      const totalCpu = parseInt(wsMaxTotalCpu, 10)
+      const totalMem = parseInt(wsMaxTotalMemory, 10)
+      const totalIdle = parseInt(wsMaxIdleTimeout, 10)
+      const driveSize = parseInt(maxWorkspaceDriveSize, 10)
       const updated = await adminSetQuotaDefaults({
         maxWorkspacesPerUser: ws,
         maxSandboxesPerWorkspace: sbx,
-        sandboxCpu: sandboxCpu,
-        sandboxMemory: sandboxMemory,
-        idleTimeout: idleTimeout,
-        wsMaxTotalCpu: wsMaxTotalCpu,
-        wsMaxTotalMemory: wsMaxTotalMemory,
-        wsMaxIdleTimeout: wsMaxIdleTimeout,
-        workspaceDriveSize: workspaceDriveSize,
+        ...(!isNaN(cpu) ? { maxSandboxCpu: cpu } : {}),
+        ...(!isNaN(mem) ? { maxSandboxMemory: mem } : {}),
+        ...(!isNaN(idle) ? { maxIdleTimeout: idle } : {}),
+        ...(!isNaN(totalCpu) ? { wsMaxTotalCpu: totalCpu } : {}),
+        ...(!isNaN(totalMem) ? { wsMaxTotalMemory: totalMem } : {}),
+        ...(!isNaN(totalIdle) ? { wsMaxIdleTimeout: totalIdle } : {}),
+        ...(!isNaN(driveSize) ? { maxWorkspaceDriveSize: driveSize } : {}),
       })
       setDefaults(updated)
       setSaved(true)
@@ -410,42 +419,45 @@ function SettingsTab() {
       <div className="flex flex-col gap-4 mb-6">
         <div>
           <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-            CPU limit
+            CPU limit (millicores)
           </label>
           <input
-            type="text"
-            value={sandboxCpu}
-            onChange={(e) => setSandboxCpu(e.target.value)}
-            placeholder="2"
+            type="number"
+            min="0"
+            value={maxSandboxCpu}
+            onChange={(e) => setMaxSandboxCpu(e.target.value)}
+            placeholder="2000"
             className={inputClass}
           />
-          <p className="text-xs text-[var(--muted-foreground)] mt-1">K8s CPU string, e.g. "2", "500m"</p>
+          <p className="text-xs text-[var(--muted-foreground)] mt-1">Millicores, e.g. 2000 = 2 cores</p>
         </div>
         <div>
           <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-            Memory limit
+            Memory limit (bytes)
           </label>
           <input
-            type="text"
-            value={sandboxMemory}
-            onChange={(e) => setSandboxMemory(e.target.value)}
-            placeholder="2Gi"
+            type="number"
+            min="0"
+            value={maxSandboxMemory}
+            onChange={(e) => setMaxSandboxMemory(e.target.value)}
+            placeholder="2147483648"
             className={inputClass}
           />
-          <p className="text-xs text-[var(--muted-foreground)] mt-1">K8s memory string, e.g. "2Gi", "512Mi"</p>
+          <p className="text-xs text-[var(--muted-foreground)] mt-1">Bytes, e.g. 2147483648 = 2 GiB</p>
         </div>
         <div>
           <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-            Idle timeout
+            Idle timeout (seconds)
           </label>
           <input
-            type="text"
-            value={idleTimeout}
-            onChange={(e) => setIdleTimeout(e.target.value)}
-            placeholder="30m"
+            type="number"
+            min="0"
+            value={maxIdleTimeout}
+            onChange={(e) => setMaxIdleTimeout(e.target.value)}
+            placeholder="1800"
             className={inputClass}
           />
-          <p className="text-xs text-[var(--muted-foreground)] mt-1">Go duration, e.g. "30m", "1h". Use "0" to disable.</p>
+          <p className="text-xs text-[var(--muted-foreground)] mt-1">Seconds, e.g. 1800 = 30 min. Use 0 to disable.</p>
         </div>
       </div>
 
@@ -456,42 +468,45 @@ function SettingsTab() {
       <div className="flex flex-col gap-4 mb-6">
         <div>
           <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-            Max total CPU budget
+            Max total CPU budget (millicores)
           </label>
           <input
-            type="text"
+            type="number"
+            min="0"
             value={wsMaxTotalCpu}
             onChange={(e) => setWsMaxTotalCpu(e.target.value)}
             placeholder="0"
             className={inputClass}
           />
-          <p className="text-xs text-[var(--muted-foreground)] mt-1">Total CPU across all sandboxes. 0 = unlimited.</p>
+          <p className="text-xs text-[var(--muted-foreground)] mt-1">Total millicores across all sandboxes. 0 = unlimited.</p>
         </div>
         <div>
           <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-            Max total memory budget
+            Max total memory budget (bytes)
           </label>
           <input
-            type="text"
+            type="number"
+            min="0"
             value={wsMaxTotalMemory}
             onChange={(e) => setWsMaxTotalMemory(e.target.value)}
             placeholder="0"
             className={inputClass}
           />
-          <p className="text-xs text-[var(--muted-foreground)] mt-1">Total memory across all sandboxes. 0 = unlimited.</p>
+          <p className="text-xs text-[var(--muted-foreground)] mt-1">Total bytes across all sandboxes. 0 = unlimited.</p>
         </div>
         <div>
           <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-            Max idle timeout
+            Max idle timeout (seconds)
           </label>
           <input
-            type="text"
+            type="number"
+            min="0"
             value={wsMaxIdleTimeout}
             onChange={(e) => setWsMaxIdleTimeout(e.target.value)}
             placeholder="0"
             className={inputClass}
           />
-          <p className="text-xs text-[var(--muted-foreground)] mt-1">Max idle timeout per workspace. 0 = unlimited.</p>
+          <p className="text-xs text-[var(--muted-foreground)] mt-1">Max idle timeout per workspace in seconds. 0 = unlimited.</p>
         </div>
       </div>
 
@@ -502,16 +517,17 @@ function SettingsTab() {
       <div className="flex flex-col gap-4 mb-6">
         <div>
           <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-            Workspace drive size
+            Workspace drive size (bytes)
           </label>
           <input
-            type="text"
-            value={workspaceDriveSize}
-            onChange={(e) => setWorkspaceDriveSize(e.target.value)}
-            placeholder="10Gi"
+            type="number"
+            min="0"
+            value={maxWorkspaceDriveSize}
+            onChange={(e) => setMaxWorkspaceDriveSize(e.target.value)}
+            placeholder="10737418240"
             className={inputClass}
           />
-          <p className="text-xs text-[var(--muted-foreground)] mt-1">PVC size for new workspaces. Applied on server restart.</p>
+          <p className="text-xs text-[var(--muted-foreground)] mt-1">Bytes, e.g. 10737418240 = 10 GiB. Applied on server restart.</p>
         </div>
       </div>
 
@@ -635,24 +651,24 @@ function WorkspaceQuotaModal({ workspace, onClose }: { workspace: AdminWorkspace
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState<WorkspaceQuotaResponse | null>(null)
   const [maxSbx, setMaxSbx] = useState('')
-  const [sandboxCpu, setSandboxCpu] = useState('')
-  const [sandboxMemory, setSandboxMemory] = useState('')
-  const [idleTimeout, setIdleTimeout] = useState('')
+  const [maxSandboxCpu, setMaxSandboxCpu] = useState('')
+  const [maxSandboxMemory, setMaxSandboxMemory] = useState('')
+  const [maxIdleTimeout, setMaxIdleTimeout] = useState('')
   const [maxTotalCpu, setMaxTotalCpu] = useState('')
   const [maxTotalMemory, setMaxTotalMemory] = useState('')
-  const [driveSize, setDriveSize] = useState('')
+  const [maxDriveSize, setMaxDriveSize] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     adminGetWorkspaceQuota(workspace.id).then((d) => {
       setData(d)
       setMaxSbx(d.overrides?.maxSandboxes != null ? String(d.overrides.maxSandboxes) : '')
-      setSandboxCpu(d.overrides?.sandboxCpu ?? '')
-      setSandboxMemory(d.overrides?.sandboxMemory ?? '')
-      setIdleTimeout(d.overrides?.idleTimeout ?? '')
-      setMaxTotalCpu(d.overrides?.maxTotalCpu ?? '')
-      setMaxTotalMemory(d.overrides?.maxTotalMemory ?? '')
-      setDriveSize(d.overrides?.driveSize ?? '')
+      setMaxSandboxCpu(d.overrides?.maxSandboxCpu != null ? String(d.overrides.maxSandboxCpu) : '')
+      setMaxSandboxMemory(d.overrides?.maxSandboxMemory != null ? String(d.overrides.maxSandboxMemory) : '')
+      setMaxIdleTimeout(d.overrides?.maxIdleTimeout != null ? String(d.overrides.maxIdleTimeout) : '')
+      setMaxTotalCpu(d.overrides?.maxTotalCpu != null ? String(d.overrides.maxTotalCpu) : '')
+      setMaxTotalMemory(d.overrides?.maxTotalMemory != null ? String(d.overrides.maxTotalMemory) : '')
+      setMaxDriveSize(d.overrides?.maxDriveSize != null ? String(d.overrides.maxDriveSize) : '')
     }).catch(() => {}).finally(() => setLoading(false))
   }, [workspace.id])
 
@@ -661,14 +677,20 @@ function WorkspaceQuotaModal({ workspace, onClose }: { workspace: AdminWorkspace
     if (sbx !== undefined && (isNaN(sbx) || sbx < 0)) return
     setSaving(true)
     try {
+      const cpu = maxSandboxCpu !== '' ? parseInt(maxSandboxCpu, 10) : undefined
+      const mem = maxSandboxMemory !== '' ? parseInt(maxSandboxMemory, 10) : undefined
+      const idle = maxIdleTimeout !== '' ? parseInt(maxIdleTimeout, 10) : undefined
+      const totalCpu = maxTotalCpu !== '' ? parseInt(maxTotalCpu, 10) : undefined
+      const totalMem = maxTotalMemory !== '' ? parseInt(maxTotalMemory, 10) : undefined
+      const drive = maxDriveSize !== '' ? parseInt(maxDriveSize, 10) : undefined
       await adminSetWorkspaceQuota(workspace.id, {
         ...(sbx !== undefined ? { maxSandboxes: sbx } : {}),
-        ...(sandboxCpu ? { sandboxCpu } : {}),
-        ...(sandboxMemory ? { sandboxMemory } : {}),
-        ...(idleTimeout ? { idleTimeout } : {}),
-        ...(maxTotalCpu ? { maxTotalCpu } : {}),
-        ...(maxTotalMemory ? { maxTotalMemory } : {}),
-        ...(driveSize ? { driveSize } : {}),
+        ...(cpu !== undefined && !isNaN(cpu) ? { maxSandboxCpu: cpu } : {}),
+        ...(mem !== undefined && !isNaN(mem) ? { maxSandboxMemory: mem } : {}),
+        ...(idle !== undefined && !isNaN(idle) ? { maxIdleTimeout: idle } : {}),
+        ...(totalCpu !== undefined && !isNaN(totalCpu) ? { maxTotalCpu: totalCpu } : {}),
+        ...(totalMem !== undefined && !isNaN(totalMem) ? { maxTotalMemory: totalMem } : {}),
+        ...(drive !== undefined && !isNaN(drive) ? { maxDriveSize: drive } : {}),
       })
       onClose()
     } catch {
@@ -723,81 +745,87 @@ function WorkspaceQuotaModal({ workspace, onClose }: { workspace: AdminWorkspace
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-                Sandbox CPU
+                Sandbox CPU (millicores)
               </label>
               <input
-                type="text"
-                value={sandboxCpu}
-                onChange={(e) => setSandboxCpu(e.target.value)}
-                placeholder={data.defaults.sandboxCpu}
+                type="number"
+                min="0"
+                value={maxSandboxCpu}
+                onChange={(e) => setMaxSandboxCpu(e.target.value)}
+                placeholder={String(data.defaults.maxSandboxCpu)}
                 className={inputClass}
               />
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">K8s CPU string, e.g. "2", "500m"</p>
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">Millicores, e.g. 2000 = 2 cores</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-                Sandbox memory
+                Sandbox memory (bytes)
               </label>
               <input
-                type="text"
-                value={sandboxMemory}
-                onChange={(e) => setSandboxMemory(e.target.value)}
-                placeholder={data.defaults.sandboxMemory}
+                type="number"
+                min="0"
+                value={maxSandboxMemory}
+                onChange={(e) => setMaxSandboxMemory(e.target.value)}
+                placeholder={String(data.defaults.maxSandboxMemory)}
                 className={inputClass}
               />
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">K8s memory string, e.g. "2Gi", "512Mi"</p>
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">Bytes, e.g. 2147483648 = 2 GiB</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-                Idle timeout
+                Idle timeout (seconds)
               </label>
               <input
-                type="text"
-                value={idleTimeout}
-                onChange={(e) => setIdleTimeout(e.target.value)}
-                placeholder={data.defaults.idleTimeout}
+                type="number"
+                min="0"
+                value={maxIdleTimeout}
+                onChange={(e) => setMaxIdleTimeout(e.target.value)}
+                placeholder={String(data.defaults.maxIdleTimeout)}
                 className={inputClass}
               />
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">Go duration, e.g. "30m", "1h". Use "0" to disable.</p>
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">Seconds, e.g. 1800 = 30 min. Use 0 to disable.</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-                Max total CPU budget
+                Max total CPU budget (millicores)
               </label>
               <input
-                type="text"
+                type="number"
+                min="0"
                 value={maxTotalCpu}
                 onChange={(e) => setMaxTotalCpu(e.target.value)}
-                placeholder={data.defaults.maxTotalCpu}
+                placeholder={String(data.defaults.maxTotalCpu)}
                 className={inputClass}
               />
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">Total CPU across all sandboxes. 0 = unlimited.</p>
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">Total millicores across all sandboxes. 0 = unlimited.</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-                Max total memory budget
+                Max total memory budget (bytes)
               </label>
               <input
-                type="text"
+                type="number"
+                min="0"
                 value={maxTotalMemory}
                 onChange={(e) => setMaxTotalMemory(e.target.value)}
-                placeholder={data.defaults.maxTotalMemory}
+                placeholder={String(data.defaults.maxTotalMemory)}
                 className={inputClass}
               />
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">Total memory across all sandboxes. 0 = unlimited.</p>
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">Total bytes across all sandboxes. 0 = unlimited.</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-                Workspace drive size
+                Workspace drive size (bytes)
               </label>
               <input
-                type="text"
-                value={driveSize}
-                onChange={(e) => setDriveSize(e.target.value)}
-                placeholder={data.defaults.driveSize}
+                type="number"
+                min="0"
+                value={maxDriveSize}
+                onChange={(e) => setMaxDriveSize(e.target.value)}
+                placeholder={String(data.defaults.maxDriveSize)}
                 className={inputClass}
               />
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">PVC size for workspace. Applied on creation.</p>
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">Bytes, e.g. 10737418240 = 10 GiB. Applied on creation.</p>
             </div>
             <div className="flex justify-between mt-2">
               <button

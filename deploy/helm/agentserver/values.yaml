@@ -23,13 +23,15 @@ platform:
   defaultQuotas:
     userMaxWorkspaces: 10
     workspaceMaxSandboxes: 20
-    sandboxCpu: "2"
-    sandboxMemory: "2Gi"
-    workspaceDriveSize: "10Gi"
-    workspaceMaxTotalCpu: "0"
-    workspaceMaxTotalMemory: "0"
-    workspaceMaxIdleTimeout: "0"
+    maxSandboxCpu: 2000            # millicores (2000 = 2 cores)
+    maxSandboxMemory: 2147483648   # bytes (2Gi)
+    maxWorkspaceDriveSize: 10737418240  # bytes (10Gi)
+    workspaceMaxTotalCpu: 0        # millicores, 0 = unlimited
+    workspaceMaxTotalMemory: 0     # bytes, 0 = unlimited
+    workspaceMaxIdleTimeout: 0     # seconds, 0 = unlimited
   auth:
+    password:
+      enabled: true
     oidc:
       github:
         enabled: false

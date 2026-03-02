@@ -52,11 +52,11 @@ function StatusDot({ status }: { status: string }) {
   }
 }
 
-function UserAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string | null }) {
-  if (avatarUrl) {
+function UserAvatar({ name, picture }: { name: string; picture?: string | null }) {
+  if (picture) {
     return (
       <img
-        src={avatarUrl}
+        src={picture}
         alt={name}
         className="h-8 w-8 shrink-0 rounded-full"
       />
@@ -156,7 +156,6 @@ export function SandboxList({
   const handleCreateSandbox = async (
     name: string,
     type: 'opencode' | 'openclaw',
-    telegramBotToken?: string
   ) => {
     if (creating || !selectedWorkspaceId) return
     setCreating(true)
@@ -164,7 +163,7 @@ export function SandboxList({
     setQuotaError(null)
     onSelectSandbox('')
     try {
-      const sbx = await createSandbox(selectedWorkspaceId, name, type, telegramBotToken)
+      const sbx = await createSandbox(selectedWorkspaceId, name, type)
       setSandboxes((prev) => [...prev, sbx])
       onSelectSandbox(sbx.id)
     } catch (err: unknown) {
@@ -290,7 +289,7 @@ export function SandboxList({
   }
 
   const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
-  const displayName = user?.username || 'User'
+  const displayName = user?.name || user?.username || 'User'
 
   return (
     <div className="flex h-full w-60 flex-col border-r border-[var(--border)] bg-[var(--muted)]">
@@ -512,7 +511,7 @@ export function SandboxList({
           onClick={() => setMenuOpen((v) => !v)}
           className="flex w-full items-center gap-2 px-3 py-3 text-left hover:bg-[var(--secondary)]"
         >
-          <UserAvatar name={displayName} avatarUrl={user?.avatarUrl} />
+          <UserAvatar name={displayName} picture={user?.picture} />
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-medium text-[var(--foreground)]">{displayName}</div>
             {user?.email && (

@@ -7,43 +7,72 @@ import (
 )
 
 type User struct {
-	ID           string
-	Username     string
-	PasswordHash *string
-	Email        *string
-	Role         string
-	AvatarURL    *string
-	CreatedAt    time.Time
+	ID        string
+	Username  string
+	Email     string
+	Name      *string
+	Picture   *string
+	Role      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
-func (db *DB) CreateUser(id, username, passwordHash string) error {
-	_, err := db.Exec(
-		"INSERT INTO users (id, username, password_hash) VALUES ($1, $2, $3)",
-		id, username, passwordHash,
+func (db *DB) CreateUser(id, username, email, passwordHash string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("create user: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
+		"INSERT INTO users (id, username, email) VALUES ($1, $2, $3)",
+		id, username, email,
 	)
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
 	}
-	return nil
+	_, err = tx.Exec(
+		"INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)",
+		id, passwordHash,
+	)
+	if err != nil {
+		return fmt.Errorf("create user credentials: %w", err)
+	}
+	return tx.Commit()
 }
 
-func (db *DB) CreateUserWithEmail(id, username string, passwordHash *string, email *string) error {
-	_, err := db.Exec(
-		"INSERT INTO users (id, username, password_hash, email) VALUES ($1, $2, $3, $4)",
-		id, username, passwordHash, email,
+func (db *DB) CreateUserWithEmail(id, username string, passwordHash *string, email string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("create user: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
+		"INSERT INTO users (id, username, email) VALUES ($1, $2, $3)",
+		id, username, email,
 	)
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
 	}
-	return nil
+	if passwordHash != nil {
+		_, err = tx.Exec(
+			"INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)",
+			id, *passwordHash,
+		)
+		if err != nil {
+			return fmt.Errorf("create user credentials: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 func (db *DB) GetUserByUsername(username string) (*User, error) {
 	u := &User{}
 	err := db.QueryRow(
-		"SELECT id, username, password_hash, email, role, avatar_url, created_at FROM users WHERE username = $1",
+		"SELECT id, username, email, name, picture, role, created_at, updated_at FROM users WHERE username = $1",
 		username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Email, &u.Role, &u.AvatarURL, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.Email, &u.Name, &u.Picture, &u.Role, &u.CreatedAt, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -56,9 +85,9 @@ func (db *DB) GetUserByUsername(username string) (*User, error) {
 func (db *DB) GetUserByID(id string) (*User, error) {
 	u := &User{}
 	err := db.QueryRow(
-		"SELECT id, username, password_hash, email, role, avatar_url, created_at FROM users WHERE id = $1",
+		"SELECT id, username, email, name, picture, role, created_at, updated_at FROM users WHERE id = $1",
 		id,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Email, &u.Role, &u.AvatarURL, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.Email, &u.Name, &u.Picture, &u.Role, &u.CreatedAt, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -71,9 +100,9 @@ func (db *DB) GetUserByID(id string) (*User, error) {
 func (db *DB) GetUserByEmail(email string) (*User, error) {
 	u := &User{}
 	err := db.QueryRow(
-		"SELECT id, username, password_hash, email, role, avatar_url, created_at FROM users WHERE email = $1",
+		"SELECT id, username, email, name, picture, role, created_at, updated_at FROM users WHERE email = $1",
 		email,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Email, &u.Role, &u.AvatarURL, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.Email, &u.Name, &u.Picture, &u.Role, &u.CreatedAt, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -84,7 +113,7 @@ func (db *DB) GetUserByEmail(email string) (*User, error) {
 }
 
 func (db *DB) UpdateUserEmail(userID, email string) error {
-	_, err := db.Exec("UPDATE users SET email = $1 WHERE id = $2", email, userID)
+	_, err := db.Exec("UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2", email, userID)
 	if err != nil {
 		return fmt.Errorf("update user email: %w", err)
 	}
@@ -93,7 +122,7 @@ func (db *DB) UpdateUserEmail(userID, email string) error {
 
 func (db *DB) ListAllUsers() ([]*User, error) {
 	rows, err := db.Query(
-		"SELECT id, username, password_hash, email, role, avatar_url, created_at FROM users ORDER BY created_at ASC",
+		"SELECT id, username, email, name, picture, role, created_at, updated_at FROM users ORDER BY created_at ASC",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list all users: %w", err)
@@ -103,7 +132,7 @@ func (db *DB) ListAllUsers() ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		u := &User{}
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Email, &u.Role, &u.AvatarURL, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Name, &u.Picture, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		users = append(users, u)
@@ -121,17 +150,25 @@ func (db *DB) CountUsers() (int, error) {
 }
 
 func (db *DB) UpdateUserRole(userID, role string) error {
-	_, err := db.Exec("UPDATE users SET role = $1 WHERE id = $2", role, userID)
+	_, err := db.Exec("UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2", role, userID)
 	if err != nil {
 		return fmt.Errorf("update user role: %w", err)
 	}
 	return nil
 }
 
-func (db *DB) UpdateUserAvatarURL(userID, avatarURL string) error {
-	_, err := db.Exec("UPDATE users SET avatar_url = $1 WHERE id = $2", avatarURL, userID)
+func (db *DB) UpdateUserPicture(userID, picture string) error {
+	_, err := db.Exec("UPDATE users SET picture = $1, updated_at = NOW() WHERE id = $2", picture, userID)
 	if err != nil {
-		return fmt.Errorf("update user avatar url: %w", err)
+		return fmt.Errorf("update user picture: %w", err)
+	}
+	return nil
+}
+
+func (db *DB) UpdateUserName(userID, name string) error {
+	_, err := db.Exec("UPDATE users SET name = $1, updated_at = NOW() WHERE id = $2", name, userID)
+	if err != nil {
+		return fmt.Errorf("update user name: %w", err)
 	}
 	return nil
 }

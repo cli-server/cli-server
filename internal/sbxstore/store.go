@@ -8,26 +8,25 @@ import (
 
 // Sandbox represents a sandbox with its current state.
 type Sandbox struct {
-	ID               string     `json:"id"`
-	ShortID          string     `json:"shortId,omitempty"`
-	WorkspaceID      string     `json:"workspaceId"`
-	Name             string     `json:"name"`
-	Type             string     `json:"type"`
-	Status           string     `json:"status"`
-	SandboxName      string     `json:"sandboxName,omitempty"`
-	PodIP            string     `json:"podIp,omitempty"`
-	OpencodePassword string     `json:"-"`
-	ProxyToken       string     `json:"-"`
-	TelegramBotToken string     `json:"-"`
-	GatewayToken     string     `json:"-"`
-	CreatedAt        time.Time  `json:"createdAt"`
-	LastActivityAt   *time.Time `json:"lastActivityAt,omitempty"`
-	PausedAt         *time.Time `json:"pausedAt,omitempty"`
-	IsLocal          bool       `json:"isLocal"`
-	TunnelToken      string     `json:"-"`
-	LastHeartbeatAt  *time.Time `json:"lastHeartbeatAt,omitempty"`
-	CPUMillicores    int        `json:"cpuMillicores,omitempty"`
-	MemoryBytes      int64      `json:"memoryBytes,omitempty"`
+	ID              string     `json:"id"`
+	ShortID         string     `json:"shortId,omitempty"`
+	WorkspaceID     string     `json:"workspaceId"`
+	Name            string     `json:"name"`
+	Type            string     `json:"type"`
+	Status          string     `json:"status"`
+	SandboxName     string     `json:"sandboxName,omitempty"`
+	PodIP           string     `json:"podIp,omitempty"`
+	ProxyToken      string     `json:"-"`
+	OpencodeToken   string     `json:"-"`
+	OpenclawToken   string     `json:"-"`
+	TunnelToken     string     `json:"-"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	LastActivityAt  *time.Time `json:"lastActivityAt,omitempty"`
+	PausedAt        *time.Time `json:"pausedAt,omitempty"`
+	IsLocal         bool       `json:"isLocal"`
+	LastHeartbeatAt *time.Time `json:"lastHeartbeatAt,omitempty"`
+	CPUMillicores   int        `json:"cpuMillicores,omitempty"`
+	MemoryBytes     int64      `json:"memoryBytes,omitempty"`
 }
 
 // Store manages sandboxes via PostgreSQL.
@@ -40,8 +39,8 @@ func NewStore(database *db.DB) *Store {
 }
 
 // Create inserts a new sandbox into the DB with 'creating' status.
-func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken, shortID string, cpuMillicores int, memoryBytes int64) (*Sandbox, error) {
-	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodePassword, proxyToken, telegramBotToken, gatewayToken, shortID, cpuMillicores, memoryBytes); err != nil {
+func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID string, cpuMillicores int, memoryBytes int64) (*Sandbox, error) {
+	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID, cpuMillicores, memoryBytes); err != nil {
 		return nil, err
 	}
 
@@ -54,10 +53,9 @@ func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencode
 		Type:             sandboxType,
 		Status:           StatusCreating,
 		SandboxName:      sandboxName,
-		OpencodePassword: opencodePassword,
-		ProxyToken:       proxyToken,
-		TelegramBotToken: telegramBotToken,
-		GatewayToken:     gatewayToken,
+		OpencodeToken: opencodeToken,
+		ProxyToken:    proxyToken,
+		OpenclawToken: openclawToken,
 		CreatedAt:        now,
 		LastActivityAt:   &now,
 		CPUMillicores:    cpuMillicores,
@@ -145,17 +143,14 @@ func dbSandboxToSandbox(ds *db.Sandbox) *Sandbox {
 	if ds.PodIP.Valid {
 		sbx.PodIP = ds.PodIP.String
 	}
-	if ds.OpencodePassword.Valid {
-		sbx.OpencodePassword = ds.OpencodePassword.String
+	if ds.OpencodeToken.Valid {
+		sbx.OpencodeToken = ds.OpencodeToken.String
 	}
 	if ds.ProxyToken.Valid {
 		sbx.ProxyToken = ds.ProxyToken.String
 	}
-	if ds.TelegramBotToken.Valid {
-		sbx.TelegramBotToken = ds.TelegramBotToken.String
-	}
-	if ds.GatewayToken.Valid {
-		sbx.GatewayToken = ds.GatewayToken.String
+	if ds.OpenclawToken.Valid {
+		sbx.OpenclawToken = ds.OpenclawToken.String
 	}
 	if ds.LastActivityAt.Valid {
 		t := ds.LastActivityAt.Time

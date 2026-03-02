@@ -12,14 +12,21 @@ const providerLabels: Record<string, string> = {
 
 export function Login({ onSuccess }: LoginProps) {
   const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [isRegister, setIsRegister] = useState(false)
   const [oidcProviders, setOidcProviders] = useState<string[]>([])
+  const [passwordAuth, setPasswordAuth] = useState(true)
+  const [providersLoaded, setProvidersLoaded] = useState(false)
 
   useEffect(() => {
-    getOIDCProviders().then(setOidcProviders)
+    getOIDCProviders().then((data) => {
+      setOidcProviders(data.providers)
+      setPasswordAuth(data.passwordAuth)
+      setProvidersLoaded(true)
+    })
   }, [])
 
   const handleSubmit = async (e: FormEvent) => {
@@ -28,7 +35,7 @@ export function Login({ onSuccess }: LoginProps) {
     setLoading(true)
     try {
       if (isRegister) {
-        const ok = await register(username, password)
+        const ok = await register(username, email, password)
         if (ok) {
           // Auto-login after registration.
           const loginOk = await login(username, password)
@@ -61,52 +68,74 @@ export function Login({ onSuccess }: LoginProps) {
         <h1 className="mb-6 text-center text-xl font-semibold text-[var(--card-foreground)]">
           agentserver
         </h1>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <input
-              type="text"
-              placeholder="Username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoFocus
-              className="w-full rounded-md border border-[var(--input)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] placeholder-[var(--muted-foreground)] outline-none focus:ring-2 focus:ring-[var(--ring)]"
-            />
-          </div>
-          <div>
-            <input
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-md border border-[var(--input)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] placeholder-[var(--muted-foreground)] outline-none focus:ring-2 focus:ring-[var(--ring)]"
-            />
-          </div>
-          {error && (
-            <p className="text-sm text-[var(--destructive)]">{error}</p>
-          )}
-          <button
-            type="submit"
-            disabled={loading || !username || !password}
-            className="w-full rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90 disabled:opacity-50"
-          >
-            {loading
-              ? isRegister
-                ? 'Creating account...'
-                : 'Signing in...'
-              : isRegister
-                ? 'Create account'
-                : 'Sign in'}
-          </button>
-        </form>
-        {oidcProviders.length > 0 && (
-          <div className="mt-4">
-            <div className="relative flex items-center justify-center">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-[var(--border)]" />
+        {providersLoaded && !passwordAuth && oidcProviders.length === 0 && (
+          <p className="text-center text-sm text-[var(--destructive)]">
+            No authentication methods are configured. Contact your administrator.
+          </p>
+        )}
+        {passwordAuth && (
+          <>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <input
+                  type="text"
+                  placeholder="Username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoFocus
+                  className="w-full rounded-md border border-[var(--input)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] placeholder-[var(--muted-foreground)] outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                />
               </div>
-              <span className="relative bg-[var(--card)] px-2 text-xs text-[var(--muted-foreground)]">or</span>
-            </div>
-            <div className="mt-4 space-y-2">
+              {isRegister && (
+                <div>
+                  <input
+                    type="email"
+                    placeholder="Email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full rounded-md border border-[var(--input)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] placeholder-[var(--muted-foreground)] outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  />
+                </div>
+              )}
+              <div>
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full rounded-md border border-[var(--input)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] placeholder-[var(--muted-foreground)] outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                />
+              </div>
+              {error && (
+                <p className="text-sm text-[var(--destructive)]">{error}</p>
+              )}
+              <button
+                type="submit"
+                disabled={loading || !username || !password || (isRegister && !email)}
+                className="w-full rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90 disabled:opacity-50"
+              >
+                {loading
+                  ? isRegister
+                    ? 'Creating account...'
+                    : 'Signing in...'
+                  : isRegister
+                    ? 'Create account'
+                    : 'Sign in'}
+              </button>
+            </form>
+          </>
+        )}
+        {oidcProviders.length > 0 && (
+          <div className={passwordAuth ? "mt-4" : ""}>
+            {passwordAuth && (
+              <div className="relative flex items-center justify-center">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-[var(--border)]" />
+                </div>
+                <span className="relative bg-[var(--card)] px-2 text-xs text-[var(--muted-foreground)]">or</span>
+              </div>
+            )}
+            <div className={passwordAuth ? "mt-4 space-y-2" : "space-y-2"}>
               {oidcProviders.map((provider) => (
                 <a
                   key={provider}
@@ -119,29 +148,31 @@ export function Login({ onSuccess }: LoginProps) {
             </div>
           </div>
         )}
-        <p className="mt-4 text-center text-sm text-[var(--muted-foreground)]">
-          {isRegister ? (
-            <>
-              Already have an account?{' '}
-              <button
-                onClick={() => { setIsRegister(false); setError('') }}
-                className="text-[var(--primary)] hover:underline"
-              >
-                Sign in
-              </button>
-            </>
-          ) : (
-            <>
-              No account?{' '}
-              <button
-                onClick={() => { setIsRegister(true); setError('') }}
-                className="text-[var(--primary)] hover:underline"
-              >
-                Create one
-              </button>
-            </>
-          )}
-        </p>
+        {passwordAuth && (
+          <p className="mt-4 text-center text-sm text-[var(--muted-foreground)]">
+            {isRegister ? (
+              <>
+                Already have an account?{' '}
+                <button
+                  onClick={() => { setIsRegister(false); setError('') }}
+                  className="text-[var(--primary)] hover:underline"
+                >
+                  Sign in
+                </button>
+              </>
+            ) : (
+              <>
+                No account?{' '}
+                <button
+                  onClick={() => { setIsRegister(true); setError('') }}
+                  className="text-[var(--primary)] hover:underline"
+                >
+                  Create one
+                </button>
+              </>
+            )}
+          </p>
+        )}
       </div>
     </div>
   )

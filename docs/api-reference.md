@@ -49,8 +49,7 @@ All endpoints under `/api/` require authentication via cookie unless noted other
 ```json
 {
   "name": "my-sandbox",
-  "type": "opencode",
-  "telegramBotToken": ""
+  "type": "opencode"
 }
 ```
 
@@ -58,7 +57,6 @@ All endpoints under `/api/` require authentication via cookie unless noted other
 |-------|------|-------------|
 | `name` | string | Display name for the sandbox |
 | `type` | string | Sandbox type: `opencode` or `openclaw` |
-| `telegramBotToken` | string | (Optional) Telegram bot token, only for `openclaw` type |
 
 ## Local Agent
 

@@ -22,18 +22,18 @@ type Client struct {
 	SandboxID        string
 	TunnelToken      string
 	OpencodeURL      string
-	OpencodePassword string
+	OpencodeToken string
 	httpClient       *http.Client
 }
 
 // NewClient creates a new agent tunnel client.
-func NewClient(serverURL, sandboxID, tunnelToken, opencodeURL, opencodePassword string) *Client {
+func NewClient(serverURL, sandboxID, tunnelToken, opencodeURL, opencodeToken string) *Client {
 	return &Client{
 		ServerURL:        serverURL,
 		SandboxID:        sandboxID,
 		TunnelToken:      tunnelToken,
 		OpencodeURL:      opencodeURL,
-		OpencodePassword: opencodePassword,
+		OpencodeToken: opencodeToken,
 		httpClient: &http.Client{
 			Timeout: 0, // No timeout for SSE streams.
 		},
@@ -177,8 +177,8 @@ func (c *Client) handleRequest(ctx context.Context, conn *websocket.Conn, reqHea
 	}
 
 	// Add Basic Auth for opencode if password is provided.
-	if c.OpencodePassword != "" {
-		httpReq.SetBasicAuth("opencode", c.OpencodePassword)
+	if c.OpencodeToken != "" {
+		httpReq.SetBasicAuth("opencode", c.OpencodeToken)
 	}
 
 	resp, err := c.httpClient.Do(httpReq)

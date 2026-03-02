@@ -9,10 +9,17 @@ import (
 type Workspace struct {
 	ID           string
 	Name         string
-	DiskPVCName  sql.NullString
 	K8sNamespace sql.NullString
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+type WorkspaceVolume struct {
+	ID          string
+	WorkspaceID string
+	PVCName     string
+	MountPath   string
+	CreatedAt   time.Time
 }
 
 type WorkspaceMember struct {
@@ -36,9 +43,9 @@ func (db *DB) CreateWorkspace(id, name string) error {
 func (db *DB) GetWorkspace(id string) (*Workspace, error) {
 	w := &Workspace{}
 	err := db.QueryRow(
-		`SELECT id, name, disk_pvc_name, k8s_namespace, created_at, updated_at FROM workspaces WHERE id = $1`,
+		`SELECT id, name, k8s_namespace, created_at, updated_at FROM workspaces WHERE id = $1`,
 		id,
-	).Scan(&w.ID, &w.Name, &w.DiskPVCName, &w.K8sNamespace, &w.CreatedAt, &w.UpdatedAt)
+	).Scan(&w.ID, &w.Name, &w.K8sNamespace, &w.CreatedAt, &w.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -56,20 +63,9 @@ func (db *DB) DeleteWorkspace(id string) error {
 	return nil
 }
 
-func (db *DB) UpdateWorkspaceDiskPVC(id, pvcName string) error {
-	_, err := db.Exec(
-		"UPDATE workspaces SET disk_pvc_name = $2, updated_at = NOW() WHERE id = $1",
-		id, pvcName,
-	)
-	if err != nil {
-		return fmt.Errorf("update workspace disk pvc: %w", err)
-	}
-	return nil
-}
-
 func (db *DB) ListWorkspacesByUser(userID string) ([]*Workspace, error) {
 	rows, err := db.Query(
-		`SELECT w.id, w.name, w.disk_pvc_name, w.k8s_namespace, w.created_at, w.updated_at
+		`SELECT w.id, w.name, w.k8s_namespace, w.created_at, w.updated_at
 		 FROM workspaces w
 		 JOIN workspace_members wm ON w.id = wm.workspace_id
 		 WHERE wm.user_id = $1
@@ -84,7 +80,7 @@ func (db *DB) ListWorkspacesByUser(userID string) ([]*Workspace, error) {
 	var workspaces []*Workspace
 	for rows.Next() {
 		w := &Workspace{}
-		if err := rows.Scan(&w.ID, &w.Name, &w.DiskPVCName, &w.K8sNamespace, &w.CreatedAt, &w.UpdatedAt); err != nil {
+		if err := rows.Scan(&w.ID, &w.Name, &w.K8sNamespace, &w.CreatedAt, &w.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan workspace: %w", err)
 		}
 		workspaces = append(workspaces, w)
@@ -116,7 +112,7 @@ func (db *DB) RemoveWorkspaceMember(workspaceID, userID string) error {
 
 func (db *DB) UpdateWorkspaceMemberRole(workspaceID, userID, role string) error {
 	_, err := db.Exec(
-		"UPDATE workspace_members SET role = $3 WHERE workspace_id = $1 AND user_id = $2",
+		"UPDATE workspace_members SET role = $3, updated_at = NOW() WHERE workspace_id = $1 AND user_id = $2",
 		workspaceID, userID, role,
 	)
 	if err != nil {
@@ -221,7 +217,7 @@ func (db *DB) GetAllWorkspaceNamespaces() ([]string, error) {
 
 func (db *DB) ListWorkspacesWithoutNamespace() ([]*Workspace, error) {
 	rows, err := db.Query(
-		`SELECT id, name, disk_pvc_name, k8s_namespace, created_at, updated_at
+		`SELECT id, name, k8s_namespace, created_at, updated_at
 		 FROM workspaces
 		 WHERE k8s_namespace IS NULL OR k8s_namespace = ''`,
 	)
@@ -233,7 +229,7 @@ func (db *DB) ListWorkspacesWithoutNamespace() ([]*Workspace, error) {
 	var workspaces []*Workspace
 	for rows.Next() {
 		w := &Workspace{}
-		if err := rows.Scan(&w.ID, &w.Name, &w.DiskPVCName, &w.K8sNamespace, &w.CreatedAt, &w.UpdatedAt); err != nil {
+		if err := rows.Scan(&w.ID, &w.Name, &w.K8sNamespace, &w.CreatedAt, &w.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan workspace: %w", err)
 		}
 		workspaces = append(workspaces, w)
@@ -243,7 +239,7 @@ func (db *DB) ListWorkspacesWithoutNamespace() ([]*Workspace, error) {
 
 func (db *DB) ListAllWorkspaces() ([]*Workspace, error) {
 	rows, err := db.Query(
-		`SELECT id, name, disk_pvc_name, k8s_namespace, created_at, updated_at
+		`SELECT id, name, k8s_namespace, created_at, updated_at
 		 FROM workspaces ORDER BY created_at ASC`,
 	)
 	if err != nil {
@@ -254,10 +250,42 @@ func (db *DB) ListAllWorkspaces() ([]*Workspace, error) {
 	var workspaces []*Workspace
 	for rows.Next() {
 		w := &Workspace{}
-		if err := rows.Scan(&w.ID, &w.Name, &w.DiskPVCName, &w.K8sNamespace, &w.CreatedAt, &w.UpdatedAt); err != nil {
+		if err := rows.Scan(&w.ID, &w.Name, &w.K8sNamespace, &w.CreatedAt, &w.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan workspace: %w", err)
 		}
 		workspaces = append(workspaces, w)
 	}
 	return workspaces, rows.Err()
+}
+
+func (db *DB) AddWorkspaceVolume(id, workspaceID, pvcName, mountPath string) error {
+	_, err := db.Exec(
+		`INSERT INTO workspace_volumes (id, workspace_id, pvc_name, mount_path) VALUES ($1, $2, $3, $4)`,
+		id, workspaceID, pvcName, mountPath,
+	)
+	if err != nil {
+		return fmt.Errorf("add workspace volume: %w", err)
+	}
+	return nil
+}
+
+func (db *DB) ListWorkspaceVolumes(workspaceID string) ([]WorkspaceVolume, error) {
+	rows, err := db.Query(
+		`SELECT id, workspace_id, pvc_name, mount_path, created_at FROM workspace_volumes WHERE workspace_id = $1 ORDER BY created_at ASC`,
+		workspaceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list workspace volumes: %w", err)
+	}
+	defer rows.Close()
+
+	var volumes []WorkspaceVolume
+	for rows.Next() {
+		var v WorkspaceVolume
+		if err := rows.Scan(&v.ID, &v.WorkspaceID, &v.PVCName, &v.MountPath, &v.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan workspace volume: %w", err)
+		}
+		volumes = append(volumes, v)
+	}
+	return volumes, rows.Err()
 }

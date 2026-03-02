@@ -29,12 +29,15 @@ func New(database *db.DB) *Auth {
 }
 
 // Register creates a new user with a bcrypt-hashed password.
-func (a *Auth) Register(id, username, password string) error {
+func (a *Auth) Register(id, username, email, password string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	return a.db.CreateUser(id, username, string(hash))
+	if err := a.db.CreateUser(id, username, email, string(hash)); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Login verifies credentials and returns a token.
@@ -43,10 +46,11 @@ func (a *Auth) Login(username, password string) (string, string, bool) {
 	if err != nil || user == nil {
 		return "", "", false
 	}
-	if user.PasswordHash == nil {
+	hash, err := a.db.GetPasswordHash(user.ID)
+	if err != nil || hash == nil {
 		return "", "", false
 	}
-	if bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(password)) != nil {
+	if bcrypt.CompareHashAndPassword([]byte(*hash), []byte(password)) != nil {
 		return "", "", false
 	}
 	token, err := a.IssueToken(user.ID)

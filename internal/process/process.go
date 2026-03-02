@@ -8,17 +8,22 @@ type Process interface {
 	Done() <-chan struct{}
 }
 
+// VolumeMount describes a PVC or Docker volume to mount into a sandbox.
+type VolumeMount struct {
+	PVCName   string // PVC name (K8s) or Docker volume name
+	MountPath string // container mount path
+}
+
 // StartOptions holds optional parameters for starting a process.
 type StartOptions struct {
-	Namespace        string // K8s namespace to create sandbox in
-	WorkspaceDiskPVC string // pre-existing PVC name for workspace drive mount
-	OpencodePassword string // per-sandbox password for opencode server auth
-	ProxyToken       string // per-sandbox token for Anthropic API proxy auth
-	SandboxType      string // "opencode" or "openclaw"
-	TelegramBotToken string // openclaw only: Telegram bot token
-	GatewayToken     string // openclaw only: gateway auth token
-	CPULimit         string // optional K8s resource string override (e.g. "2", "500m")
-	MemoryLimit      string // optional K8s resource string override (e.g. "2Gi", "512Mi")
+	Namespace        string        // K8s namespace to create sandbox in
+	WorkspaceVolumes []VolumeMount // workspace drive volume mounts
+	OpencodeToken    string        // per-sandbox token for opencode server auth
+	ProxyToken       string        // per-sandbox token for Anthropic API proxy auth
+	SandboxType      string        // "opencode" or "openclaw"
+	OpenclawToken    string        // openclaw only: gateway auth token
+	CPUMillicores    int           // CPU limit in millicores (e.g. 2000 = 2 cores)
+	MemoryBytes      int64         // memory limit in bytes (e.g. 2147483648 = 2Gi)
 }
 
 // Manager manages process lifecycles.

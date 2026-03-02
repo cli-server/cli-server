@@ -8,15 +8,15 @@ import (
 )
 
 const (
-	settingKeyMaxWorkspaces       = "quota_max_workspaces_per_user"
-	settingKeyMaxSandboxes        = "quota_max_sandboxes_per_workspace"
-	settingKeyWorkspaceDriveSize  = "default_workspace_drive_size"
-	settingKeySandboxCPU          = "default_sandbox_cpu"
-	settingKeySandboxMemory       = "default_sandbox_memory"
-	settingKeyIdleTimeout         = "default_idle_timeout"
-	settingKeyWsMaxTotalCPU       = "default_ws_max_total_cpu"
-	settingKeyWsMaxTotalMemory    = "default_ws_max_total_memory"
-	settingKeyWsMaxIdleTimeout    = "default_ws_max_idle_timeout"
+	settingKeyMaxWorkspaces        = "quota_max_workspaces_per_user"
+	settingKeyMaxSandboxes         = "quota_max_sandboxes_per_workspace"
+	settingKeyMaxWorkspaceDriveSize = "default_max_workspace_drive_size"
+	settingKeyMaxSandboxCPU        = "default_max_sandbox_cpu"
+	settingKeyMaxSandboxMemory     = "default_max_sandbox_memory"
+	settingKeyMaxIdleTimeout       = "default_max_idle_timeout"
+	settingKeyWsMaxTotalCPU        = "default_ws_max_total_cpu"
+	settingKeyWsMaxTotalMemory     = "default_ws_max_total_memory"
+	settingKeyWsMaxIdleTimeout     = "default_ws_max_idle_timeout"
 
 	defaultMaxWorkspaces = 10
 	defaultMaxSandboxes  = 20
@@ -26,13 +26,13 @@ const (
 type ResourceDefaults struct {
 	MaxWorkspacesPerUser     int
 	MaxSandboxesPerWorkspace int
-	WorkspaceDriveSize       string
-	SandboxCPU               string
-	SandboxMemory            string
-	IdleTimeout              string
-	WsMaxTotalCPU            string
-	WsMaxTotalMemory         string
-	WsMaxIdleTimeout         string
+	MaxWorkspaceDriveSize    int64 // bytes
+	MaxSandboxCPU            int   // millicores
+	MaxSandboxMemory         int64 // bytes
+	MaxIdleTimeout           int   // seconds
+	WsMaxTotalCPU            int   // millicores
+	WsMaxTotalMemory         int64 // bytes
+	WsMaxIdleTimeout         int   // seconds
 }
 
 // getResourceDefaults resolves all defaults via the 3-layer priority chain:
@@ -43,13 +43,13 @@ func (s *Server) getResourceDefaults() ResourceDefaults {
 	rd := ResourceDefaults{
 		MaxWorkspacesPerUser:     defaultMaxWorkspaces,
 		MaxSandboxesPerWorkspace: defaultMaxSandboxes,
-		WorkspaceDriveSize:       "10Gi",
-		SandboxCPU:               "2",
-		SandboxMemory:            "2Gi",
-		IdleTimeout:              "30m",
-		WsMaxTotalCPU:            "0",
-		WsMaxTotalMemory:         "0",
-		WsMaxIdleTimeout:         "0",
+		MaxWorkspaceDriveSize:    10 * 1024 * 1024 * 1024, // 10Gi
+		MaxSandboxCPU:            2000,                     // 2 cores
+		MaxSandboxMemory:         2 * 1024 * 1024 * 1024,  // 2Gi
+		MaxIdleTimeout:           1800,                     // 30m
+		WsMaxTotalCPU:            0,
+		WsMaxTotalMemory:         0,
+		WsMaxIdleTimeout:         0,
 	}
 
 	// Layer 2: environment variables override hardcoded defaults.
@@ -64,25 +64,25 @@ func (s *Server) getResourceDefaults() ResourceDefaults {
 		}
 	}
 	if v := os.Getenv("USER_DRIVE_SIZE"); v != "" {
-		rd.WorkspaceDriveSize = v
+		rd.MaxWorkspaceDriveSize = parseResourceInt64(v, rd.MaxWorkspaceDriveSize, parseMemoryBytes)
 	}
 	if v := os.Getenv("QUOTA_DEFAULT_SANDBOX_CPU"); v != "" {
-		rd.SandboxCPU = v
+		rd.MaxSandboxCPU = parseResourceInt(v, rd.MaxSandboxCPU, parseCPUMillicores)
 	}
 	if v := os.Getenv("QUOTA_DEFAULT_SANDBOX_MEMORY"); v != "" {
-		rd.SandboxMemory = v
+		rd.MaxSandboxMemory = parseResourceInt64(v, rd.MaxSandboxMemory, parseMemoryBytes)
 	}
 	if v := os.Getenv("IDLE_TIMEOUT"); v != "" {
-		rd.IdleTimeout = v
+		rd.MaxIdleTimeout = parseResourceInt(v, rd.MaxIdleTimeout, parseDurationSeconds)
 	}
 	if v := os.Getenv("QUOTA_WS_MAX_TOTAL_CPU"); v != "" {
-		rd.WsMaxTotalCPU = v
+		rd.WsMaxTotalCPU = parseResourceInt(v, rd.WsMaxTotalCPU, parseCPUMillicores)
 	}
 	if v := os.Getenv("QUOTA_WS_MAX_TOTAL_MEMORY"); v != "" {
-		rd.WsMaxTotalMemory = v
+		rd.WsMaxTotalMemory = parseResourceInt64(v, rd.WsMaxTotalMemory, parseMemoryBytes)
 	}
 	if v := os.Getenv("QUOTA_WS_MAX_IDLE_TIMEOUT"); v != "" {
-		rd.WsMaxIdleTimeout = v
+		rd.WsMaxIdleTimeout = parseResourceInt(v, rd.WsMaxIdleTimeout, parseDurationSeconds)
 	}
 
 	// Layer 1: DB system_settings take highest priority.
@@ -96,53 +96,53 @@ func (s *Server) getResourceDefaults() ResourceDefaults {
 			rd.MaxSandboxesPerWorkspace = n
 		}
 	}
-	if v, err := s.DB.GetSystemSetting(settingKeyWorkspaceDriveSize); err == nil && v != "" {
-		rd.WorkspaceDriveSize = v
+	if v, err := s.DB.GetSystemSetting(settingKeyMaxWorkspaceDriveSize); err == nil && v != "" {
+		rd.MaxWorkspaceDriveSize = parseResourceInt64(v, rd.MaxWorkspaceDriveSize, parseMemoryBytes)
 	}
-	if v, err := s.DB.GetSystemSetting(settingKeySandboxCPU); err == nil && v != "" {
-		rd.SandboxCPU = v
+	if v, err := s.DB.GetSystemSetting(settingKeyMaxSandboxCPU); err == nil && v != "" {
+		rd.MaxSandboxCPU = parseResourceInt(v, rd.MaxSandboxCPU, parseCPUMillicores)
 	}
-	if v, err := s.DB.GetSystemSetting(settingKeySandboxMemory); err == nil && v != "" {
-		rd.SandboxMemory = v
+	if v, err := s.DB.GetSystemSetting(settingKeyMaxSandboxMemory); err == nil && v != "" {
+		rd.MaxSandboxMemory = parseResourceInt64(v, rd.MaxSandboxMemory, parseMemoryBytes)
 	}
-	if v, err := s.DB.GetSystemSetting(settingKeyIdleTimeout); err == nil && v != "" {
-		rd.IdleTimeout = v
+	if v, err := s.DB.GetSystemSetting(settingKeyMaxIdleTimeout); err == nil && v != "" {
+		rd.MaxIdleTimeout = parseResourceInt(v, rd.MaxIdleTimeout, parseDurationSeconds)
 	}
 	if v, err := s.DB.GetSystemSetting(settingKeyWsMaxTotalCPU); err == nil && v != "" {
-		rd.WsMaxTotalCPU = v
+		rd.WsMaxTotalCPU = parseResourceInt(v, rd.WsMaxTotalCPU, parseCPUMillicores)
 	}
 	if v, err := s.DB.GetSystemSetting(settingKeyWsMaxTotalMemory); err == nil && v != "" {
-		rd.WsMaxTotalMemory = v
+		rd.WsMaxTotalMemory = parseResourceInt64(v, rd.WsMaxTotalMemory, parseMemoryBytes)
 	}
 	if v, err := s.DB.GetSystemSetting(settingKeyWsMaxIdleTimeout); err == nil && v != "" {
-		rd.WsMaxIdleTimeout = v
+		rd.WsMaxIdleTimeout = parseResourceInt(v, rd.WsMaxIdleTimeout, parseDurationSeconds)
 	}
 
 	return rd
 }
 
-// WorkspaceDefaults holds workspace-level resolved defaults (system defaults ← workspace_quotas override).
+// WorkspaceDefaults holds workspace-level resolved defaults (system defaults <- workspace_quotas override).
 type WorkspaceDefaults struct {
-	MaxSandboxes int
-	SandboxCPU   string
-	SandboxMemory string
-	IdleTimeout  string
-	MaxTotalCPU  string
-	MaxTotalMemory string
-	DriveSize    string
+	MaxSandboxes     int
+	MaxSandboxCPU    int   // millicores
+	MaxSandboxMemory int64 // bytes
+	MaxIdleTimeout   int   // seconds
+	MaxTotalCPU      int   // millicores
+	MaxTotalMemory   int64 // bytes
+	MaxDriveSize     int64 // bytes
 }
 
 // effectiveWorkspaceDefaults merges system defaults with workspace_quotas overrides.
 func (s *Server) effectiveWorkspaceDefaults(workspaceID string) (WorkspaceDefaults, error) {
 	rd := s.getResourceDefaults()
 	wd := WorkspaceDefaults{
-		MaxSandboxes:   rd.MaxSandboxesPerWorkspace,
-		SandboxCPU:     rd.SandboxCPU,
-		SandboxMemory:  rd.SandboxMemory,
-		IdleTimeout:    rd.IdleTimeout,
-		MaxTotalCPU:    rd.WsMaxTotalCPU,
-		MaxTotalMemory: rd.WsMaxTotalMemory,
-		DriveSize:      rd.WorkspaceDriveSize,
+		MaxSandboxes:     rd.MaxSandboxesPerWorkspace,
+		MaxSandboxCPU:    rd.MaxSandboxCPU,
+		MaxSandboxMemory: rd.MaxSandboxMemory,
+		MaxIdleTimeout:   rd.MaxIdleTimeout,
+		MaxTotalCPU:      rd.WsMaxTotalCPU,
+		MaxTotalMemory:   rd.WsMaxTotalMemory,
+		MaxDriveSize:     rd.MaxWorkspaceDriveSize,
 	}
 
 	wq, err := s.DB.GetWorkspaceQuota(workspaceID)
@@ -156,14 +156,14 @@ func (s *Server) effectiveWorkspaceDefaults(workspaceID string) (WorkspaceDefaul
 	if wq.MaxSandboxes != nil {
 		wd.MaxSandboxes = *wq.MaxSandboxes
 	}
-	if wq.SandboxCPU != nil {
-		wd.SandboxCPU = *wq.SandboxCPU
+	if wq.MaxSandboxCPU != nil {
+		wd.MaxSandboxCPU = *wq.MaxSandboxCPU
 	}
-	if wq.SandboxMemory != nil {
-		wd.SandboxMemory = *wq.SandboxMemory
+	if wq.MaxSandboxMemory != nil {
+		wd.MaxSandboxMemory = *wq.MaxSandboxMemory
 	}
-	if wq.IdleTimeout != nil {
-		wd.IdleTimeout = *wq.IdleTimeout
+	if wq.MaxIdleTimeout != nil {
+		wd.MaxIdleTimeout = *wq.MaxIdleTimeout
 	}
 	if wq.MaxTotalCPU != nil {
 		wd.MaxTotalCPU = *wq.MaxTotalCPU
@@ -171,8 +171,8 @@ func (s *Server) effectiveWorkspaceDefaults(workspaceID string) (WorkspaceDefaul
 	if wq.MaxTotalMemory != nil {
 		wd.MaxTotalMemory = *wq.MaxTotalMemory
 	}
-	if wq.DriveSize != nil {
-		wd.DriveSize = *wq.DriveSize
+	if wq.MaxDriveSize != nil {
+		wd.MaxDriveSize = *wq.MaxDriveSize
 	}
 
 	return wd, nil
@@ -247,11 +247,8 @@ func (s *Server) checkWorkspaceResourceBudget(workspaceID string, cpuMillis int,
 		return false, err
 	}
 
-	maxCPU := parseCPUMillicores(wd.MaxTotalCPU)
-	maxMem := parseMemoryBytes(wd.MaxTotalMemory)
-
 	// 0 means unlimited
-	if maxCPU == 0 && maxMem == 0 {
+	if wd.MaxTotalCPU == 0 && wd.MaxTotalMemory == 0 {
 		return true, nil
 	}
 
@@ -260,10 +257,10 @@ func (s *Server) checkWorkspaceResourceBudget(workspaceID string, cpuMillis int,
 		return false, err
 	}
 
-	if maxCPU > 0 && currentCPU+int64(cpuMillis) > int64(maxCPU) {
+	if wd.MaxTotalCPU > 0 && currentCPU+int64(cpuMillis) > int64(wd.MaxTotalCPU) {
 		return false, nil
 	}
-	if maxMem > 0 && currentMem+memBytes > maxMem {
+	if wd.MaxTotalMemory > 0 && currentMem+memBytes > wd.MaxTotalMemory {
 		return false, nil
 	}
 
@@ -274,16 +271,39 @@ func (s *Server) checkWorkspaceResourceBudget(workspaceID string, cpuMillis int,
 // Returns 0 if disabled.
 func (s *Server) getEffectiveIdleTimeout() time.Duration {
 	rd := s.getResourceDefaults()
-	d, err := time.ParseDuration(rd.IdleTimeout)
-	if err != nil {
-		return 30 * time.Minute
+	if rd.MaxIdleTimeout == 0 {
+		return 0
 	}
-	return d
+	return time.Duration(rd.MaxIdleTimeout) * time.Second
 }
 
 // GetEffectiveIdleTimeout is the exported version for use by cmd/serve.go.
 func (s *Server) GetEffectiveIdleTimeout() time.Duration {
 	return s.getEffectiveIdleTimeout()
+}
+
+// parseResourceInt tries strconv.Atoi first (new integer format),
+// then falls back to the legacy K8s format parser for backward compatibility.
+func parseResourceInt(s string, fallback int, legacyParser func(string) int) int {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n
+	}
+	if n := legacyParser(s); n != 0 {
+		return n
+	}
+	return fallback
+}
+
+// parseResourceInt64 tries strconv.ParseInt first (new integer format),
+// then falls back to the legacy K8s format parser for backward compatibility.
+func parseResourceInt64(s string, fallback int64, legacyParser func(string) int64) int64 {
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return n
+	}
+	if n := legacyParser(s); n != 0 {
+		return n
+	}
+	return fallback
 }
 
 // parseCPUMillicores converts a K8s CPU string to millicores.
@@ -346,4 +366,18 @@ func parseMemoryBytes(s string) int64 {
 		return 0
 	}
 	return int64(f * float64(multiplier))
+}
+
+// parseDurationSeconds converts a Go-style duration string to seconds.
+// Examples: "30m" -> 1800, "1h" -> 3600, "0" -> 0
+func parseDurationSeconds(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" {
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0
+	}
+	return int(d.Seconds())
 }

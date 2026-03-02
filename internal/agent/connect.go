@@ -18,7 +18,7 @@ type ConnectOptions struct {
 	Name             string
 	OpencodeURL      string
 	OpencodeURLSet   bool // true if --opencode-url was explicitly provided
-	OpencodePassword string
+	OpencodeToken string
 	ConfigPath       string
 	AutoStart        bool
 	OpencodeBin      string
@@ -111,7 +111,7 @@ func RunConnect(opts ConnectOptions) {
 		opts.OpencodeURL = fmt.Sprintf("http://localhost:%d", opts.OpencodePort)
 	}
 
-	tunnelClient := NewClient(cfg.Server, cfg.SandboxID, cfg.TunnelToken, opts.OpencodeURL, opts.OpencodePassword)
+	tunnelClient := NewClient(cfg.Server, cfg.SandboxID, cfg.TunnelToken, opts.OpencodeURL, opts.OpencodeToken)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

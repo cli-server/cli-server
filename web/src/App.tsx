@@ -8,9 +8,10 @@ import { AdminPanel } from './components/AdminPanel'
 export interface UserInfo {
   id: string
   username: string
-  email?: string | null
+  email: string
+  name?: string | null
+  picture?: string | null
   role: string
-  avatarUrl?: string | null
 }
 
 export default function App() {

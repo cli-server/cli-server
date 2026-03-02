@@ -56,8 +56,8 @@ func (s *Server) handleOpenclawSubdomainProxy(w http.ResponseWriter, r *http.Req
 		// Redirect to Control UI with the gateway token so the frontend JS
 		// can authenticate the WebSocket connection automatically.
 		redirectURL := "/"
-		if sbx.GatewayToken != "" {
-			redirectURL = "/?token=" + url.QueryEscape(sbx.GatewayToken)
+		if sbx.OpenclawToken != "" {
+			redirectURL = "/?token=" + url.QueryEscape(sbx.OpenclawToken)
 		}
 		http.Redirect(w, r, redirectURL, http.StatusFound)
 		return
@@ -103,8 +103,8 @@ func (s *Server) handleOpenclawSubdomainProxy(w http.ResponseWriter, r *http.Req
 	}
 
 	// Inject Bearer token for openclaw gateway authentication.
-	if sbx.GatewayToken != "" {
-		r.Header.Set("Authorization", "Bearer "+sbx.GatewayToken)
+	if sbx.OpenclawToken != "" {
+		r.Header.Set("Authorization", "Bearer "+sbx.OpenclawToken)
 	}
 
 	// Track activity for idle watcher.

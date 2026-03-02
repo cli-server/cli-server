@@ -41,12 +41,13 @@ type Server struct {
 	OpencodeAssetDomain      string // e.g. "opencodeapp.agentserver.dev" — shared static asset domain
 	OpencodeSubdomainPrefix  string // e.g. "code" — subdomain: code-{id}.{baseDomain}
 	OpenclawSubdomainPrefix  string // e.g. "claw" — subdomain: claw-{id}.{baseDomain}
+	PasswordAuthEnabled      bool   // when false, /api/auth/login and /api/auth/register are not registered
 	// activityThrottle prevents excessive DB writes for activity tracking.
 	activityMu   sync.Mutex
 	activityLast map[string]time.Time
 }
 
-func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, nsMgr *namespace.Manager, tunnelReg *tunnel.Registry, staticFS fs.FS, opcodeStaticFS fs.FS) *Server {
+func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, nsMgr *namespace.Manager, tunnelReg *tunnel.Registry, staticFS fs.FS, opcodeStaticFS fs.FS, passwordAuthEnabled bool) *Server {
 	baseDomain := os.Getenv("BASE_DOMAIN")
 
 	opencodeAssetDomain := os.Getenv("OPENCODE_ASSET_DOMAIN")
@@ -78,6 +79,7 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 		OpencodeAssetDomain:     opencodeAssetDomain,
 		OpencodeSubdomainPrefix: opcodePrefix,
 		OpenclawSubdomainPrefix: openclawPrefix,
+		PasswordAuthEnabled:     passwordAuthEnabled,
 		activityLast:            make(map[string]time.Time),
 	}
 	s.initOpencodeAssetIndex()
@@ -154,20 +156,31 @@ func (s *Server) Router() http.Handler {
 	r.Post("/api/agent/register", s.handleAgentRegister)
 
 	// Auth endpoints (no auth required)
-	r.Post("/api/auth/login", s.handleLogin)
-	r.Post("/api/auth/register", s.handleRegister)
+	if s.PasswordAuthEnabled {
+		r.Post("/api/auth/login", s.handleLogin)
+		r.Post("/api/auth/register", s.handleRegister)
+	}
 	r.Get("/api/auth/check", s.handleAuthCheck)
 	r.Post("/api/auth/logout", s.handleLogout)
 
 	// OIDC endpoints (no auth required)
 	if s.OIDC != nil {
-		r.Get("/api/auth/oidc/providers", s.OIDC.HandleProviders)
+		r.Get("/api/auth/oidc/providers", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"providers":    s.OIDC.ProviderNames(),
+				"passwordAuth": s.PasswordAuthEnabled,
+			})
+		})
 		r.Get("/api/auth/oidc/{provider}/login", s.handleOIDCLogin)
 		r.Get("/api/auth/oidc/{provider}/callback", s.handleOIDCCallback)
 	} else {
 		r.Get("/api/auth/oidc/providers", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{"providers": []string{}})
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"providers":    []string{},
+				"passwordAuth": s.PasswordAuthEnabled,
+			})
 		})
 	}
 
@@ -264,13 +277,14 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if req.Username == "" || req.Password == "" {
-		http.Error(w, "username and password required", http.StatusBadRequest)
+	if req.Username == "" || req.Password == "" || req.Email == "" {
+		http.Error(w, "username, password, and email required", http.StatusBadRequest)
 		return
 	}
 
@@ -286,7 +300,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := uuid.New().String()
-	if err := s.Auth.Register(id, req.Username, req.Password); err != nil {
+	if err := s.Auth.Register(id, req.Username, req.Email, req.Password); err != nil {
 		log.Printf("register error: %v", err)
 		http.Error(w, "failed to create user", http.StatusInternalServerError)
 		return
@@ -335,22 +349,22 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":        user.ID,
-		"username":  user.Username,
-		"email":     user.Email,
-		"role":      user.Role,
-		"avatarUrl": user.AvatarURL,
+		"id":       user.ID,
+		"username": user.Username,
+		"email":    user.Email,
+		"name":     user.Name,
+		"picture":  user.Picture,
+		"role":     user.Role,
 	})
 }
 
 // --- Response types ---
 
 type workspaceResponse struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	DiskPVCName *string `json:"diskPvcName,omitempty"`
-	CreatedAt  string  `json:"createdAt"`
-	UpdatedAt  string  `json:"updatedAt"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
 }
 
 type workspaceMemberResponse struct {
@@ -376,16 +390,12 @@ type sandboxResponse struct {
 }
 
 func (s *Server) toWorkspaceResponse(ws *db.Workspace) workspaceResponse {
-	resp := workspaceResponse{
+	return workspaceResponse{
 		ID:        ws.ID,
 		Name:      ws.Name,
 		CreatedAt: ws.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: ws.UpdatedAt.Format(time.RFC3339),
 	}
-	if ws.DiskPVCName.Valid {
-		resp.DiskPVCName = &ws.DiskPVCName.String
-	}
-	return resp
 }
 
 func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sandboxResponse {
@@ -795,8 +805,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cpuMillis := parseCPUMillicores(wd.SandboxCPU)
-	memBytes := parseMemoryBytes(wd.SandboxMemory)
+	cpuMillis := wd.MaxSandboxCPU   // already int millicores
+	memBytes := wd.MaxSandboxMemory // already int64 bytes
 
 	// Check workspace resource budget.
 	budgetOk, err := s.checkWorkspaceResourceBudget(wsID, cpuMillis, memBytes)
@@ -816,9 +826,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name             string `json:"name"`
-		Type             string `json:"type"`
-		TelegramBotToken string `json:"telegramBotToken"`
+		Name string `json:"name"`
+		Type string `json:"type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		req.Name = "New Sandbox"
@@ -848,7 +857,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ensure workspace drive exists.
-	workspaceDiskPVC, err := s.DriveManager.EnsureDrive(r.Context(), wsID, wsNamespace)
+	workspaceVolumes, err := s.DriveManager.EnsureDrive(r.Context(), wsID, wsNamespace)
 	if err != nil {
 		log.Printf("failed to ensure workspace drive for %s: %v", wsID, err)
 		// Non-fatal: sandbox can still work without workspace drive.
@@ -858,13 +867,13 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	sandboxName := "agent-sandbox-" + shortID(id)
 
 	// Generate auth credentials based on sandbox type.
-	var opencodePassword, gatewayToken string
+	var opencodeToken, openclawToken string
 	proxyToken := generatePassword()
 	switch sandboxType {
 	case "openclaw":
-		gatewayToken = generatePassword()
+		openclawToken = generatePassword()
 	default: // "opencode"
-		opencodePassword = generatePassword()
+		opencodeToken = generatePassword()
 	}
 
 	// Generate a short ID for subdomain routing (retry on collision).
@@ -872,7 +881,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	var sbx *sbxstore.Sandbox
 	var createErr error
 	for attempts := 0; attempts < 3; attempts++ {
-		sbx, createErr = s.Sandboxes.Create(id, wsID, req.Name, sandboxType, sandboxName, opencodePassword, proxyToken, req.TelegramBotToken, gatewayToken, sid, cpuMillis, memBytes)
+		sbx, createErr = s.Sandboxes.Create(id, wsID, req.Name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, sid, cpuMillis, memBytes)
 		if createErr == nil {
 			break
 		}
@@ -894,14 +903,13 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 			var err error
 			podIP, err = sc.StartContainerWithIP(id, process.StartOptions{
 				Namespace:        wsNamespace,
-				WorkspaceDiskPVC: workspaceDiskPVC,
-				OpencodePassword: opencodePassword,
+				WorkspaceVolumes: workspaceVolumes,
+				OpencodeToken:    opencodeToken,
 				ProxyToken:       proxyToken,
 				SandboxType:      sandboxType,
-				TelegramBotToken: req.TelegramBotToken,
-				GatewayToken:     gatewayToken,
-				CPULimit:         wd.SandboxCPU,
-				MemoryLimit:      wd.SandboxMemory,
+				OpenclawToken:    openclawToken,
+				CPUMillicores:    wd.MaxSandboxCPU,
+				MemoryBytes:      wd.MaxSandboxMemory,
 			})
 			if err != nil {
 				log.Printf("failed to start container for sandbox %s: %v", id, err)
@@ -911,14 +919,13 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		} else {
 			if err := s.ProcessManager.StartContainer(id, process.StartOptions{
 				Namespace:        wsNamespace,
-				WorkspaceDiskPVC: workspaceDiskPVC,
-				OpencodePassword: opencodePassword,
+				WorkspaceVolumes: workspaceVolumes,
+				OpencodeToken:    opencodeToken,
 				ProxyToken:       proxyToken,
 				SandboxType:      sandboxType,
-				TelegramBotToken: req.TelegramBotToken,
-				GatewayToken:     gatewayToken,
-				CPULimit:         wd.SandboxCPU,
-				MemoryLimit:      wd.SandboxMemory,
+				OpenclawToken:    openclawToken,
+				CPUMillicores:    wd.MaxSandboxCPU,
+				MemoryBytes:      wd.MaxSandboxMemory,
 			}); err != nil {
 				log.Printf("failed to start container for sandbox %s: %v", id, err)
 				s.Sandboxes.Delete(id)

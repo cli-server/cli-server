@@ -157,15 +157,12 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 		if m.cfg.OpenclawImage != "" {
 			containerImage = m.cfg.OpenclawImage
 		}
-		if opts.GatewayToken != "" {
-			containerEnv = append(containerEnv, "OPENCLAW_GATEWAY_TOKEN="+opts.GatewayToken)
-		}
-		if opts.TelegramBotToken != "" {
-			containerEnv = append(containerEnv, "TELEGRAM_BOT_TOKEN="+opts.TelegramBotToken)
+		if opts.OpenclawToken != "" {
+			containerEnv = append(containerEnv, "OPENCLAW_GATEWAY_TOKEN="+opts.OpenclawToken)
 		}
 	default: // "opencode"
-		if opts.OpencodePassword != "" {
-			containerEnv = append(containerEnv, "OPENCODE_SERVER_PASSWORD="+opts.OpencodePassword)
+		if opts.OpencodeToken != "" {
+			containerEnv = append(containerEnv, "OPENCODE_SERVER_PASSWORD="+opts.OpencodeToken)
 		}
 		if m.cfg.OpencodeConfigContent != "" {
 			containerEnv = append(containerEnv, "OPENCODE_CONFIG_CONTENT="+m.cfg.OpencodeConfigContent)
@@ -180,22 +177,22 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 			Target: "/home/agent",
 		},
 	}
-	if opts.WorkspaceDiskPVC != "" {
+	for _, vol := range opts.WorkspaceVolumes {
 		mounts = append(mounts, dockermount.Mount{
 			Type:   dockermount.TypeVolume,
-			Source: opts.WorkspaceDiskPVC,
-			Target: "/home/agent/projects",
+			Source: vol.PVCName,
+			Target: vol.MountPath,
 		})
 	}
 
 	pidsLimit := m.cfg.PidsLimit
 	memoryLimit := m.cfg.MemoryLimit
 	nanoCPUs := m.cfg.NanoCPUs
-	if opts.MemoryLimit != "" {
-		memoryLimit = parseK8sMemoryToBytes(opts.MemoryLimit)
+	if opts.MemoryBytes != 0 {
+		memoryLimit = opts.MemoryBytes
 	}
-	if opts.CPULimit != "" {
-		nanoCPUs = parseK8sCPUToNanoCPUs(opts.CPULimit)
+	if opts.CPUMillicores != 0 {
+		nanoCPUs = int64(opts.CPUMillicores) * 1_000_000
 	}
 	containerConfig := &container.Config{
 		Image:  containerImage,
@@ -407,59 +404,4 @@ func (m *Manager) StopAll() {
 func (m *Manager) Close() error {
 	m.StopAll()
 	return m.cli.Close()
-}
-
-// parseK8sMemoryToBytes converts a K8s memory string (e.g. "2Gi", "512Mi") to bytes.
-func parseK8sMemoryToBytes(s string) int64 {
-	if s == "" {
-		return 0
-	}
-	multiplier := int64(1)
-	numStr := s
-	switch {
-	case len(s) > 2 && s[len(s)-2:] == "Gi":
-		multiplier = 1024 * 1024 * 1024
-		numStr = s[:len(s)-2]
-	case len(s) > 2 && s[len(s)-2:] == "Mi":
-		multiplier = 1024 * 1024
-		numStr = s[:len(s)-2]
-	case len(s) > 2 && s[len(s)-2:] == "Ki":
-		multiplier = 1024
-		numStr = s[:len(s)-2]
-	}
-	var n int64
-	for _, c := range numStr {
-		if c < '0' || c > '9' {
-			return 0
-		}
-		n = n*10 + int64(c-'0')
-	}
-	return n * multiplier
-}
-
-// parseK8sCPUToNanoCPUs converts a K8s CPU string (e.g. "2", "500m") to nanocpus.
-func parseK8sCPUToNanoCPUs(s string) int64 {
-	if s == "" {
-		return 0
-	}
-	if len(s) > 1 && s[len(s)-1] == 'm' {
-		// millicores to nanocpus: 500m → 500_000_000
-		var n int64
-		for _, c := range s[:len(s)-1] {
-			if c < '0' || c > '9' {
-				return 0
-			}
-			n = n*10 + int64(c-'0')
-		}
-		return n * 1_000_000
-	}
-	// cores to nanocpus: 2 → 2_000_000_000
-	var n int64
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0
-		}
-		n = n*10 + int64(c-'0')
-	}
-	return n * 1_000_000_000
 }

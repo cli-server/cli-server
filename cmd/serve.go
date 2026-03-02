@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -159,7 +161,7 @@ var serveCmd = &cobra.Command{
 			log.Printf("Using K8s sandbox backend (namespace prefix: %s, agentserver ns: %s, image: %s)", nsPrefix, cfg.AgentserverNamespace, cfg.Image)
 			procMgr = mgr
 
-			workspaceDriveSize := envOrDefault("USER_DRIVE_SIZE", "10Gi")
+			workspaceDriveSize := parseEnvBytes("USER_DRIVE_SIZE", 10*1024*1024*1024)
 			storageClass := os.Getenv("STORAGE_CLASS")
 			workspaceDriveStorageClass := os.Getenv("USER_DRIVE_STORAGE_CLASS")
 			if workspaceDriveStorageClass == "" {
@@ -208,7 +210,7 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
-		srv := server.New(authSvc, oidcMgr, database, sandboxStore, procMgr, driveMgr, nsMgr, tunnel.NewRegistry(), staticFS, opencodeStaticFS)
+		srv := server.New(authSvc, oidcMgr, database, sandboxStore, procMgr, driveMgr, nsMgr, tunnel.NewRegistry(), staticFS, opencodeStaticFS, !strings.EqualFold(os.Getenv("PASSWORD_AUTH_ENABLED"), "false"))
 		addr := fmt.Sprintf(":%d", port)
 
 		// Start idle watcher with a dynamic timeout getter that reads from the settings chain.
@@ -239,7 +241,7 @@ var serveCmd = &cobra.Command{
 	},
 }
 
-func createK8sDriveManager(database *db.DB, storageSize, storageClassName string) storage.DriveManager {
+func createK8sDriveManager(database *db.DB, storageSize int64, storageClassName string) storage.DriveManager {
 	restCfg, err := buildRESTConfig()
 	if err != nil {
 		log.Printf("Warning: K8s workspace drive manager unavailable: %v", err)
@@ -271,6 +273,52 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// parseEnvBytes parses an env var as bytes (int64).
+// Tries plain integer first, then falls back to K8s memory format (e.g. "10Gi").
+func parseEnvBytes(key string, fallback int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	// Try plain integer first.
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return n
+	}
+	// Fall back to K8s memory format.
+	return parseK8sMemoryBytes(v, fallback)
+}
+
+// parseK8sMemoryBytes converts a K8s memory string to bytes.
+func parseK8sMemoryBytes(s string, fallback int64) int64 {
+	multiplier := int64(1)
+	numStr := s
+	switch {
+	case strings.HasSuffix(s, "Gi"):
+		multiplier = 1024 * 1024 * 1024
+		numStr = strings.TrimSuffix(s, "Gi")
+	case strings.HasSuffix(s, "Mi"):
+		multiplier = 1024 * 1024
+		numStr = strings.TrimSuffix(s, "Mi")
+	case strings.HasSuffix(s, "Ki"):
+		multiplier = 1024
+		numStr = strings.TrimSuffix(s, "Ki")
+	case strings.HasSuffix(s, "G"):
+		multiplier = 1000 * 1000 * 1000
+		numStr = strings.TrimSuffix(s, "G")
+	case strings.HasSuffix(s, "M"):
+		multiplier = 1000 * 1000
+		numStr = strings.TrimSuffix(s, "M")
+	case strings.HasSuffix(s, "K"):
+		multiplier = 1000
+		numStr = strings.TrimSuffix(s, "K")
+	}
+	f, err := strconv.ParseFloat(numStr, 64)
+	if err != nil {
+		return fallback
+	}
+	return int64(f * float64(multiplier))
 }
 
 func init() {

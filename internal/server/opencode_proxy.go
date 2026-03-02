@@ -140,8 +140,8 @@ func (s *Server) handleSubdomainProxy(w http.ResponseWriter, r *http.Request, sa
 	}
 
 	// Inject Basic Auth header for opencode server authentication.
-	if sbx.OpencodePassword != "" {
-		cred := base64.StdEncoding.EncodeToString([]byte("opencode:" + sbx.OpencodePassword))
+	if sbx.OpencodeToken != "" {
+		cred := base64.StdEncoding.EncodeToString([]byte("opencode:" + sbx.OpencodeToken))
 		r.Header.Set("Authorization", "Basic "+cred)
 	}
 

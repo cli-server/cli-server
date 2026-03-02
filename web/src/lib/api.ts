@@ -4,7 +4,6 @@ export type WorkspaceRole = 'owner' | 'maintainer' | 'developer' | 'guest'
 export interface Workspace {
   id: string
   name: string
-  diskPvcName?: string
   createdAt: string
   updatedAt: string
 }
@@ -39,11 +38,11 @@ export async function login(username: string, password: string): Promise<boolean
   return res.ok
 }
 
-export async function register(username: string, password: string): Promise<boolean> {
+export async function register(username: string, email: string, password: string): Promise<boolean> {
   const res = await fetch('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, email, password }),
   })
   return res.ok
 }
@@ -53,14 +52,17 @@ export async function checkAuth(): Promise<boolean> {
   return res.ok
 }
 
-export async function getOIDCProviders(): Promise<string[]> {
+export async function getOIDCProviders(): Promise<{ providers: string[]; passwordAuth: boolean }> {
   const res = await fetch('/api/auth/oidc/providers')
-  if (!res.ok) return []
+  if (!res.ok) return { providers: [], passwordAuth: true }
   const data = await res.json()
-  return data.providers || []
+  return {
+    providers: data.providers || [],
+    passwordAuth: data.passwordAuth !== false,
+  }
 }
 
-export async function getMe(): Promise<{ id: string; username: string; email?: string | null; role: string; avatarUrl?: string | null }> {
+export async function getMe(): Promise<{ id: string; username: string; email: string; name?: string | null; picture?: string | null; role: string }> {
   const res = await fetch('/api/auth/me')
   if (!res.ok) throw new Error('Failed to get user info')
   return res.json()
@@ -158,7 +160,6 @@ export async function createSandbox(
   workspaceId: string,
   name?: string,
   type?: 'opencode' | 'openclaw',
-  telegramBotToken?: string
 ): Promise<Sandbox> {
   const res = await fetch(`/api/workspaces/${workspaceId}/sandboxes`, {
     method: 'POST',
@@ -166,7 +167,6 @@ export async function createSandbox(
     body: JSON.stringify({
       name: name || 'New Sandbox',
       type: type || 'opencode',
-      ...(telegramBotToken ? { telegramBotToken } : {}),
     }),
   })
   if (!res.ok) {
@@ -214,7 +214,8 @@ export async function createAgentCode(workspaceId: string): Promise<{ code: stri
 export interface AdminUser {
   id: string
   username: string
-  email: string | null
+  email: string
+  name: string | null
   role: string
   createdAt: string
 }
@@ -269,13 +270,13 @@ export async function adminUpdateUserRole(userId: string, role: string): Promise
 export interface QuotaDefaults {
   maxWorkspacesPerUser: number
   maxSandboxesPerWorkspace: number
-  workspaceDriveSize: string
-  sandboxCpu: string
-  sandboxMemory: string
-  idleTimeout: string
-  wsMaxTotalCpu: string
-  wsMaxTotalMemory: string
-  wsMaxIdleTimeout: string
+  maxWorkspaceDriveSize: number   // bytes
+  maxSandboxCpu: number           // millicores
+  maxSandboxMemory: number        // bytes
+  maxIdleTimeout: number          // seconds
+  wsMaxTotalCpu: number           // millicores
+  wsMaxTotalMemory: number        // bytes
+  wsMaxIdleTimeout: number        // seconds
 }
 
 export interface UserQuotaOverrides {
@@ -290,23 +291,23 @@ export interface UserQuotaResponse {
 
 export interface WorkspaceQuotaOverrides {
   maxSandboxes: number | null
-  sandboxCpu: string | null
-  sandboxMemory: string | null
-  idleTimeout: string | null
-  maxTotalCpu: string | null
-  maxTotalMemory: string | null
-  driveSize: string | null
+  maxSandboxCpu: number | null    // millicores
+  maxSandboxMemory: number | null // bytes
+  maxIdleTimeout: number | null   // seconds
+  maxTotalCpu: number | null      // millicores
+  maxTotalMemory: number | null   // bytes
+  maxDriveSize: number | null     // bytes
   updatedAt: string
 }
 
 export interface WorkspaceQuotaDefaults {
   maxSandboxes: number
-  sandboxCpu: string
-  sandboxMemory: string
-  idleTimeout: string
-  maxTotalCpu: string
-  maxTotalMemory: string
-  driveSize: string
+  maxSandboxCpu: number           // millicores
+  maxSandboxMemory: number        // bytes
+  maxIdleTimeout: number          // seconds
+  maxTotalCpu: number             // millicores
+  maxTotalMemory: number          // bytes
+  maxDriveSize: number            // bytes
 }
 
 export interface WorkspaceQuotaResponse {
@@ -375,12 +376,12 @@ export async function adminSetWorkspaceQuota(
   workspaceId: string,
   overrides: {
     maxSandboxes?: number
-    sandboxCpu?: string
-    sandboxMemory?: string
-    idleTimeout?: string
-    maxTotalCpu?: string
-    maxTotalMemory?: string
-    driveSize?: string
+    maxSandboxCpu?: number
+    maxSandboxMemory?: number
+    maxIdleTimeout?: number
+    maxTotalCpu?: number
+    maxTotalMemory?: number
+    maxDriveSize?: number
   }
 ): Promise<void> {
   const res = await fetch(`/api/admin/workspaces/${workspaceId}/quota`, {
