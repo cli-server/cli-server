@@ -195,9 +195,10 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 		nanoCPUs = int64(opts.CPU) * 1_000_000
 	}
 	containerConfig := &container.Config{
-		Image:  containerImage,
-		Env:    containerEnv,
-		Labels: map[string]string{labelManagedBy: labelValue},
+		Image:      containerImage,
+		Env:        containerEnv,
+		Labels:     map[string]string{labelManagedBy: labelValue},
+		WorkingDir: "/home/agent/projects",
 	}
 	if opts.SandboxType == "openclaw" {
 		openclawCfg := sandbox.BuildOpenclawConfig(os.Getenv("ANTHROPIC_BASE_URL"), os.Getenv("ANTHROPIC_API_KEY"))

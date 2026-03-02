@@ -256,6 +256,7 @@ mkdir -p /mnt/session-data/projects
 						Env:             containerEnv,
 						VolumeMounts:    volumeMounts,
 						ImagePullPolicy: corev1.PullAlways,
+						WorkingDir:      "/home/agent/projects",
 						Resources: corev1.ResourceRequirements{
 							Limits: corev1.ResourceList{
 								corev1.ResourceMemory: memoryQuantity(opts.Memory),
@@ -440,6 +441,7 @@ mkdir -p /mnt/session-data/projects
 		Env:             containerEnv,
 		VolumeMounts:    volumeMounts,
 		ImagePullPolicy: corev1.PullAlways,
+		WorkingDir:      "/home/agent/projects",
 		Ports: []corev1.ContainerPort{{
 			ContainerPort: int32(containerPort),
 			Protocol:      corev1.ProtocolTCP,
