@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ArrowLeft, Loader2 } from 'lucide-react'
+import { ArrowLeft, Loader2, Users, Box, Container, Settings } from 'lucide-react'
 import {
   type AdminUser,
   type AdminWorkspace,
@@ -69,42 +69,40 @@ export function AdminPanel({ onBack }: AdminPanelProps) {
     }
   }
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'users', label: 'Users' },
-    { key: 'workspaces', label: 'Workspaces' },
-    { key: 'sandboxes', label: 'Sandboxes' },
-    { key: 'settings', label: 'Settings' },
+  const tabs: { key: Tab; label: string; icon: typeof Users }[] = [
+    { key: 'users', label: 'Users', icon: Users },
+    { key: 'workspaces', label: 'Workspaces', icon: Box },
+    { key: 'sandboxes', label: 'Sandboxes', icon: Container },
+    { key: 'settings', label: 'Settings', icon: Settings },
   ]
 
   return (
-    <div className="flex h-full w-full flex-col bg-[var(--background)]">
-      {/* Header */}
-      <div className="flex items-center gap-4 border-b border-[var(--border)] px-6 py-4">
+    <div className="flex h-full w-full bg-[var(--background)]">
+      {/* Sidebar */}
+      <div className="flex w-52 flex-col border-r border-[var(--border)]">
         <button
           onClick={onBack}
-          className="rounded-md p-1 hover:bg-[var(--secondary)]"
-          title="Back to dashboard"
+          className="flex items-center gap-2 px-4 py-4 text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
         >
-          <ArrowLeft size={20} />
+          <ArrowLeft size={16} />
+          Back to workspace
         </button>
-        <h1 className="text-lg font-semibold text-[var(--foreground)]">Admin Panel</h1>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex border-b border-[var(--border)] px-6">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`px-4 py-3 text-sm font-medium transition-colors ${
-              tab === t.key
-                ? 'border-b-2 border-[var(--foreground)] text-[var(--foreground)]'
-                : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+        <nav className="flex flex-col gap-0.5 px-2">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                tab === t.key
+                  ? 'bg-[var(--secondary)] text-[var(--foreground)]'
+                  : 'text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <t.icon size={16} />
+              {t.label}
+            </button>
+          ))}
+        </nav>
       </div>
 
       {/* Content */}
