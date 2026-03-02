@@ -121,73 +121,85 @@ func (s *Server) getResourceDefaults() ResourceDefaults {
 	return rd
 }
 
-// getDefaultQuotas resolves system-wide defaults with priority:
-// 1. DB system_settings table (admin UI overrides)
-// 2. Environment variables (Helm)
-// 3. Hardcoded fallback (10/20)
-func (s *Server) getDefaultQuotas() (maxWs, maxSbx int) {
-	rd := s.getResourceDefaults()
-	return rd.MaxWorkspacesPerUser, rd.MaxSandboxesPerWorkspace
+// WorkspaceDefaults holds workspace-level resolved defaults (system defaults ← workspace_quotas override).
+type WorkspaceDefaults struct {
+	MaxSandboxes int
+	SandboxCPU   string
+	SandboxMemory string
+	IdleTimeout  string
+	MaxTotalCPU  string
+	MaxTotalMemory string
+	DriveSize    string
 }
 
-// effectiveResourceDefaults returns per-user overrides applied on top of system defaults.
-func (s *Server) effectiveResourceDefaults(userID string) (ResourceDefaults, error) {
+// effectiveWorkspaceDefaults merges system defaults with workspace_quotas overrides.
+func (s *Server) effectiveWorkspaceDefaults(workspaceID string) (WorkspaceDefaults, error) {
 	rd := s.getResourceDefaults()
+	wd := WorkspaceDefaults{
+		MaxSandboxes:   rd.MaxSandboxesPerWorkspace,
+		SandboxCPU:     rd.SandboxCPU,
+		SandboxMemory:  rd.SandboxMemory,
+		IdleTimeout:    rd.IdleTimeout,
+		MaxTotalCPU:    rd.WsMaxTotalCPU,
+		MaxTotalMemory: rd.WsMaxTotalMemory,
+		DriveSize:      rd.WorkspaceDriveSize,
+	}
+
+	wq, err := s.DB.GetWorkspaceQuota(workspaceID)
+	if err != nil {
+		return wd, err
+	}
+	if wq == nil {
+		return wd, nil
+	}
+
+	if wq.MaxSandboxes != nil {
+		wd.MaxSandboxes = *wq.MaxSandboxes
+	}
+	if wq.SandboxCPU != nil {
+		wd.SandboxCPU = *wq.SandboxCPU
+	}
+	if wq.SandboxMemory != nil {
+		wd.SandboxMemory = *wq.SandboxMemory
+	}
+	if wq.IdleTimeout != nil {
+		wd.IdleTimeout = *wq.IdleTimeout
+	}
+	if wq.MaxTotalCPU != nil {
+		wd.MaxTotalCPU = *wq.MaxTotalCPU
+	}
+	if wq.MaxTotalMemory != nil {
+		wd.MaxTotalMemory = *wq.MaxTotalMemory
+	}
+	if wq.DriveSize != nil {
+		wd.DriveSize = *wq.DriveSize
+	}
+
+	return wd, nil
+}
+
+// effectiveQuota returns the effective max-workspaces quota for a user.
+// Per-user overrides take precedence over system defaults.
+func (s *Server) effectiveQuota(userID string) (maxWs int, err error) {
+	rd := s.getResourceDefaults()
+	maxWs = rd.MaxWorkspacesPerUser
 
 	uq, err := s.DB.GetUserQuota(userID)
 	if err != nil {
-		return rd, err
+		return 0, err
 	}
-	if uq == nil {
-		return rd, nil
-	}
-
-	if uq.MaxWorkspaces != nil {
-		rd.MaxWorkspacesPerUser = *uq.MaxWorkspaces
-	}
-	if uq.MaxSandboxesPerWorkspace != nil {
-		rd.MaxSandboxesPerWorkspace = *uq.MaxSandboxesPerWorkspace
-	}
-	if uq.WorkspaceDriveSize != nil {
-		rd.WorkspaceDriveSize = *uq.WorkspaceDriveSize
-	}
-	if uq.SandboxCPU != nil {
-		rd.SandboxCPU = *uq.SandboxCPU
-	}
-	if uq.SandboxMemory != nil {
-		rd.SandboxMemory = *uq.SandboxMemory
-	}
-	if uq.IdleTimeout != nil {
-		rd.IdleTimeout = *uq.IdleTimeout
-	}
-	if uq.WsMaxTotalCPU != nil {
-		rd.WsMaxTotalCPU = *uq.WsMaxTotalCPU
-	}
-	if uq.WsMaxTotalMemory != nil {
-		rd.WsMaxTotalMemory = *uq.WsMaxTotalMemory
-	}
-	if uq.WsMaxIdleTimeout != nil {
-		rd.WsMaxIdleTimeout = *uq.WsMaxIdleTimeout
+	if uq != nil && uq.MaxWorkspaces != nil {
+		maxWs = *uq.MaxWorkspaces
 	}
 
-	return rd, nil
-}
-
-// effectiveQuota returns the effective quota for a user.
-// Per-user overrides take precedence over system defaults.
-func (s *Server) effectiveQuota(userID string) (maxWs, maxSbx int, err error) {
-	rd, err := s.effectiveResourceDefaults(userID)
-	if err != nil {
-		return 0, 0, err
-	}
-	return rd.MaxWorkspacesPerUser, rd.MaxSandboxesPerWorkspace, nil
+	return maxWs, nil
 }
 
 // checkWorkspaceQuota checks if a user can create another workspace.
 // Returns whether creation is allowed, the current count, and the max.
 // max=0 means unlimited.
 func (s *Server) checkWorkspaceQuota(userID string) (allowed bool, current, max int, err error) {
-	maxWs, _, err := s.effectiveQuota(userID)
+	maxWs, err := s.effectiveQuota(userID)
 	if err != nil {
 		return false, 0, 0, err
 	}
@@ -205,10 +217,10 @@ func (s *Server) checkWorkspaceQuota(userID string) (allowed bool, current, max 
 }
 
 // checkSandboxQuota checks if a workspace can have another sandbox.
-// Returns whether creation is allowed, the current count, and the max.
+// Uses workspace-level quotas.
 // max=0 means unlimited.
-func (s *Server) checkSandboxQuota(userID, workspaceID string) (allowed bool, current, max int, err error) {
-	_, maxSbx, err := s.effectiveQuota(userID)
+func (s *Server) checkSandboxQuota(workspaceID string) (allowed bool, current, max int, err error) {
+	wd, err := s.effectiveWorkspaceDefaults(workspaceID)
 	if err != nil {
 		return false, 0, 0, err
 	}
@@ -218,24 +230,25 @@ func (s *Server) checkSandboxQuota(userID, workspaceID string) (allowed bool, cu
 		return false, 0, 0, err
 	}
 
-	if maxSbx == 0 {
+	if wd.MaxSandboxes == 0 {
 		return true, current, 0, nil
 	}
 
-	return current < maxSbx, current, maxSbx, nil
+	return current < wd.MaxSandboxes, current, wd.MaxSandboxes, nil
 }
 
 // checkWorkspaceResourceBudget checks if adding a sandbox with the given resources
 // would exceed the workspace's total CPU/memory budget.
+// Uses workspace-level quotas.
 // Returns allowed=true if within budget or budget is unlimited (0).
-func (s *Server) checkWorkspaceResourceBudget(userID, workspaceID string, cpuMillis int, memBytes int64) (bool, error) {
-	rd, err := s.effectiveResourceDefaults(userID)
+func (s *Server) checkWorkspaceResourceBudget(workspaceID string, cpuMillis int, memBytes int64) (bool, error) {
+	wd, err := s.effectiveWorkspaceDefaults(workspaceID)
 	if err != nil {
 		return false, err
 	}
 
-	maxCPU := parseCPUMillicores(rd.WsMaxTotalCPU)
-	maxMem := parseMemoryBytes(rd.WsMaxTotalMemory)
+	maxCPU := parseCPUMillicores(wd.MaxTotalCPU)
+	maxMem := parseMemoryBytes(wd.MaxTotalMemory)
 
 	// 0 means unlimited
 	if maxCPU == 0 && maxMem == 0 {

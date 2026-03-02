@@ -6,6 +6,7 @@ import {
   type AdminSandbox,
   type QuotaDefaults,
   type UserQuotaResponse,
+  type WorkspaceQuotaResponse,
   adminListUsers,
   adminListWorkspaces,
   adminListSandboxes,
@@ -15,6 +16,9 @@ import {
   adminGetUserQuota,
   adminSetUserQuota,
   adminDeleteUserQuota,
+  adminGetWorkspaceQuota,
+  adminSetWorkspaceQuota,
+  adminDeleteWorkspaceQuota,
 } from '../lib/api'
 
 type Tab = 'users' | 'workspaces' | 'sandboxes' | 'settings'
@@ -186,36 +190,52 @@ function UsersTable({
 }
 
 function WorkspacesTable({ workspaces }: { workspaces: AdminWorkspace[] }) {
+  const [quotaWorkspace, setQuotaWorkspace] = useState<AdminWorkspace | null>(null)
+
   if (workspaces.length === 0) {
     return <p className="text-sm text-[var(--muted-foreground)]">No workspaces found.</p>
   }
   return (
-    <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-[var(--border)] bg-[var(--muted)]">
-            <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Name</th>
-            <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">ID</th>
-            <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Created At</th>
-            <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Updated At</th>
-          </tr>
-        </thead>
-        <tbody>
-          {workspaces.map((ws) => (
-            <tr key={ws.id} className="border-b border-[var(--border)] last:border-b-0">
-              <td className="px-4 py-3 text-[var(--foreground)]">{ws.name}</td>
-              <td className="px-4 py-3 font-mono text-xs text-[var(--muted-foreground)]">{ws.id}</td>
-              <td className="px-4 py-3 text-[var(--muted-foreground)]">
-                {new Date(ws.createdAt).toLocaleString()}
-              </td>
-              <td className="px-4 py-3 text-[var(--muted-foreground)]">
-                {new Date(ws.updatedAt).toLocaleString()}
-              </td>
+    <>
+      <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[var(--border)] bg-[var(--muted)]">
+              <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Name</th>
+              <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">ID</th>
+              <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Quota</th>
+              <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Created At</th>
+              <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Updated At</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {workspaces.map((ws) => (
+              <tr key={ws.id} className="border-b border-[var(--border)] last:border-b-0">
+                <td className="px-4 py-3 text-[var(--foreground)]">{ws.name}</td>
+                <td className="px-4 py-3 font-mono text-xs text-[var(--muted-foreground)]">{ws.id}</td>
+                <td className="px-4 py-3">
+                  <button
+                    onClick={() => setQuotaWorkspace(ws)}
+                    className="rounded-md border border-[var(--border)] px-2 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)]"
+                  >
+                    Edit
+                  </button>
+                </td>
+                <td className="px-4 py-3 text-[var(--muted-foreground)]">
+                  {new Date(ws.createdAt).toLocaleString()}
+                </td>
+                <td className="px-4 py-3 text-[var(--muted-foreground)]">
+                  {new Date(ws.updatedAt).toLocaleString()}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {quotaWorkspace && (
+        <WorkspaceQuotaModal workspace={quotaWorkspace} onClose={() => setQuotaWorkspace(null)} />
+      )}
+    </>
   )
 }
 
@@ -510,47 +530,22 @@ function UserQuotaModal({ user, onClose }: { user: AdminUser; onClose: () => voi
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState<UserQuotaResponse | null>(null)
   const [maxWs, setMaxWs] = useState('')
-  const [maxSbx, setMaxSbx] = useState('')
-  const [workspaceDriveSize, setWorkspaceDriveSize] = useState('')
-  const [sandboxCpu, setSandboxCpu] = useState('')
-  const [sandboxMemory, setSandboxMemory] = useState('')
-  const [idleTimeout, setIdleTimeout] = useState('')
-  const [wsMaxTotalCpu, setWsMaxTotalCpu] = useState('')
-  const [wsMaxTotalMemory, setWsMaxTotalMemory] = useState('')
-  const [wsMaxIdleTimeout, setWsMaxIdleTimeout] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     adminGetUserQuota(user.id).then((d) => {
       setData(d)
       setMaxWs(d.overrides?.maxWorkspaces != null ? String(d.overrides.maxWorkspaces) : '')
-      setMaxSbx(d.overrides?.maxSandboxesPerWorkspace != null ? String(d.overrides.maxSandboxesPerWorkspace) : '')
-      setWorkspaceDriveSize(d.overrides?.workspaceDriveSize ?? '')
-      setSandboxCpu(d.overrides?.sandboxCpu ?? '')
-      setSandboxMemory(d.overrides?.sandboxMemory ?? '')
-      setIdleTimeout(d.overrides?.idleTimeout ?? '')
-      setWsMaxTotalCpu(d.overrides?.wsMaxTotalCpu ?? '')
-      setWsMaxTotalMemory(d.overrides?.wsMaxTotalMemory ?? '')
-      setWsMaxIdleTimeout(d.overrides?.wsMaxIdleTimeout ?? '')
     }).catch(() => {}).finally(() => setLoading(false))
   }, [user.id])
 
   const handleSave = async () => {
     const ws = maxWs !== '' ? parseInt(maxWs, 10) : undefined
-    const sbx = maxSbx !== '' ? parseInt(maxSbx, 10) : undefined
-    if ((ws !== undefined && (isNaN(ws) || ws < 0)) || (sbx !== undefined && (isNaN(sbx) || sbx < 0))) return
+    if (ws !== undefined && (isNaN(ws) || ws < 0)) return
     setSaving(true)
     try {
       await adminSetUserQuota(user.id, {
         ...(ws !== undefined ? { maxWorkspaces: ws } : {}),
-        ...(sbx !== undefined ? { maxSandboxesPerWorkspace: sbx } : {}),
-        ...(workspaceDriveSize ? { workspaceDriveSize } : {}),
-        ...(sandboxCpu ? { sandboxCpu } : {}),
-        ...(sandboxMemory ? { sandboxMemory } : {}),
-        ...(idleTimeout ? { idleTimeout } : {}),
-        ...(wsMaxTotalCpu ? { wsMaxTotalCpu } : {}),
-        ...(wsMaxTotalMemory ? { wsMaxTotalMemory } : {}),
-        ...(wsMaxIdleTimeout ? { wsMaxIdleTimeout } : {}),
       })
       onClose()
     } catch {
@@ -588,7 +583,7 @@ function UserQuotaModal({ user, onClose }: { user: AdminUser; onClose: () => voi
         ) : data ? (
           <div className="flex flex-col gap-4">
             <p className="text-xs text-[var(--muted-foreground)]">
-              Leave blank to use system defaults. Use 0 for unlimited where applicable.
+              Leave blank to use system defaults. Use 0 for unlimited.
             </p>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
@@ -603,16 +598,126 @@ function UserQuotaModal({ user, onClose }: { user: AdminUser; onClose: () => voi
                 className={inputClass}
               />
             </div>
+            <div className="flex justify-between mt-2">
+              <button
+                onClick={handleRevert}
+                disabled={saving || !data.overrides}
+                className="rounded-md border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-50"
+              >
+                Revert to defaults
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={onClose}
+                  className="rounded-md border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--secondary)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="rounded-md bg-[var(--foreground)] px-4 py-2 text-sm font-medium text-[var(--background)] hover:opacity-90 disabled:opacity-50"
+                >
+                  {saving ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-[var(--muted-foreground)]">Failed to load quota data.</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function WorkspaceQuotaModal({ workspace, onClose }: { workspace: AdminWorkspace; onClose: () => void }) {
+  const [loading, setLoading] = useState(true)
+  const [data, setData] = useState<WorkspaceQuotaResponse | null>(null)
+  const [maxSbx, setMaxSbx] = useState('')
+  const [sandboxCpu, setSandboxCpu] = useState('')
+  const [sandboxMemory, setSandboxMemory] = useState('')
+  const [idleTimeout, setIdleTimeout] = useState('')
+  const [maxTotalCpu, setMaxTotalCpu] = useState('')
+  const [maxTotalMemory, setMaxTotalMemory] = useState('')
+  const [driveSize, setDriveSize] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    adminGetWorkspaceQuota(workspace.id).then((d) => {
+      setData(d)
+      setMaxSbx(d.overrides?.maxSandboxes != null ? String(d.overrides.maxSandboxes) : '')
+      setSandboxCpu(d.overrides?.sandboxCpu ?? '')
+      setSandboxMemory(d.overrides?.sandboxMemory ?? '')
+      setIdleTimeout(d.overrides?.idleTimeout ?? '')
+      setMaxTotalCpu(d.overrides?.maxTotalCpu ?? '')
+      setMaxTotalMemory(d.overrides?.maxTotalMemory ?? '')
+      setDriveSize(d.overrides?.driveSize ?? '')
+    }).catch(() => {}).finally(() => setLoading(false))
+  }, [workspace.id])
+
+  const handleSave = async () => {
+    const sbx = maxSbx !== '' ? parseInt(maxSbx, 10) : undefined
+    if (sbx !== undefined && (isNaN(sbx) || sbx < 0)) return
+    setSaving(true)
+    try {
+      await adminSetWorkspaceQuota(workspace.id, {
+        ...(sbx !== undefined ? { maxSandboxes: sbx } : {}),
+        ...(sandboxCpu ? { sandboxCpu } : {}),
+        ...(sandboxMemory ? { sandboxMemory } : {}),
+        ...(idleTimeout ? { idleTimeout } : {}),
+        ...(maxTotalCpu ? { maxTotalCpu } : {}),
+        ...(maxTotalMemory ? { maxTotalMemory } : {}),
+        ...(driveSize ? { driveSize } : {}),
+      })
+      onClose()
+    } catch {
+      // ignore
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRevert = async () => {
+    setSaving(true)
+    try {
+      await adminDeleteWorkspaceQuota(workspace.id)
+      onClose()
+    } catch {
+      // ignore
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div
+        className="w-full max-w-sm rounded-lg border border-[var(--border)] bg-[var(--card)] p-6 shadow-xl max-h-[80vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-lg font-semibold text-[var(--foreground)] mb-4">
+          Workspace Quota: {workspace.name}
+        </h2>
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 size={24} className="animate-spin text-[var(--muted-foreground)]" />
+          </div>
+        ) : data ? (
+          <div className="flex flex-col gap-4">
+            <p className="text-xs text-[var(--muted-foreground)]">
+              Leave blank to use system defaults. Use 0 for unlimited where applicable.
+            </p>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-                Max sandboxes per workspace
+                Max sandboxes
               </label>
               <input
                 type="number"
                 min="0"
                 value={maxSbx}
                 onChange={(e) => setMaxSbx(e.target.value)}
-                placeholder={String(data.defaults.maxSandboxesPerWorkspace)}
+                placeholder={String(data.defaults.maxSandboxes)}
                 className={inputClass}
               />
             </div>
@@ -627,6 +732,7 @@ function UserQuotaModal({ user, onClose }: { user: AdminUser; onClose: () => voi
                 placeholder={data.defaults.sandboxCpu}
                 className={inputClass}
               />
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">K8s CPU string, e.g. "2", "500m"</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
@@ -639,6 +745,7 @@ function UserQuotaModal({ user, onClose }: { user: AdminUser; onClose: () => voi
                 placeholder={data.defaults.sandboxMemory}
                 className={inputClass}
               />
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">K8s memory string, e.g. "2Gi", "512Mi"</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
@@ -651,18 +758,7 @@ function UserQuotaModal({ user, onClose }: { user: AdminUser; onClose: () => voi
                 placeholder={data.defaults.idleTimeout}
                 className={inputClass}
               />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-                Workspace drive size
-              </label>
-              <input
-                type="text"
-                value={workspaceDriveSize}
-                onChange={(e) => setWorkspaceDriveSize(e.target.value)}
-                placeholder={data.defaults.workspaceDriveSize}
-                className={inputClass}
-              />
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">Go duration, e.g. "30m", "1h". Use "0" to disable.</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
@@ -670,11 +766,12 @@ function UserQuotaModal({ user, onClose }: { user: AdminUser; onClose: () => voi
               </label>
               <input
                 type="text"
-                value={wsMaxTotalCpu}
-                onChange={(e) => setWsMaxTotalCpu(e.target.value)}
-                placeholder={data.defaults.wsMaxTotalCpu}
+                value={maxTotalCpu}
+                onChange={(e) => setMaxTotalCpu(e.target.value)}
+                placeholder={data.defaults.maxTotalCpu}
                 className={inputClass}
               />
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">Total CPU across all sandboxes. 0 = unlimited.</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
@@ -682,23 +779,25 @@ function UserQuotaModal({ user, onClose }: { user: AdminUser; onClose: () => voi
               </label>
               <input
                 type="text"
-                value={wsMaxTotalMemory}
-                onChange={(e) => setWsMaxTotalMemory(e.target.value)}
-                placeholder={data.defaults.wsMaxTotalMemory}
+                value={maxTotalMemory}
+                onChange={(e) => setMaxTotalMemory(e.target.value)}
+                placeholder={data.defaults.maxTotalMemory}
                 className={inputClass}
               />
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">Total memory across all sandboxes. 0 = unlimited.</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
-                Max idle timeout
+                Workspace drive size
               </label>
               <input
                 type="text"
-                value={wsMaxIdleTimeout}
-                onChange={(e) => setWsMaxIdleTimeout(e.target.value)}
-                placeholder={data.defaults.wsMaxIdleTimeout}
+                value={driveSize}
+                onChange={(e) => setDriveSize(e.target.value)}
+                placeholder={data.defaults.driveSize}
                 className={inputClass}
               />
+              <p className="text-xs text-[var(--muted-foreground)] mt-1">PVC size for workspace. Applied on creation.</p>
             </div>
             <div className="flex justify-between mt-2">
               <button

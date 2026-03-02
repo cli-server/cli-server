@@ -280,20 +280,38 @@ export interface QuotaDefaults {
 
 export interface UserQuotaOverrides {
   maxWorkspaces: number | null
-  maxSandboxesPerWorkspace: number | null
-  workspaceDriveSize: string | null
-  sandboxCpu: string | null
-  sandboxMemory: string | null
-  idleTimeout: string | null
-  wsMaxTotalCpu: string | null
-  wsMaxTotalMemory: string | null
-  wsMaxIdleTimeout: string | null
   updatedAt: string
 }
 
 export interface UserQuotaResponse {
-  defaults: QuotaDefaults
+  defaults: { maxWorkspacesPerUser: number }
   overrides: UserQuotaOverrides | null
+}
+
+export interface WorkspaceQuotaOverrides {
+  maxSandboxes: number | null
+  sandboxCpu: string | null
+  sandboxMemory: string | null
+  idleTimeout: string | null
+  maxTotalCpu: string | null
+  maxTotalMemory: string | null
+  driveSize: string | null
+  updatedAt: string
+}
+
+export interface WorkspaceQuotaDefaults {
+  maxSandboxes: number
+  sandboxCpu: string
+  sandboxMemory: string
+  idleTimeout: string
+  maxTotalCpu: string
+  maxTotalMemory: string
+  driveSize: string
+}
+
+export interface WorkspaceQuotaResponse {
+  defaults: WorkspaceQuotaDefaults
+  overrides: WorkspaceQuotaOverrides | null
 }
 
 export interface QuotaExceededError {
@@ -330,14 +348,6 @@ export async function adminSetUserQuota(
   userId: string,
   overrides: {
     maxWorkspaces?: number
-    maxSandboxesPerWorkspace?: number
-    workspaceDriveSize?: string
-    sandboxCpu?: string
-    sandboxMemory?: string
-    idleTimeout?: string
-    wsMaxTotalCpu?: string
-    wsMaxTotalMemory?: string
-    wsMaxIdleTimeout?: string
   }
 ): Promise<void> {
   const res = await fetch(`/api/admin/users/${userId}/quota`, {
@@ -351,4 +361,37 @@ export async function adminSetUserQuota(
 export async function adminDeleteUserQuota(userId: string): Promise<void> {
   const res = await fetch(`/api/admin/users/${userId}/quota`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to delete user quota')
+}
+
+// Workspace quota API
+
+export async function adminGetWorkspaceQuota(workspaceId: string): Promise<WorkspaceQuotaResponse> {
+  const res = await fetch(`/api/admin/workspaces/${workspaceId}/quota`)
+  if (!res.ok) throw new Error('Failed to get workspace quota')
+  return res.json()
+}
+
+export async function adminSetWorkspaceQuota(
+  workspaceId: string,
+  overrides: {
+    maxSandboxes?: number
+    sandboxCpu?: string
+    sandboxMemory?: string
+    idleTimeout?: string
+    maxTotalCpu?: string
+    maxTotalMemory?: string
+    driveSize?: string
+  }
+): Promise<void> {
+  const res = await fetch(`/api/admin/workspaces/${workspaceId}/quota`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(overrides),
+  })
+  if (!res.ok) throw new Error('Failed to set workspace quota')
+}
+
+export async function adminDeleteWorkspaceQuota(workspaceId: string): Promise<void> {
+  const res = await fetch(`/api/admin/workspaces/${workspaceId}/quota`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete workspace quota')
 }

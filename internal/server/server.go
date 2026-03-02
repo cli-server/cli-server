@@ -214,6 +214,11 @@ func (s *Server) Router() http.Handler {
 			r.Get("/users/{id}/quota", s.handleAdminGetUserQuota)
 			r.Put("/users/{id}/quota", s.handleAdminSetUserQuota)
 			r.Delete("/users/{id}/quota", s.handleAdminDeleteUserQuota)
+
+			// Workspace quota management
+			r.Get("/workspaces/{id}/quota", s.handleAdminGetWorkspaceQuota)
+			r.Put("/workspaces/{id}/quota", s.handleAdminSetWorkspaceQuota)
+			r.Delete("/workspaces/{id}/quota", s.handleAdminDeleteWorkspaceQuota)
 		})
 	})
 
@@ -765,8 +770,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Quota check.
-	userID := auth.UserIDFromContext(r.Context())
-	allowed, current, max, err := s.checkSandboxQuota(userID, wsID)
+	allowed, current, max, err := s.checkSandboxQuota(wsID)
 	if err != nil {
 		log.Printf("failed to check sandbox quota: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -783,19 +787,19 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve effective resource defaults for this user.
-	rd, err := s.effectiveResourceDefaults(userID)
+	// Resolve effective workspace defaults.
+	wd, err := s.effectiveWorkspaceDefaults(wsID)
 	if err != nil {
-		log.Printf("failed to get resource defaults: %v", err)
+		log.Printf("failed to get workspace defaults: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	cpuMillis := parseCPUMillicores(rd.SandboxCPU)
-	memBytes := parseMemoryBytes(rd.SandboxMemory)
+	cpuMillis := parseCPUMillicores(wd.SandboxCPU)
+	memBytes := parseMemoryBytes(wd.SandboxMemory)
 
 	// Check workspace resource budget.
-	budgetOk, err := s.checkWorkspaceResourceBudget(userID, wsID, cpuMillis, memBytes)
+	budgetOk, err := s.checkWorkspaceResourceBudget(wsID, cpuMillis, memBytes)
 	if err != nil {
 		log.Printf("failed to check workspace resource budget: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -896,8 +900,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 				SandboxType:      sandboxType,
 				TelegramBotToken: req.TelegramBotToken,
 				GatewayToken:     gatewayToken,
-				CPULimit:         rd.SandboxCPU,
-				MemoryLimit:      rd.SandboxMemory,
+				CPULimit:         wd.SandboxCPU,
+				MemoryLimit:      wd.SandboxMemory,
 			})
 			if err != nil {
 				log.Printf("failed to start container for sandbox %s: %v", id, err)
@@ -913,8 +917,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 				SandboxType:      sandboxType,
 				TelegramBotToken: req.TelegramBotToken,
 				GatewayToken:     gatewayToken,
-				CPULimit:         rd.SandboxCPU,
-				MemoryLimit:      rd.SandboxMemory,
+				CPULimit:         wd.SandboxCPU,
+				MemoryLimit:      wd.SandboxMemory,
 			}); err != nil {
 				log.Printf("failed to start container for sandbox %s: %v", id, err)
 				s.Sandboxes.Delete(id)
