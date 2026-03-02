@@ -10,6 +10,7 @@ export interface UserInfo {
   username: string
   email?: string | null
   role: string
+  avatarUrl?: string | null
 }
 
 export default function App() {

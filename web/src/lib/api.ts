@@ -60,7 +60,7 @@ export async function getOIDCProviders(): Promise<string[]> {
   return data.providers || []
 }
 
-export async function getMe(): Promise<{ id: string; username: string; email?: string | null; role: string }> {
+export async function getMe(): Promise<{ id: string; username: string; email?: string | null; role: string; avatarUrl?: string | null }> {
   const res = await fetch('/api/auth/me')
   if (!res.ok) throw new Error('Failed to get user info')
   return res.json()

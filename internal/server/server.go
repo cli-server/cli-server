@@ -330,10 +330,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":       user.ID,
-		"username": user.Username,
-		"email":    user.Email,
-		"role":     user.Role,
+		"id":        user.ID,
+		"username":  user.Username,
+		"email":     user.Email,
+		"role":      user.Role,
+		"avatarUrl": user.AvatarURL,
 	})
 }
 

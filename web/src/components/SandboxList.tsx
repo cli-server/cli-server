@@ -52,7 +52,16 @@ function StatusDot({ status }: { status: string }) {
   }
 }
 
-function UserAvatar({ name }: { name: string }) {
+function UserAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string | null }) {
+  if (avatarUrl) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={name}
+        className="h-8 w-8 shrink-0 rounded-full"
+      />
+    )
+  }
   const initial = (name || '?')[0].toUpperCase()
   return (
     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--secondary)] text-xs font-medium text-[var(--foreground)]">
@@ -503,7 +512,7 @@ export function SandboxList({
           onClick={() => setMenuOpen((v) => !v)}
           className="flex w-full items-center gap-2 px-3 py-3 text-left hover:bg-[var(--secondary)]"
         >
-          <UserAvatar name={displayName} />
+          <UserAvatar name={displayName} avatarUrl={user?.avatarUrl} />
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-medium text-[var(--foreground)]">{displayName}</div>
             {user?.email && (

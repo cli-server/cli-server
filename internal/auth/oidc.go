@@ -22,7 +22,10 @@ import (
 type Provider interface {
 	Name() string
 	OAuth2Config() *oauth2.Config
-	GetIdentity(ctx context.Context, token *oauth2.Token) (subject, email, displayName string, err error)
+	// GetIdentity returns the identity from the provider.
+	// Returns: subject, email, displayName, login (preferred username), avatarURL, error.
+	// login and avatarURL may be empty if the provider doesn't support them.
+	GetIdentity(ctx context.Context, token *oauth2.Token) (subject, email, displayName, login, avatarURL string, err error)
 }
 
 // OIDCManager orchestrates multiple OIDC/OAuth2 providers.
@@ -144,7 +147,7 @@ func (m *OIDCManager) HandleCallback(w http.ResponseWriter, r *http.Request, pro
 	}
 
 	// Get identity from provider.
-	subject, email, displayName, err := p.GetIdentity(r.Context(), token)
+	subject, email, displayName, login, avatarURL, err := p.GetIdentity(r.Context(), token)
 	if err != nil {
 		log.Printf("OIDC get identity failed for %s: %v", providerName, err)
 		http.Error(w, "failed to get identity", http.StatusInternalServerError)
@@ -152,7 +155,7 @@ func (m *OIDCManager) HandleCallback(w http.ResponseWriter, r *http.Request, pro
 	}
 
 	// Resolve or create user.
-	userID, err := m.resolveUser(providerName, subject, email, displayName)
+	userID, err := m.resolveUser(providerName, subject, email, displayName, login, avatarURL)
 	if err != nil {
 		log.Printf("OIDC resolve user failed for %s: %v", providerName, err)
 		http.Error(w, "failed to resolve user", http.StatusInternalServerError)
@@ -172,7 +175,7 @@ func (m *OIDCManager) HandleCallback(w http.ResponseWriter, r *http.Request, pro
 }
 
 // resolveUser finds or creates a user for the given OIDC identity.
-func (m *OIDCManager) resolveUser(provider, subject, email, displayName string) (string, error) {
+func (m *OIDCManager) resolveUser(provider, subject, email, displayName, login, avatarURL string) (string, error) {
 	database := m.auth.DB()
 
 	// 1. Check if this OIDC identity is already linked.
@@ -181,7 +184,10 @@ func (m *OIDCManager) resolveUser(provider, subject, email, displayName string) 
 		return "", fmt.Errorf("lookup oidc identity: %w", err)
 	}
 	if oi != nil {
-		// Update email on the identity if it changed.
+		// Update avatar on each login.
+		if avatarURL != "" {
+			_ = database.UpdateUserAvatarURL(oi.UserID, avatarURL)
+		}
 		return oi.UserID, nil
 	}
 
@@ -197,13 +203,20 @@ func (m *OIDCManager) resolveUser(provider, subject, email, displayName string) 
 			if err := database.CreateOIDCIdentity(provider, subject, user.ID, emailPtr); err != nil {
 				return "", fmt.Errorf("link oidc identity: %w", err)
 			}
+			if avatarURL != "" {
+				_ = database.UpdateUserAvatarURL(user.ID, avatarURL)
+			}
 			return user.ID, nil
 		}
 	}
 
 	// 3. Create a new user.
 	userID := uuid.New().String()
-	username := sanitizeUsername(displayName, userID)
+	// Prefer the provider login (e.g. GitHub username) over the display name.
+	username := login
+	if username == "" {
+		username = sanitizeUsername(displayName, userID)
+	}
 	var emailPtr *string
 	if email != "" {
 		emailPtr = &email
@@ -214,6 +227,9 @@ func (m *OIDCManager) resolveUser(provider, subject, email, displayName string) 
 	// First registered user becomes admin.
 	if count, err := database.CountUsers(); err == nil && count == 1 {
 		_ = database.UpdateUserRole(userID, "admin")
+	}
+	if avatarURL != "" {
+		_ = database.UpdateUserAvatarURL(userID, avatarURL)
 	}
 	if err := database.CreateOIDCIdentity(provider, subject, userID, emailPtr); err != nil {
 		return "", fmt.Errorf("create oidc identity: %w", err)
@@ -272,10 +288,11 @@ func (g *GitHubProvider) OAuth2Config() *oauth2.Config {
 }
 
 type githubUser struct {
-	ID    int    `json:"id"`
-	Login string `json:"login"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	ID        int    `json:"id"`
+	Login     string `json:"login"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+	AvatarURL string `json:"avatar_url"`
 }
 
 type githubEmail struct {
@@ -284,22 +301,22 @@ type githubEmail struct {
 	Verified bool   `json:"verified"`
 }
 
-func (g *GitHubProvider) GetIdentity(ctx context.Context, token *oauth2.Token) (string, string, string, error) {
+func (g *GitHubProvider) GetIdentity(ctx context.Context, token *oauth2.Token) (string, string, string, string, string, error) {
 	client := oauth2.NewClient(ctx, oauth2.StaticTokenSource(token))
 
 	// Get user profile.
 	resp, err := client.Get("https://api.github.com/user")
 	if err != nil {
-		return "", "", "", fmt.Errorf("github user api: %w", err)
+		return "", "", "", "", "", fmt.Errorf("github user api: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", "", "", fmt.Errorf("github user api status: %d", resp.StatusCode)
+		return "", "", "", "", "", fmt.Errorf("github user api status: %d", resp.StatusCode)
 	}
 
 	var user githubUser
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
-		return "", "", "", fmt.Errorf("decode github user: %w", err)
+		return "", "", "", "", "", fmt.Errorf("decode github user: %w", err)
 	}
 
 	subject := fmt.Sprintf("%d", user.ID)
@@ -314,7 +331,7 @@ func (g *GitHubProvider) GetIdentity(ctx context.Context, token *oauth2.Token) (
 		email = g.fetchPrimaryEmail(ctx, client)
 	}
 
-	return subject, email, displayName, nil
+	return subject, email, displayName, user.Login, user.AvatarURL, nil
 }
 
 func (g *GitHubProvider) fetchPrimaryEmail(ctx context.Context, client *http.Client) string {
@@ -385,25 +402,26 @@ func (g *GenericOIDCProvider) OAuth2Config() *oauth2.Config {
 	}
 }
 
-func (g *GenericOIDCProvider) GetIdentity(ctx context.Context, token *oauth2.Token) (string, string, string, error) {
+func (g *GenericOIDCProvider) GetIdentity(ctx context.Context, token *oauth2.Token) (string, string, string, string, string, error) {
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok {
-		return "", "", "", fmt.Errorf("no id_token in token response")
+		return "", "", "", "", "", fmt.Errorf("no id_token in token response")
 	}
 
 	idToken, err := g.verifier.Verify(ctx, rawIDToken)
 	if err != nil {
-		return "", "", "", fmt.Errorf("verify id token: %w", err)
+		return "", "", "", "", "", fmt.Errorf("verify id token: %w", err)
 	}
 
 	var claims struct {
-		Sub   string `json:"sub"`
-		Email string `json:"email"`
-		Name  string `json:"name"`
+		Sub     string `json:"sub"`
+		Email   string `json:"email"`
+		Name    string `json:"name"`
+		Picture string `json:"picture"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
-		return "", "", "", fmt.Errorf("parse id token claims: %w", err)
+		return "", "", "", "", "", fmt.Errorf("parse id token claims: %w", err)
 	}
 
-	return claims.Sub, claims.Email, claims.Name, nil
+	return claims.Sub, claims.Email, claims.Name, "", claims.Picture, nil
 }
