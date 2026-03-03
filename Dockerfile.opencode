@@ -27,14 +27,13 @@ RUN useradd -m -d /home/agent agent
 
 USER agent
 
-# Pre-install @opencode-ai/plugin in ~/.config/opencode so Config.needsInstall() is
-# satisfied at runtime. installDependencies() writes @opencode-ai/plugin at the exact
-# Installation.VERSION into package.json, then runs `bun install`. We extract the
-# version from the compiled binary and replicate the same step at build time.
-RUN OPENCODE_VERSION=$(opencode --version 2>/dev/null | head -1) && \
-    mkdir -p /home/agent/.config/opencode && \
+# Pre-install @opencode-ai/plugin in ~/.config/opencode so Config.needsInstall()
+# finds node_modules already present. We install @latest here; at runtime if the
+# exact Installation.VERSION differs, installDependencies() runs a fast incremental
+# bun install (or gracefully fails if the version is unpublished).
+RUN mkdir -p /home/agent/.config/opencode && \
     cd /home/agent/.config/opencode && \
-    echo "{\"dependencies\":{\"@opencode-ai/plugin\":\"${OPENCODE_VERSION}\"}}" > package.json && \
+    echo '{"dependencies":{"@opencode-ai/plugin":"*"}}' > package.json && \
     bun install
 
 # Pre-install LSP servers into ~/.local/share/opencode/bin so first spawn doesn't
