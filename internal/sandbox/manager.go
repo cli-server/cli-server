@@ -143,17 +143,12 @@ func (m *Manager) Start(id, command string, args, env []string, opts process.Sta
 	// Build environment variables for the sandbox pod.
 	containerEnv := []corev1.EnvVar{{Name: "TERM", Value: "xterm-256color"}}
 
-	// Inject proxy URL and token so the sandbox uses the agentserver proxy
-	// instead of the real Anthropic API key.
-	proxyBaseURL := os.Getenv("ANTHROPIC_PROXY_URL")
-	if proxyBaseURL == "" {
-		proxyBaseURL = "http://agentserver." + m.cfg.AgentserverNamespace + ".svc.cluster.local:8080/proxy/anthropic/v1"
-	}
+	// Inject proxy credentials via OPENCODE_CONFIG_CONTENT (provider.anthropic.options).
 	if opts.ProxyToken != "" {
-		containerEnv = append(containerEnv,
-			corev1.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: proxyBaseURL},
-			corev1.EnvVar{Name: "ANTHROPIC_API_KEY", Value: opts.ProxyToken},
-		)
+		opcodeConfig := BuildOpencodeConfig(m.cfg.OpencodeConfigContent, opts.ProxyToken)
+		containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_CONFIG_CONTENT", Value: opcodeConfig})
+	} else if m.cfg.OpencodeConfigContent != "" {
+		containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_CONFIG_CONTENT", Value: m.cfg.OpencodeConfigContent})
 	}
 
 	// Volume mounts for the main container.
@@ -316,15 +311,10 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 	// Build environment variables for the sandbox pod.
 	containerEnv := []corev1.EnvVar{{Name: "TERM", Value: "xterm-256color"}}
 
-	// Inject proxy URL and token so the sandbox uses the agentserver proxy
-	// instead of the real Anthropic API key.
-	proxyBaseURL := os.Getenv("ANTHROPIC_PROXY_URL")
-	if proxyBaseURL == "" {
-		proxyBaseURL = "http://agentserver." + m.cfg.AgentserverNamespace + ".svc.cluster.local:8080/proxy/anthropic/v1"
-	}
-	if opts.ProxyToken != "" {
+	// Inject proxy credentials via provider config.
+	proxyBaseURL := ExtractProxyBaseURL(m.cfg.OpencodeConfigContent)
+	if opts.ProxyToken != "" && proxyBaseURL != "" {
 		containerEnv = append(containerEnv,
-			corev1.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: proxyBaseURL},
 			corev1.EnvVar{Name: "ANTHROPIC_API_KEY", Value: opts.ProxyToken},
 		)
 	}
@@ -359,9 +349,9 @@ exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 		if opts.OpencodeToken != "" {
 			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", Value: opts.OpencodeToken})
 		}
-		if m.cfg.OpencodeConfigContent != "" {
-			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_CONFIG_CONTENT", Value: m.cfg.OpencodeConfigContent})
-		}
+		// Merge proxy provider config into OPENCODE_CONFIG_CONTENT.
+		opcodeConfig := BuildOpencodeConfig(m.cfg.OpencodeConfigContent, opts.ProxyToken)
+		containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_CONFIG_CONTENT", Value: opcodeConfig})
 	}
 
 	// Volume mounts for the main container.

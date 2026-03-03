@@ -4,38 +4,21 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // GetOrCreateTrace returns an existing trace or creates a new one.
+// Uses INSERT ... ON CONFLICT to avoid TOCTOU races under concurrent requests.
 func (s *Store) GetOrCreateTrace(traceID, sandboxID, workspaceID, source string) (*Trace, error) {
 	t := &Trace{}
 	err := s.db.QueryRow(
-		`SELECT id, sandbox_id, workspace_id, source, created_at, updated_at FROM traces WHERE id = $1`,
-		traceID,
+		`INSERT INTO traces (id, sandbox_id, workspace_id, source)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
+		 RETURNING id, sandbox_id, workspace_id, source, created_at, updated_at`,
+		traceID, sandboxID, workspaceID, source,
 	).Scan(&t.ID, &t.SandboxID, &t.WorkspaceID, &t.Source, &t.CreatedAt, &t.UpdatedAt)
-
-	if err == sql.ErrNoRows {
-		now := time.Now()
-		_, err := s.db.Exec(
-			`INSERT INTO traces (id, sandbox_id, workspace_id, source, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $5)`,
-			traceID, sandboxID, workspaceID, source, now,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("create trace: %w", err)
-		}
-		return &Trace{
-			ID:          traceID,
-			SandboxID:   sandboxID,
-			WorkspaceID: workspaceID,
-			Source:      source,
-			CreatedAt:   now,
-			UpdatedAt:   now,
-		}, nil
-	}
 	if err != nil {
-		return nil, fmt.Errorf("get trace: %w", err)
+		return nil, fmt.Errorf("upsert trace: %w", err)
 	}
 	return t, nil
 }
@@ -54,12 +37,12 @@ func (s *Store) RecordUsage(u TokenUsage) error {
 	_, err := s.db.Exec(
 		`INSERT INTO usage (id, trace_id, sandbox_id, workspace_id, provider, model, message_id,
 			input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
-			streaming, duration_ms, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+			streaming, duration_ms, ttft_ms, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		u.ID, nullIfEmpty(u.TraceID), u.SandboxID, u.WorkspaceID, u.Provider, u.Model,
 		nullIfEmpty(u.MessageID), u.InputTokens, u.OutputTokens,
 		u.CacheCreationInputTokens, u.CacheReadInputTokens,
-		u.Streaming, u.DurationMs, u.CreatedAt,
+		u.Streaming, u.DurationMs, u.TTFTMs, u.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("record usage: %w", err)
@@ -204,7 +187,7 @@ func (s *Store) GetTraceDetail(traceID string) (*Trace, []TokenUsage, error) {
 		`SELECT id, COALESCE(trace_id, ''), sandbox_id, workspace_id, provider, model,
 			COALESCE(message_id, ''), input_tokens, output_tokens,
 			cache_creation_input_tokens, cache_read_input_tokens,
-			streaming, duration_ms, created_at
+			streaming, duration_ms, ttft_ms, created_at
 		 FROM usage WHERE trace_id = $1 ORDER BY created_at ASC`,
 		traceID,
 	)
@@ -219,7 +202,7 @@ func (s *Store) GetTraceDetail(traceID string) (*Trace, []TokenUsage, error) {
 		if err := rows.Scan(&u.ID, &u.TraceID, &u.SandboxID, &u.WorkspaceID,
 			&u.Provider, &u.Model, &u.MessageID, &u.InputTokens, &u.OutputTokens,
 			&u.CacheCreationInputTokens, &u.CacheReadInputTokens,
-			&u.Streaming, &u.DurationMs, &u.CreatedAt); err != nil {
+			&u.Streaming, &u.DurationMs, &u.TTFTMs, &u.CreatedAt); err != nil {
 			return nil, nil, fmt.Errorf("scan usage: %w", err)
 		}
 		usages = append(usages, u)

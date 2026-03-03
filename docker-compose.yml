@@ -10,6 +10,19 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  # Create the llmproxy database on the shared PostgreSQL instance.
+  postgres-init-llmproxy:
+    image: postgres:16-alpine
+    depends_on:
+      - postgres
+    restart: "no"
+    entrypoint: >
+      sh -c "
+        until pg_isready -h postgres -U agentserver; do sleep 1; done
+        PGPASSWORD=agentserver psql -h postgres -U agentserver -tc \"SELECT 1 FROM pg_database WHERE datname = 'llmproxy'\" | grep -q 1 ||
+        PGPASSWORD=agentserver psql -h postgres -U agentserver -c 'CREATE DATABASE llmproxy'
+      "
+
   server:
     build:
       context: .
@@ -20,10 +33,28 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
       AGENT_IMAGE: "${AGENT_IMAGE:-agentserver-agent:latest}"
+      OPENCODE_CONFIG_CONTENT: '{"provider":{"anthropic":{"options":{"baseURL":"http://llmproxy:8081"}}}}'
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - postgres
+
+  llmproxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.llmproxy
+    ports:
+      - "8081:8081"
+    environment:
+      LLMPROXY_LISTEN_ADDR: ":8081"
+      LLMPROXY_DATABASE_URL: "postgres://agentserver:agentserver@postgres:5432/llmproxy?sslmode=disable"
+      LLMPROXY_AGENTSERVER_URL: "http://server:8080"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-https://api.anthropic.com}"
+    depends_on:
+      - postgres
+      - postgres-init-llmproxy
+      - server
 
 volumes:
   pgdata:

@@ -144,11 +144,6 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 
 	// Build environment for the container
 	containerEnv := []string{"TERM=xterm-256color"}
-	for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"} {
-		if v := os.Getenv(key); v != "" {
-			containerEnv = append(containerEnv, key+"="+v)
-		}
-	}
 
 	// Select image and set env vars based on sandbox type.
 	containerImage := m.cfg.Image
@@ -164,9 +159,9 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 		if opts.OpencodeToken != "" {
 			containerEnv = append(containerEnv, "OPENCODE_SERVER_PASSWORD="+opts.OpencodeToken)
 		}
-		if m.cfg.OpencodeConfigContent != "" {
-			containerEnv = append(containerEnv, "OPENCODE_CONFIG_CONTENT="+m.cfg.OpencodeConfigContent)
-		}
+		// Merge proxy provider config into OPENCODE_CONFIG_CONTENT.
+		opcodeConfig := sandbox.BuildOpencodeConfig(m.cfg.OpencodeConfigContent, opts.ProxyToken)
+		containerEnv = append(containerEnv, "OPENCODE_CONFIG_CONTENT="+opcodeConfig)
 	}
 
 	// Volume mounts for persistence.
@@ -201,7 +196,8 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 		WorkingDir: "/home/agent/projects",
 	}
 	if opts.SandboxType == "openclaw" {
-		openclawCfg := sandbox.BuildOpenclawConfig(os.Getenv("ANTHROPIC_BASE_URL"), os.Getenv("ANTHROPIC_API_KEY"))
+		proxyBaseURL := sandbox.ExtractProxyBaseURL(m.cfg.OpencodeConfigContent)
+		openclawCfg := sandbox.BuildOpenclawConfig(proxyBaseURL, opts.ProxyToken)
 		containerConfig.Cmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
 ` + openclawCfg + `
 CFGEOF

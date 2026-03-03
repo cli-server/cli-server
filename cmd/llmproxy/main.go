@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/agentserver/agentserver/internal/llmproxy"
 )
@@ -51,7 +52,11 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		sig := <-sigCh
 		logger.Info("received signal, shutting down", "signal", sig.String())
-		httpServer.Shutdown(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(ctx); err != nil {
+			logger.Error("shutdown error", "error", err)
+		}
 	}()
 
 	logger.Info("starting llmproxy", "addr", cfg.ListenAddr)

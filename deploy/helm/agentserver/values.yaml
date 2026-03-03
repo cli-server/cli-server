@@ -38,9 +38,6 @@ models:
   anthropicApiKey: ""
   anthropicBaseUrl: ""
   anthropicAuthToken: ""
-  # URL that sandbox pods use to reach the Anthropic API proxy on agentserver.
-  # If empty, defaults to http://agentserver.<namespace>.svc.cluster.local:8080/proxy/anthropic
-  anthropicProxyUrl: ""
 
 platform:
   # Domain for the platform web UI (e.g. "platform.agentserver.dev").
@@ -87,6 +84,8 @@ sandbox:
     subdomainPrefix: "code"  # subdomain: {prefix}-{sessionID}.{baseDomain}
     # Opencode config injected into sandbox pods via OPENCODE_CONFIG_CONTENT.
     # Accepts any valid opencode.json fields as structured YAML.
+    # The LLM proxy baseURL (provider.anthropic.options.baseURL) is auto-injected
+    # from the llmproxy service URL at deploy time.
     config: {}
   openclaw:
     image: ""
@@ -101,6 +100,22 @@ agentSandbox:
   # Set to false to skip installing the agent-sandbox controller (if already installed cluster-wide)
   install: true
   controllerImage: registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.1.1
+
+llmproxy:
+  # LLM proxy for token usage tracking and request tracing.
+  # The proxy baseURL is auto-injected into sandbox OPENCODE_CONFIG_CONTENT.
+  image:
+    repository: ghcr.io/agentserver/llmproxy
+    tag: latest
+    pullPolicy: Always
+  # LLM proxy listens on this port inside the container.
+  port: 8081
+  # LLM proxy uses the same PostgreSQL instance by default (separate database "llmproxy").
+  # Set externalDatabaseUrl to use a different database.
+  database:
+    # Database name created on the shared PostgreSQL instance.
+    name: llmproxy
+  externalDatabaseUrl: ""
 
 service:
   type: ClusterIP

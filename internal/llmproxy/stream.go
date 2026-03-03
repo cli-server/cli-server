@@ -3,25 +3,30 @@ package llmproxy
 import (
 	"bytes"
 	"io"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )
 
 // streamInterceptor wraps a response body, transparently passing through
-// all bytes while parsing SSE events to extract usage data.
+// all bytes while parsing SSE events to extract usage data and TTFT.
 type streamInterceptor struct {
 	inner      io.ReadCloser
 	buf        bytes.Buffer // line buffer for SSE parsing
+	startTime  time.Time
 	model      string
 	msgID      string
 	usage      anthropic.Usage // accumulator
-	onComplete func(model, msgID string, usage anthropic.Usage)
+	ttftMs     int64           // time to first token (ms)
+	gotFirst   bool            // whether first content token was seen
+	onComplete func(model, msgID string, usage anthropic.Usage, ttftMs int64)
 	completed  bool
 }
 
-func newStreamInterceptor(inner io.ReadCloser, onComplete func(string, string, anthropic.Usage)) *streamInterceptor {
+func newStreamInterceptor(inner io.ReadCloser, startTime time.Time, onComplete func(string, string, anthropic.Usage, int64)) *streamInterceptor {
 	return &streamInterceptor{
 		inner:      inner,
+		startTime:  startTime,
 		onComplete: onComplete,
 	}
 }
@@ -35,12 +40,15 @@ func (si *streamInterceptor) Read(p []byte) (int, error) {
 		si.processLines()
 	}
 	if err == io.EOF {
+		// Flush any remaining partial line in the buffer before finishing.
+		si.flushRemaining()
 		si.finish()
 	}
 	return n, err
 }
 
 func (si *streamInterceptor) Close() error {
+	si.flushRemaining()
 	si.finish()
 	return si.inner.Close()
 }
@@ -55,6 +63,15 @@ func (si *streamInterceptor) processLines() {
 			return
 		}
 		si.parseLine(line)
+	}
+}
+
+// flushRemaining parses any data left in the buffer that doesn't end with a newline.
+// Called on EOF/Close so the final message_delta event is never lost.
+func (si *streamInterceptor) flushRemaining() {
+	if si.buf.Len() > 0 {
+		si.parseLine(si.buf.Bytes())
+		si.buf.Reset()
 	}
 }
 
@@ -77,6 +94,12 @@ func (si *streamInterceptor) parseLine(line []byte) {
 		si.msgID = msgID
 	}
 
+	// Track TTFT: the first content_block_delta carries the first output token.
+	if !si.gotFirst && eventType == "content_block_delta" {
+		si.gotFirst = true
+		si.ttftMs = time.Since(si.startTime).Milliseconds()
+	}
+
 	if hasUsage {
 		switch eventType {
 		case "message_start":
@@ -97,6 +120,6 @@ func (si *streamInterceptor) finish() {
 	}
 	si.completed = true
 	if si.onComplete != nil {
-		si.onComplete(si.model, si.msgID, si.usage)
+		si.onComplete(si.model, si.msgID, si.usage, si.ttftMs)
 	}
 }

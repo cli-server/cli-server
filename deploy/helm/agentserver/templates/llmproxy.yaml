@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-llmproxy
+  labels:
+    app: {{ .Release.Name }}-llmproxy
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-llmproxy
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-llmproxy
+    spec:
+      {{- if .Values.postgresql.enabled }}
+      initContainers:
+        - name: wait-for-postgresql
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h {{ .Release.Name }}-postgresql -p 5432 -U {{ .Values.postgresql.auth.username }}; do
+                echo "Waiting for PostgreSQL to be ready..."
+                sleep 2
+              done
+        - name: create-database
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              PGPASSWORD={{ .Values.postgresql.auth.password }} psql -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} -tc "SELECT 1 FROM pg_database WHERE datname = '{{ .Values.llmproxy.database.name }}'" | grep -q 1 || \
+              PGPASSWORD={{ .Values.postgresql.auth.password }} psql -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} -c "CREATE DATABASE {{ .Values.llmproxy.database.name }}"
+      {{- end }}
+      containers:
+        - name: llmproxy
+          image: "{{ .Values.llmproxy.image.repository }}:{{ .Values.llmproxy.image.tag }}"
+          imagePullPolicy: {{ .Values.llmproxy.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.llmproxy.port }}
+              protocol: TCP
+          env:
+            - name: LLMPROXY_LISTEN_ADDR
+              value: ":{{ .Values.llmproxy.port }}"
+            - name: LLMPROXY_DATABASE_URL
+              {{- if .Values.llmproxy.externalDatabaseUrl }}
+              value: {{ .Values.llmproxy.externalDatabaseUrl | quote }}
+              {{- else }}
+              value: "postgres://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}@{{ .Release.Name }}-postgresql:5432/{{ .Values.llmproxy.database.name }}?sslmode=disable"
+              {{- end }}
+            - name: LLMPROXY_AGENTSERVER_URL
+              value: "http://{{ .Release.Name }}:{{ .Values.service.port }}"
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: anthropic-api-key
+            - name: ANTHROPIC_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: anthropic-base-url
+            - name: ANTHROPIC_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: anthropic-auth-token
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.llmproxy.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.llmproxy.port }}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-llmproxy
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.llmproxy.port }}
+      targetPort: {{ .Values.llmproxy.port }}
+      protocol: TCP
+  selector:
+    app: {{ .Release.Name }}-llmproxy

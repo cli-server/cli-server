@@ -35,7 +35,10 @@ func (s *Server) ValidateProxyToken(ctx context.Context, proxyToken string) (*Sa
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound {
 		return nil, nil

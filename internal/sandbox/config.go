@@ -42,6 +42,72 @@ func envOrDefault(key, def string) string {
 	return def
 }
 
+// BuildOpencodeConfig merges the per-sandbox proxy token into the base opencode
+// config JSON. The proxyBaseURL is already expected to be in the base config
+// (provider.anthropic.options.baseURL). This function only injects the
+// per-sandbox apiKey.
+func BuildOpencodeConfig(baseConfig, proxyToken string) string {
+	// Parse the user-provided base config (from OPENCODE_CONFIG_CONTENT / values.yaml).
+	var cfg map[string]interface{}
+	if baseConfig != "" {
+		if err := json.Unmarshal([]byte(baseConfig), &cfg); err != nil {
+			cfg = make(map[string]interface{})
+		}
+	} else {
+		cfg = make(map[string]interface{})
+	}
+
+	// Inject provider.anthropic.options.apiKey with per-sandbox token.
+	if proxyToken != "" {
+		provider, _ := cfg["provider"].(map[string]interface{})
+		if provider == nil {
+			provider = make(map[string]interface{})
+		}
+		anthropic, _ := provider["anthropic"].(map[string]interface{})
+		if anthropic == nil {
+			anthropic = make(map[string]interface{})
+		}
+		options, _ := anthropic["options"].(map[string]interface{})
+		if options == nil {
+			options = make(map[string]interface{})
+		}
+		options["apiKey"] = proxyToken
+		anthropic["options"] = options
+		provider["anthropic"] = anthropic
+		cfg["provider"] = provider
+	}
+
+	b, _ := json.Marshal(cfg)
+	return string(b)
+}
+
+// ExtractProxyBaseURL extracts provider.anthropic.options.baseURL from the
+// opencode config JSON. Used by sandbox managers that need the proxy URL
+// (e.g. for openclaw config).
+func ExtractProxyBaseURL(configJSON string) string {
+	if configJSON == "" {
+		return ""
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+		return ""
+	}
+	provider, _ := cfg["provider"].(map[string]interface{})
+	if provider == nil {
+		return ""
+	}
+	anthropic, _ := provider["anthropic"].(map[string]interface{})
+	if anthropic == nil {
+		return ""
+	}
+	options, _ := anthropic["options"].(map[string]interface{})
+	if options == nil {
+		return ""
+	}
+	baseURL, _ := options["baseURL"].(string)
+	return baseURL
+}
+
 // BuildOpenclawConfig returns the openclaw.json content with gateway settings
 // and optional Anthropic proxy credentials.
 func BuildOpenclawConfig(proxyBaseURL, proxyToken string) string {
@@ -67,12 +133,12 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken string) string {
 		} `json:"models,omitempty"`
 	}
 
-	var cfg config
-	cfg.Gateway.ControlUI.AllowOriginFallback = true
-	cfg.Gateway.ControlUI.DisableDeviceAuth = true
+	var c config
+	c.Gateway.ControlUI.AllowOriginFallback = true
+	c.Gateway.ControlUI.DisableDeviceAuth = true
 
 	if proxyBaseURL != "" && proxyToken != "" {
-		cfg.Models = &struct {
+		c.Models = &struct {
 			Providers map[string]provider `json:"providers"`
 		}{
 			Providers: map[string]provider{
@@ -92,6 +158,6 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken string) string {
 		}
 	}
 
-	b, _ := json.Marshal(cfg)
+	b, _ := json.Marshal(c)
 	return string(b)
 }

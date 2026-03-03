@@ -85,10 +85,17 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secret
                   key: anthropic-auth-token
-            {{- if .Values.models.anthropicProxyUrl }}
-            - name: ANTHROPIC_PROXY_URL
-              value: {{ .Values.models.anthropicProxyUrl | quote }}
-            {{- end }}
+            {{- /* Build OPENCODE_CONFIG_CONTENT with llmproxy baseURL merged in.
+                 Users can override baseURL via sandbox.opencode.config.provider.anthropic.options.baseURL */}}
+            {{- $llmproxyURL := printf "http://%s-llmproxy:%v" .Release.Name (int .Values.llmproxy.port) }}
+            {{- $opcodeBase := deepCopy .Values.sandbox.opencode.config }}
+            {{- $proxyOpts := dict "baseURL" $llmproxyURL }}
+            {{- $proxyProvider := dict "options" $proxyOpts }}
+            {{- $providerBlock := dict "anthropic" $proxyProvider }}
+            {{- $existingProvider := default dict (get $opcodeBase "provider") }}
+            {{- $_ := set $opcodeBase "provider" (merge $existingProvider $providerBlock) }}
+            - name: OPENCODE_CONFIG_CONTENT
+              value: {{ $opcodeBase | toJson | quote }}
             - name: AGENT_IMAGE
               value: {{ .Values.sandbox.opencode.image | quote }}
             {{- if .Values.sandbox.openclaw.image }}
@@ -131,10 +138,6 @@ spec:
               value: {{ .Values.sandbox.opencode.subdomainPrefix | default "code" | quote }}
             - name: OPENCLAW_SUBDOMAIN_PREFIX
               value: {{ .Values.sandbox.openclaw.subdomainPrefix | default "claw" | quote }}
-            {{- if gt (len .Values.sandbox.opencode.config) 0 }}
-            - name: OPENCODE_CONFIG_CONTENT
-              value: {{ .Values.sandbox.opencode.config | toJson | quote }}
-            {{- end }}
             {{- if and .Values.platform.domain (or .Values.platform.auth.oidc.github.enabled .Values.platform.auth.oidc.generic.enabled) }}
             - name: OIDC_REDIRECT_BASE_URL
               value: {{ printf "https://%s" .Values.platform.domain | quote }}

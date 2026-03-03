@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -44,14 +45,26 @@ func (s *Server) Routes() http.Handler {
 	// Anthropic API proxy (all /v1/* paths).
 	r.HandleFunc("/v1/*", s.handleAnthropicProxy)
 
-	// Query API.
+	// Query API (requires database).
 	r.Route("/api", func(r chi.Router) {
+		r.Use(s.requireStore)
 		r.Get("/usage", s.handleQueryUsage)
 		r.Get("/traces", s.handleQueryTraces)
 		r.Get("/traces/{id}", s.handleGetTrace)
 	})
 
 	return r
+}
+
+// requireStore returns 503 if the database store is not configured.
+func (s *Server) requireStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.store == nil {
+			http.Error(w, "database not configured", http.StatusServiceUnavailable)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handleQueryUsage returns aggregated token usage.
@@ -123,6 +136,11 @@ func parseQueryOpts(r *http.Request) QueryOpts {
 	if since := r.URL.Query().Get("since"); since != "" {
 		if t, err := time.Parse(time.RFC3339, since); err == nil {
 			opts.Since = t
+		}
+	}
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		if n, err := strconv.Atoi(limit); err == nil && n > 0 {
+			opts.Limit = n
 		}
 	}
 	return opts

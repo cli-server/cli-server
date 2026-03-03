@@ -2,6 +2,7 @@ package llmproxy
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -46,12 +47,14 @@ func (s *Server) handleAnthropicProxy(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 	// Determine if this is a messages endpoint (where we track usage).
-	isMessagesEndpoint := strings.HasSuffix(r.URL.Path, "/messages") ||
-		strings.Contains(r.URL.Path, "/messages?")
+	isMessagesEndpoint := strings.HasSuffix(r.URL.Path, "/messages")
 
 	// Detect streaming from request body.
-	isStreaming := bytes.Contains(bodyBytes, []byte(`"stream":true`)) ||
-		bytes.Contains(bodyBytes, []byte(`"stream": true`))
+	var reqShape struct {
+		Stream bool `json:"stream"`
+	}
+	json.Unmarshal(bodyBytes, &reqShape) // best-effort; ignore errors
+	isStreaming := reqShape.Stream
 
 	// 3. Extract trace ID.
 	traceID, source := s.ExtractTraceID(r, bodyBytes)
@@ -141,7 +144,7 @@ func (s *Server) interceptNonStreaming(resp *http.Response, sbx *SandboxInfo, tr
 	}
 
 	durationMs := time.Since(startTime).Milliseconds()
-	s.recordUsage(sbx, traceID, requestID, model, msgID, usage, false, durationMs, logger)
+	s.recordUsage(sbx, traceID, requestID, model, msgID, usage, false, durationMs, 0, logger)
 	return nil
 }
 
@@ -151,15 +154,15 @@ func (s *Server) interceptStreaming(resp *http.Response, sbx *SandboxInfo, trace
 		return nil
 	}
 
-	resp.Body = newStreamInterceptor(resp.Body, func(model, msgID string, usage anthropic.Usage) {
+	resp.Body = newStreamInterceptor(resp.Body, startTime, func(model, msgID string, usage anthropic.Usage, ttftMs int64) {
 		durationMs := time.Since(startTime).Milliseconds()
-		s.recordUsage(sbx, traceID, requestID, model, msgID, usage, true, durationMs, logger)
+		s.recordUsage(sbx, traceID, requestID, model, msgID, usage, true, durationMs, ttftMs, logger)
 	})
 	return nil
 }
 
 // recordUsage persists a usage record and logs it.
-func (s *Server) recordUsage(sbx *SandboxInfo, traceID, requestID, model, msgID string, usage anthropic.Usage, streaming bool, durationMs int64, logger *slog.Logger) {
+func (s *Server) recordUsage(sbx *SandboxInfo, traceID, requestID, model, msgID string, usage anthropic.Usage, streaming bool, durationMs, ttftMs int64, logger *slog.Logger) {
 	logger.Info("anthropic request completed",
 		"model", model,
 		"message_id", msgID,
@@ -169,6 +172,7 @@ func (s *Server) recordUsage(sbx *SandboxInfo, traceID, requestID, model, msgID 
 		"cache_read_input_tokens", usage.CacheReadInputTokens,
 		"streaming", streaming,
 		"duration_ms", durationMs,
+		"ttft_ms", ttftMs,
 	)
 
 	if s.store == nil {
@@ -189,6 +193,7 @@ func (s *Server) recordUsage(sbx *SandboxInfo, traceID, requestID, model, msgID 
 		CacheReadInputTokens:     usage.CacheReadInputTokens,
 		Streaming:                streaming,
 		DurationMs:               durationMs,
+		TTFTMs:                   ttftMs,
 		CreatedAt:                time.Now(),
 	}
 

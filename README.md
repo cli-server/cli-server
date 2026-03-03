@@ -260,7 +260,7 @@ This uses the [Kubernetes Agent Sandbox](https://github.com/kubernetes-sigs/agen
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `ANTHROPIC_BASE_URL` | Custom API base URL |
 | `ANTHROPIC_AUTH_TOKEN` | Anthropic auth token (alternative to API key) |
-| `ANTHROPIC_PROXY_URL` | URL sandbox pods use to reach the Anthropic proxy |
+| `OPENCODE_CONFIG_CONTENT` | JSON opencode config for sandbox pods (includes LLM proxy baseURL) |
 | `BASE_DOMAIN` | Base domain for subdomain routing |
 | `BASE_SCHEME` | URL scheme (`http` or `https`) |
 | `IDLE_TIMEOUT` | Auto-pause timeout (e.g. `30m`) |

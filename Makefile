@@ -1,4 +1,4 @@
-.PHONY: dev build clean frontend backend agent agent-all docker docker-agent docker-all
+.PHONY: dev build clean frontend backend agent agent-all llmproxy docker docker-agent docker-llmproxy docker-all
 
 # Development: run frontend dev server + Go backend
 dev:
@@ -17,6 +17,9 @@ backend:
 agent:
 	CGO_ENABLED=0 go build -o bin/agentserver-agent ./cmd/agentserver-agent
 
+llmproxy:
+	CGO_ENABLED=0 go build -o bin/llmproxy ./cmd/llmproxy
+
 agent-all:
 	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -o bin/agentserver-linux-amd64        ./cmd/agentserver-agent
 	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -o bin/agentserver-linux-arm64        ./cmd/agentserver-agent
@@ -33,4 +36,7 @@ docker:
 docker-agent:
 	docker build -f Dockerfile.agent -t agentserver-agent:latest .
 
-docker-all: docker docker-agent
+docker-llmproxy:
+	docker build -f Dockerfile.llmproxy -t llmproxy:latest .
+
+docker-all: docker docker-agent docker-llmproxy
