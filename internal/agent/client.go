@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -157,15 +158,31 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 const maxChunkSize = 16 * 1024
 
 func (c *Client) handleRequest(ctx context.Context, conn *websocket.Conn, reqHeader *tunnel.RequestHeader, reqBody []byte) {
-	// Build the local HTTP request.
-	targetURL := c.OpencodeURL + reqHeader.Path
+	// Build the local HTTP request using safe URL construction.
+	base, err := url.Parse(c.OpencodeURL)
+	if err != nil {
+		c.sendErrorResponse(ctx, conn, reqHeader.ID, http.StatusBadGateway, "invalid opencode URL")
+		return
+	}
+
+	// Sanitize the path: must start with "/" and not contain scheme/host components.
+	path := reqHeader.Path
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	parsed, err := url.Parse(path)
+	if err != nil || parsed.Host != "" || parsed.Scheme != "" {
+		c.sendErrorResponse(ctx, conn, reqHeader.ID, http.StatusBadRequest, "invalid request path")
+		return
+	}
+	target := base.ResolveReference(parsed)
 
 	var bodyReader io.Reader
 	if len(reqBody) > 0 {
 		bodyReader = bytes.NewReader(reqBody)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, reqHeader.Method, targetURL, bodyReader)
+	httpReq, err := http.NewRequestWithContext(ctx, reqHeader.Method, target.String(), bodyReader)
 	if err != nil {
 		c.sendErrorResponse(ctx, conn, reqHeader.ID, http.StatusBadGateway, "failed to create request")
 		return
