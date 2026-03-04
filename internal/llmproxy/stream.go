@@ -119,7 +119,7 @@ func (si *streamInterceptor) finish() {
 		return
 	}
 	si.completed = true
-	if si.onComplete != nil {
+	if si.onComplete != nil && si.model != "" {
 		si.onComplete(si.model, si.msgID, si.usage, si.ttft)
 	}
 }
