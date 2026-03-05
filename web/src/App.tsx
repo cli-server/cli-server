@@ -12,9 +12,10 @@ import {
   type Sandbox,
 } from './lib/api'
 import { Login } from './components/Login'
+import { TopBar } from './components/TopBar'
 import { SandboxList } from './components/SandboxList'
 import { SandboxDetail } from './components/SandboxDetail'
-import { WorkspaceDetail } from './components/WorkspaceDetail'
+import { ManageProjects } from './components/ManageProjects'
 import { AdminPanel } from './components/AdminPanel'
 
 export interface UserInfo {
@@ -35,7 +36,7 @@ export default function App() {
   const [activeSandboxId, setActiveSandboxId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
-  const [showWorkspaceDetail, setShowWorkspaceDetail] = useState(false)
+  const [showManageProjects, setShowManageProjects] = useState(false)
 
   const refreshSandboxes = useCallback(async () => {
     if (!selectedWorkspaceId) return
@@ -68,7 +69,7 @@ export default function App() {
       setSandboxes([])
       setActiveSandboxId(null)
     }
-    setShowWorkspaceDetail(false)
+    setShowManageProjects(false)
   }, [selectedWorkspaceId, refreshSandboxes])
 
   const handleSelectWorkspace = useCallback((id: string) => {
@@ -108,12 +109,12 @@ export default function App() {
 
   const handleSelectSandbox = useCallback((id: string) => {
     setActiveSandboxId(id)
-    setShowWorkspaceDetail(false)
+    setShowManageProjects(false)
     setShowAdmin(false)
   }, [])
 
-  const handleShowWorkspaceDetail = useCallback(() => {
-    setShowWorkspaceDetail(true)
+  const handleShowManageProjects = useCallback(() => {
+    setShowManageProjects(true)
     setActiveSandboxId(null)
     setShowAdmin(false)
   }, [])
@@ -121,7 +122,7 @@ export default function App() {
   const handleShowAdmin = useCallback(() => {
     setShowAdmin(true)
     setActiveSandboxId(null)
-    setShowWorkspaceDetail(false)
+    setShowManageProjects(false)
   }, [])
 
   if (authed === null) {
@@ -148,7 +149,6 @@ export default function App() {
   }
 
   const activeSandboxData = sandboxes.find((s) => s.id === activeSandboxId)
-  const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
 
   let mainContent
   if (showAdmin) {
@@ -160,8 +160,14 @@ export default function App() {
         <span className="text-[var(--muted-foreground)]">Creating sandbox...</span>
       </div>
     )
-  } else if (showWorkspaceDetail && selectedWorkspace) {
-    mainContent = <WorkspaceDetail workspace={selectedWorkspace} />
+  } else if (showManageProjects) {
+    mainContent = (
+      <ManageProjects
+        workspaces={workspaces}
+        selectedWorkspaceId={selectedWorkspaceId}
+        onSelectWorkspace={handleSelectWorkspace}
+      />
+    )
   } else if (activeSandboxId && activeSandboxData) {
     mainContent = (
       <SandboxDetail
@@ -180,26 +186,31 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen">
-      <SandboxList
+    <div className="flex flex-col h-screen">
+      <TopBar
         workspaces={workspaces}
         setWorkspaces={setWorkspaces}
         selectedWorkspaceId={selectedWorkspaceId}
         onSelectWorkspace={handleSelectWorkspace}
-        sandboxes={sandboxes}
-        setSandboxes={setSandboxes}
-        activeSandboxId={activeSandboxId}
-        onSelectSandbox={handleSelectSandbox}
-        onRefreshSandboxes={refreshSandboxes}
-        creating={creating}
-        setCreating={setCreating}
         user={user}
         onLogout={handleLogout}
         onShowAdmin={user?.role === 'admin' ? handleShowAdmin : undefined}
-        onShowWorkspaceDetail={handleShowWorkspaceDetail}
+        onShowManageProjects={handleShowManageProjects}
       />
-      <div className="flex flex-1 flex-col bg-[var(--background)]">
-        {mainContent}
+      <div className="flex flex-1 min-h-0">
+        <SandboxList
+          selectedWorkspaceId={selectedWorkspaceId}
+          sandboxes={sandboxes}
+          setSandboxes={setSandboxes}
+          activeSandboxId={activeSandboxId}
+          onSelectSandbox={handleSelectSandbox}
+          onRefreshSandboxes={refreshSandboxes}
+          creating={creating}
+          setCreating={setCreating}
+        />
+        <div className="flex flex-1 flex-col bg-[var(--background)]">
+          {mainContent}
+        </div>
       </div>
     </div>
   )
