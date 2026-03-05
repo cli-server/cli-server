@@ -178,7 +178,7 @@ export default function App() {
         user={user}
         onLogout={handleLogout}
         onShowAdmin={user?.role === 'admin' ? () => navigate('/admin') : undefined}
-        onShowManageProjects={() => navigate('/projects')}
+        onShowManageProjects={() => navigate('/workspaces')}
       />
       <div className="flex flex-1 min-h-0">
         <SandboxList
@@ -204,7 +204,7 @@ export default function App() {
               }
             />
             <Route
-              path="/projects"
+              path="/workspaces"
               element={
                 <ManageProjects
                   workspaces={workspaces}
