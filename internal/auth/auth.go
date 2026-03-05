@@ -134,6 +134,7 @@ func SetTokenCookie(w http.ResponseWriter, token string) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(tokenTTL.Seconds()),
 	})

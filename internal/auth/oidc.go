@@ -88,6 +88,7 @@ func (m *OIDCManager) HandleLogin(w http.ResponseWriter, r *http.Request, provid
 		Value:    state,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(stateCookieTTL.Seconds()),
 	})
@@ -121,6 +122,7 @@ func (m *OIDCManager) HandleCallback(w http.ResponseWriter, r *http.Request, pro
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   true,
 	})
 
 	// Check for error from IdP.
