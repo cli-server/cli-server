@@ -18,7 +18,7 @@ export function Login({ onSuccess }: LoginProps) {
   const [loading, setLoading] = useState(false)
   const [isRegister, setIsRegister] = useState(false)
   const [oidcProviders, setOidcProviders] = useState<string[]>([])
-  const [passwordAuth, setPasswordAuth] = useState(true)
+  const [passwordAuth, setPasswordAuth] = useState(false)
   const [providersLoaded, setProvidersLoaded] = useState(false)
 
   useEffect(() => {
@@ -68,12 +68,17 @@ export function Login({ onSuccess }: LoginProps) {
         <h1 className="mb-6 text-center text-xl font-semibold text-[var(--card-foreground)]">
           agentserver
         </h1>
+        {!providersLoaded && (
+          <div className="flex justify-center py-4">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--muted-foreground)] border-t-transparent" />
+          </div>
+        )}
         {providersLoaded && !passwordAuth && oidcProviders.length === 0 && (
           <p className="text-center text-sm text-[var(--destructive)]">
             No authentication methods are configured. Contact your administrator.
           </p>
         )}
-        {passwordAuth && (
+        {providersLoaded && passwordAuth && (
           <>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
@@ -125,7 +130,7 @@ export function Login({ onSuccess }: LoginProps) {
             </form>
           </>
         )}
-        {oidcProviders.length > 0 && (
+        {providersLoaded && oidcProviders.length > 0 && (
           <div className={passwordAuth ? "mt-4" : ""}>
             {passwordAuth && (
               <div className="relative flex items-center justify-center">
@@ -148,7 +153,7 @@ export function Login({ onSuccess }: LoginProps) {
             </div>
           </div>
         )}
-        {passwordAuth && (
+        {providersLoaded && passwordAuth && (
           <p className="mt-4 text-center text-sm text-[var(--muted-foreground)]">
             {isRegister ? (
               <>

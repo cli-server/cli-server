@@ -283,9 +283,13 @@ function MembersTab({ workspaceId, members, setMembers }: {
             {members.map((m) => (
               <div key={m.user_id} className="group flex items-center justify-between px-4 py-3 hover:bg-[var(--secondary)]/30 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--secondary)] text-xs font-medium text-[var(--foreground)]">
-                    {(m.username || '?')[0].toUpperCase()}
-                  </div>
+                  {m.picture ? (
+                    <img src={m.picture} alt={m.username} className="h-8 w-8 shrink-0 rounded-full object-cover" />
+                  ) : (
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--secondary)] text-xs font-medium text-[var(--foreground)]">
+                      {(m.username || '?')[0].toUpperCase()}
+                    </div>
+                  )}
                   <span className="text-sm text-[var(--foreground)] truncate">{m.username}</span>
                 </div>
                 <div className="flex items-center gap-2">

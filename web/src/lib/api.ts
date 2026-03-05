@@ -12,6 +12,7 @@ export interface WorkspaceMember {
   user_id: string
   username: string
   role: WorkspaceRole
+  picture?: string
 }
 
 export interface Sandbox {

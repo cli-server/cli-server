@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   ExternalLink,
   Clock,
@@ -14,6 +14,8 @@ import {
   Pause,
   Trash2,
   LayoutDashboard,
+  Copy,
+  Check,
 } from 'lucide-react'
 import {
   getSandboxUsage,
@@ -74,6 +76,28 @@ function StatusBadge({ status, isLocal }: { status: string; isLocal: boolean }) 
   )
 }
 
+function CopyableId({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(id).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }, [id])
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-[var(--muted-foreground)] font-mono">
+      {id.slice(0, 8)}
+      <button
+        onClick={handleCopy}
+        className="rounded p-0.5 hover:bg-[var(--secondary)] hover:text-[var(--foreground)] transition-colors"
+        title="Copy sandbox ID"
+      >
+        {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
+      </button>
+    </span>
+  )
+}
+
 export function SandboxDetail({ sandbox, onPause, onResume, onDelete }: SandboxDetailProps) {
   const [tab, setTab] = useState<Tab>('overview')
   const [usageData, setUsageData] = useState<UsageSummary[] | null>(null)
@@ -131,8 +155,9 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete }: SandboxD
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <h1 className="text-lg font-semibold text-[var(--foreground)] truncate">{sandbox.name}</h1>
-            <div className="mt-1.5">
+            <div className="mt-1.5 flex items-center gap-3">
               <StatusBadge status={sandbox.status} isLocal={sandbox.is_local} />
+              <CopyableId id={sandbox.id} />
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -477,22 +502,51 @@ export function TracesTab({ traces, tracesTotal, tracesPage, totalPages, onPageC
           <span className="text-xs text-[var(--muted-foreground)]">
             {tracesPage * TRACES_PER_PAGE + 1}&ndash;{Math.min((tracesPage + 1) * TRACES_PER_PAGE, tracesTotal)} of {tracesTotal}
           </span>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-1">
             <button
               onClick={() => onPageChange(Math.max(0, tracesPage - 1))}
               disabled={tracesPage === 0}
-              className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center justify-center rounded-md border border-[var(--border)] w-7 h-7 text-xs text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              <ChevronLeft size={12} />
-              Prev
+              <ChevronLeft size={14} />
             </button>
+            {(() => {
+              const pages: (number | '...')[] = []
+              if (totalPages <= 7) {
+                for (let i = 0; i < totalPages; i++) pages.push(i)
+              } else {
+                pages.push(0)
+                if (tracesPage > 2) pages.push('...')
+                const start = Math.max(1, tracesPage - 1)
+                const end = Math.min(totalPages - 2, tracesPage + 1)
+                for (let i = start; i <= end; i++) pages.push(i)
+                if (tracesPage < totalPages - 3) pages.push('...')
+                pages.push(totalPages - 1)
+              }
+              return pages.map((p, i) =>
+                p === '...' ? (
+                  <span key={`ellipsis-${i}`} className="w-7 h-7 flex items-center justify-center text-xs text-[var(--muted-foreground)]">…</span>
+                ) : (
+                  <button
+                    key={p}
+                    onClick={() => onPageChange(p)}
+                    className={`w-7 h-7 rounded-md text-xs transition-colors ${
+                      p === tracesPage
+                        ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+                        : 'border border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--secondary)]'
+                    }`}
+                  >
+                    {p + 1}
+                  </button>
+                )
+              )
+            })()}
             <button
               onClick={() => onPageChange(Math.min(totalPages - 1, tracesPage + 1))}
               disabled={tracesPage >= totalPages - 1}
-              className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center justify-center rounded-md border border-[var(--border)] w-7 h-7 text-xs text-[var(--foreground)] hover:bg-[var(--secondary)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              Next
-              <ChevronRight size={12} />
+              <ChevronRight size={14} />
             </button>
           </div>
         </div>

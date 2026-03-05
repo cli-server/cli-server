@@ -1,7 +1,11 @@
 <h1 align="center">agentserver</h1>
 
 <p align="center">
-  <strong>Run your <a href="https://github.com/opencode-ai/opencode">coding agent</a> on any machine anywhere and access it in the browser.</strong>
+  <strong>Run your coding agent on any machine — access it from the browser.</strong>
+</p>
+
+<p align="center">
+  <a href="https://platform.agentserver.dev"><img src="https://img.shields.io/badge/Try%20Now-platform.agentserver.dev-blue?style=for-the-badge" alt="Try Now"></a>
 </p>
 
 <p align="center">
@@ -13,23 +17,25 @@
 ---
 
 <p align="center">
-  <img src="assets/screenshot.png" alt="agentserver Web UI" width="800">
+  <img src="assets/screenshot-1.png" alt="agentserver Web UI" width="800">
+</p>
+<p align="center">
+  <img src="assets/screenshot-2.png" alt="agentserver Coding Agent" width="800">
 </p>
 
-agentserver is to [opencode](https://github.com/opencode-ai/opencode) what [code-server](https://github.com/coder/code-server) is to VS Code — a self-hosted web interface that lets your team use a coding agent from a browser, no local installation required.
+agentserver is to [opencode](https://github.com/opencode-ai/opencode) what [code-server](https://github.com/coder/code-server) is to VS Code — a self-hosted platform that lets your team use a coding agent from the browser.
 
-## Highlights
+## Why agentserver?
 
-- **Browser-based coding agent** — Each sandbox runs [opencode](https://github.com/opencode-ai/opencode) serve, accessible via a per-sandbox subdomain
-- **Local agent tunneling** — Connect a locally-running opencode instance to agentserver via a WebSocket reverse tunnel, no public IP needed
-- **Workspaces & multi-tenancy** — Organize work into workspaces with role-based membership (owner / maintainer / developer / guest); each workspace has a shared persistent disk
-- **Sandboxes** — Create multiple sandboxes per workspace; pause, resume, and auto-pause on idle
-- **Two backends** — Run sandbox containers via Docker (single node) or Kubernetes with [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox) + gVisor isolation
-- **SSO / OIDC** — Built-in GitHub OAuth and generic OIDC support; accounts are linked by email
-- **Anthropic API proxy** — Sandboxes never see the real API key; agentserver injects it server-side via a per-sandbox proxy token
-- **Rich dev environment** — Sandbox image ships with Go, Rust, C/C++, Node.js, Python 3, and common tools out of the box
-- **Cross-platform binary** — Pre-built binaries for Linux, macOS, and Windows (amd64 / arm64)
-- **Helm one-liner** — Deploy to any Kubernetes cluster in minutes
+- **Zero install** — Open a browser, start coding with AI
+- **Sandboxes** — Isolated containers per task; pause, resume, auto-pause on idle
+- **Local tunneling** — Connect a local opencode instance via WebSocket, no public IP needed
+- **Multi-tenancy** — Workspaces with role-based access (owner / maintainer / developer / guest)
+- **Two backends** — Docker (single node) or Kubernetes with [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox) + gVisor isolation
+- **SSO ready** — GitHub OAuth and generic OIDC out of the box
+- **API key proxy** — Sandboxes never see the real Anthropic key; injected server-side
+- **Batteries included** — Sandbox image ships with Go, Rust, C/C++, Node.js, Python 3, and common tools
+- **Deploy anywhere** — Pre-built binaries (Linux/macOS/Windows) and a Helm one-liner for Kubernetes
 
 ## Architecture
 
@@ -47,21 +53,9 @@ Local machine ─┼──▶ agentserver agent connect ────────
                                                     subdomain proxy
 ```
 
-| Component | Description |
-|-----------|-------------|
-| **agentserver** | Go HTTP server — auth, workspace & sandbox management, opencode subdomain proxy, WebSocket tunnel, Anthropic API proxy, static frontend |
-| **sandbox** | Container running opencode serve — one per sandbox, isolated via Docker or K8s Agent Sandbox |
-| **local agent** | `agentserver agent connect` — connects a local opencode instance to the server via a WebSocket reverse tunnel |
-
 ## Quick Start
 
-### Prerequisites
-
-- Kubernetes cluster (or Docker for local dev)
-- PostgreSQL database
-- An [Anthropic API key](https://console.anthropic.com/)
-
-### Helm Install
+### Helm (Kubernetes)
 
 ```bash
 helm install agentserver oci://ghcr.io/agentserver/charts/agentserver \
@@ -73,21 +67,12 @@ helm install agentserver oci://ghcr.io/agentserver/charts/agentserver \
   --set baseDomain="cli.example.com"
 ```
 
-Open `https://cli.example.com`, register an account, create a workspace, and launch a sandbox.
-
-### Docker Compose (Local Development)
+### Docker Compose (Local)
 
 ```bash
-git clone https://github.com/agentserver/agentserver.git
-cd agentserver
-
-# Build the opencode agent image
+git clone https://github.com/agentserver/agentserver.git && cd agentserver
 docker build -f Dockerfile.opencode -t agentserver-agent:latest .
-
-# Set your API key
 export ANTHROPIC_API_KEY="sk-ant-..."
-
-# Start everything
 docker compose up -d
 ```
 
@@ -95,93 +80,33 @@ Open `http://localhost:8080` in your browser.
 
 ## Local Agent Tunneling
 
-You can connect a locally-running opencode instance to agentserver without a public IP or any third-party tunnel tool. The server manages it like any other sandbox — accessible via subdomain proxy in the Web UI.
+Connect a locally-running opencode instance to agentserver — no public IP or third-party tunnel needed.
 
-### How it works
-
-1. In the Web UI, click the laptop icon next to "Sandboxes" to generate a one-time registration code
-2. On your local machine, download `agentserver` from the [latest release](https://github.com/agentserver/agentserver/releases) and run:
+1. In the Web UI, click the laptop icon next to "Sandboxes" to generate a registration code
+2. On your local machine:
 
 ```bash
-# First time: register with the code
+# Register with the code
 agentserver agent connect \
   --server https://cli.example.com \
   --code <registration-code> \
   --name "My MacBook" \
   --opencode-url http://localhost:4096
 
-# Subsequent runs: auto-reconnects using saved credentials (~/.agentserver/agent.json)
+# Subsequent runs auto-reconnect using saved credentials
 agentserver agent connect --opencode-url http://localhost:4096
 ```
 
-3. A new sandbox labeled **local** appears in the Web UI. Click "Open" to access your local opencode through the browser.
+3. A **local** sandbox appears in the Web UI — click "Open" to access your local opencode through the browser.
 
-### Features
-
-- **Zero configuration networking** — WebSocket tunnel punches through NATs and firewalls
-- **Auto-reconnect** — Exponential backoff reconnection on disconnect (1s → 2s → 4s → ... → 60s)
-- **Binary protocol** — Raw binary WebSocket frames with chunked streaming, no base64 overhead
-- **SSE streaming** — Agent execution updates stream in real-time through the tunnel
-- **Offline detection** — Web UI shows `offline` status when the agent disconnects; automatically recovers to `running` on reconnect
-
-### Tunnel protocol
-
-The tunnel uses a binary WebSocket protocol. Each message is a binary frame:
-
-```
-[4 bytes: JSON header length] [JSON header] [raw binary payload]
-```
-
-- **Server → Agent**: request header (method, path, HTTP headers) + request body
-- **Agent → Server**: stream header (status, HTTP headers, done flag) + response body chunk (16KB max)
-
-All responses are chunked, keeping each WebSocket message well under the default 32KB limit.
-
-## Concepts
-
-### Workspaces
-
-A workspace is a collaborative unit. It has members with roles and owns a shared persistent disk (PVC in K8s, named volume in Docker). All sandboxes in a workspace share this disk at `/home/agent/projects`.
-
-| Role | Permissions |
-|------|-------------|
-| **owner** | Full control — manage members, delete workspace, create/manage sandboxes |
-| **maintainer** | Add members, create/manage sandboxes |
-| **developer** | Create and manage sandboxes |
-| **guest** | View sandboxes (read-only access) |
-
-### Sandbox types
-
-agentserver supports multiple sandbox types:
-
-| Type | Image | Port | Subdomain | Description |
-|------|-------|------|-----------|-------------|
-| **opencode** | `opencode-agent` | 4096 | `oc-{id}.{baseDomain}` | [opencode](https://github.com/opencode-ai/opencode) coding agent with password auth |
-| **openclaw** | custom | 18789 | `claw-{id}.{baseDomain}` | [OpenClaw](https://github.com/nicepkg/openclaw) gateway with token-based WebSocket auth; optional Telegram bot integration |
-| **local** | — | — | `oc-{id}.{baseDomain}` | Local opencode instance connected via WebSocket tunnel |
-
-A sandbox is an isolated container running a coding agent, or a local agent connected via WebSocket tunnel. Each sandbox:
-
-- Has its own opencode instance accessible via `oc-{sandboxID}.{baseDomain}`
-- Cloud sandboxes can be paused (scales to 0 replicas / stops container) and resumed
-- Cloud sandboxes are automatically paused after a configurable idle timeout
-- Local sandboxes show `offline` when the agent disconnects and recover on reconnect
-- Gets a unique proxy token for Anthropic API access
-
-### Sandbox statuses
-
-| Status | Description |
-|--------|-------------|
-| `creating` | Container is being provisioned |
-| `running` | Sandbox is active and accessible |
-| `pausing` | Container is being paused |
-| `paused` | Container is stopped, can be resumed |
-| `resuming` | Container is being restarted |
-| `offline` | Local agent disconnected (will recover on reconnect) |
+**Tunnel features:** zero-config networking, auto-reconnect with backoff, binary WebSocket protocol (no base64 overhead), real-time SSE streaming, offline detection with auto-recovery.
 
 ## Configuration
 
-### Helm Values
+See the full [Helm values](#helm-values), [environment variables](#environment-variables), and [API reference](docs/api-reference.md) below.
+
+<details>
+<summary><strong>Helm Values</strong></summary>
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -196,7 +121,7 @@ A sandbox is an isolated container running a coding agent, or a local agent conn
 | `anthropicBaseUrl` | Custom Anthropic API base URL | `""` |
 | `anthropicAuthToken` | Anthropic auth token (alternative to API key) | `""` |
 | `backend` | Sandbox backend: `docker` or `k8s` | `docker` |
-| `baseDomain` | Base domain for subdomain routing (e.g. `cli.example.com`) | `""` |
+| `baseDomain` | Base domain for subdomain routing | `""` |
 | `baseScheme` | URL scheme for generated URLs | `https` |
 | `idleTimeout` | Auto-pause idle sandboxes after | `30m` |
 | `persistence.sessionStorageSize` | Per-sandbox ephemeral storage | `5Gi` |
@@ -209,9 +134,10 @@ A sandbox is an isolated container running a coding agent, or a local agent conn
 | `ingress.tls` | Enable TLS (cert-manager) | `false` |
 | `gateway.enabled` | Enable Gateway API HTTPRoute | `false` |
 
-### OIDC Authentication
+</details>
 
-agentserver supports GitHub OAuth and generic OIDC providers alongside username/password auth. Accounts with the same email are automatically linked.
+<details>
+<summary><strong>OIDC Authentication</strong></summary>
 
 **GitHub OAuth:**
 
@@ -224,7 +150,7 @@ helm upgrade agentserver oci://ghcr.io/agentserver/charts/agentserver \
   --set oidc.github.clientSecret="your-client-secret"
 ```
 
-Set the callback URL in your GitHub OAuth App to: `https://cli.example.com/api/auth/oidc/github/callback`
+Callback URL: `https://cli.example.com/api/auth/oidc/github/callback`
 
 **Generic OIDC (Keycloak, Authentik, etc.):**
 
@@ -238,9 +164,12 @@ helm upgrade agentserver oci://ghcr.io/agentserver/charts/agentserver \
   --set oidc.generic.clientSecret="your-secret"
 ```
 
-### Kubernetes Backend
+</details>
 
-For production multi-tenant deployments, use the Kubernetes backend with gVisor sandbox isolation:
+<details>
+<summary><strong>Kubernetes Backend</strong></summary>
+
+For production multi-tenant deployments with gVisor isolation:
 
 ```bash
 helm upgrade agentserver oci://ghcr.io/agentserver/charts/agentserver \
@@ -250,9 +179,10 @@ helm upgrade agentserver oci://ghcr.io/agentserver/charts/agentserver \
   --set sandbox.namespace=agentserver
 ```
 
-This uses the [Kubernetes Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox) controller to manage isolated pods per sandbox.
+</details>
 
-### Environment Variables
+<details>
+<summary><strong>Environment Variables</strong></summary>
 
 | Variable | Description |
 |----------|-------------|
@@ -260,7 +190,7 @@ This uses the [Kubernetes Agent Sandbox](https://github.com/kubernetes-sigs/agen
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `ANTHROPIC_BASE_URL` | Custom API base URL |
 | `ANTHROPIC_AUTH_TOKEN` | Anthropic auth token (alternative to API key) |
-| `OPENCODE_CONFIG_CONTENT` | JSON opencode config for sandbox pods (includes LLM proxy baseURL) |
+| `OPENCODE_CONFIG_CONTENT` | JSON opencode config for sandbox pods |
 | `BASE_DOMAIN` | Base domain for subdomain routing |
 | `BASE_SCHEME` | URL scheme (`http` or `https`) |
 | `IDLE_TIMEOUT` | Auto-pause timeout (e.g. `30m`) |
@@ -272,9 +202,7 @@ This uses the [Kubernetes Agent Sandbox](https://github.com/kubernetes-sigs/agen
 | `OIDC_CLIENT_ID` | Generic OIDC client ID |
 | `OIDC_CLIENT_SECRET` | Generic OIDC client secret |
 
-## API
-
-See [docs/api-reference.md](docs/api-reference.md) for the full API reference.
+</details>
 
 ## Contributing
 

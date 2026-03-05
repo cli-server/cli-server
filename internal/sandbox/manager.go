@@ -425,13 +425,19 @@ mkdir -p /mnt/session-data/projects
 		vcts[0].Spec.StorageClassName = &m.cfg.StorageClassName
 	}
 
+	workingDir := "/home/agent/projects"
+	switch opts.SandboxType {
+	case "openclaw":
+		workingDir = "/home/agent"
+	}
+
 	mainContainer := corev1.Container{
 		Name:            sandboxContainerName,
 		Image:           sandboxImage,
 		Env:             containerEnv,
 		VolumeMounts:    volumeMounts,
 		ImagePullPolicy: corev1.PullAlways,
-		WorkingDir:      "/home/agent/projects",
+		WorkingDir:      workingDir,
 		Ports: []corev1.ContainerPort{{
 			ContainerPort: int32(containerPort),
 			Protocol:      corev1.ProtocolTCP,

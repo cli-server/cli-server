@@ -377,9 +377,10 @@ type workspaceResponse struct {
 }
 
 type workspaceMemberResponse struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
+	UserID   string  `json:"user_id"`
+	Username string  `json:"username"`
+	Role     string  `json:"role"`
+	Picture  *string `json:"picture,omitempty"`
 }
 
 type sandboxResponse struct {
@@ -695,13 +696,16 @@ func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
 	for _, m := range members {
 		user, err := s.Auth.GetUserByID(m.UserID)
 		username := m.UserID
+		var picture *string
 		if err == nil && user != nil {
 			username = user.Username
+			picture = user.Picture
 		}
 		resp = append(resp, workspaceMemberResponse{
 			UserID:   m.UserID,
 			Username: username,
 			Role:     m.Role,
+			Picture:  picture,
 		})
 	}
 
@@ -745,6 +749,7 @@ func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
 		UserID:   user.ID,
 		Username: user.Username,
 		Role:     req.Role,
+		Picture:  user.Picture,
 	})
 }
 
