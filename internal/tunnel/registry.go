@@ -71,12 +71,13 @@ type streamWaiter struct {
 
 // Tunnel represents an active WebSocket tunnel to a local agent.
 type Tunnel struct {
-	SandboxID string
-	Conn      *websocket.Conn
-	pending   map[string]*streamWaiter
-	mu        sync.Mutex
-	done      chan struct{}
-	closeOnce sync.Once
+	SandboxID   string
+	Conn        *websocket.Conn
+	OnAgentInfo func(data json.RawMessage)
+	pending     map[string]*streamWaiter
+	mu          sync.Mutex
+	done        chan struct{}
+	closeOnce   sync.Once
 }
 
 func newTunnel(sandboxID string, conn *websocket.Conn) *Tunnel {
@@ -148,7 +149,7 @@ func (t *Tunnel) readLoop() {
 	defer t.Close()
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		_, data, err := t.Conn.Read(ctx)
+		msgType, data, err := t.Conn.Read(ctx)
 		cancel()
 		if err != nil {
 			select {
@@ -160,6 +161,11 @@ func (t *Tunnel) readLoop() {
 				log.Printf("tunnel %s: read error: %v", t.SandboxID, err)
 			}
 			return
+		}
+
+		if msgType == websocket.MessageText {
+			t.handleTextMessage(data)
+			continue
 		}
 
 		headerJSON, payload, err := DecodeFrameHeader(data)
@@ -197,5 +203,28 @@ func (t *Tunnel) readLoop() {
 				close(w.ch)
 			}
 		}
+	}
+}
+
+// textMessage is the envelope for JSON text messages sent over the tunnel.
+type textMessage struct {
+	Type string          `json:"type"`
+	Data json.RawMessage `json:"data"`
+}
+
+// handleTextMessage processes a JSON text message from the agent.
+func (t *Tunnel) handleTextMessage(data []byte) {
+	var msg textMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		log.Printf("tunnel %s: failed to unmarshal text message: %v", t.SandboxID, err)
+		return
+	}
+	switch msg.Type {
+	case FrameTypeAgentInfo:
+		if t.OnAgentInfo != nil {
+			t.OnAgentInfo(msg.Data)
+		}
+	default:
+		log.Printf("tunnel %s: unknown text message type: %s", t.SandboxID, msg.Type)
 	}
 }

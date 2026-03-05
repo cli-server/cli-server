@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/agentserver/agentserver/internal/db"
 	"github.com/agentserver/agentserver/internal/sbxstore"
 	"github.com/agentserver/agentserver/internal/tunnel"
 	"nhooyr.io/websocket"
@@ -49,6 +51,20 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 
 	// Register tunnel.
 	t := s.TunnelRegistry.Register(sandboxID, conn)
+
+	// Set up agent info callback.
+	t.OnAgentInfo = func(data json.RawMessage) {
+		var info db.AgentInfo
+		if err := json.Unmarshal(data, &info); err != nil {
+			log.Printf("tunnel %s: failed to unmarshal agent info: %v", sandboxID, err)
+			return
+		}
+		info.SandboxID = sandboxID
+		if err := s.DB.UpsertAgentInfo(&info); err != nil {
+			log.Printf("tunnel %s: failed to upsert agent info: %v", sandboxID, err)
+		}
+	}
+
 	log.Printf("tunnel connected: sandbox %s", sandboxID)
 
 	// Update sandbox status to running.

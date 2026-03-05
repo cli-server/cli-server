@@ -8,8 +8,9 @@ import (
 
 // FrameType indicates the kind of tunnel message.
 const (
-	FrameTypeRequest = "request"
-	FrameTypeStream  = "stream"
+	FrameTypeRequest   = "request"
+	FrameTypeStream    = "stream"
+	FrameTypeAgentInfo = "agent_info"
 )
 
 // RequestHeader is the JSON metadata for a request frame (server → agent).

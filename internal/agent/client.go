@@ -122,6 +122,23 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 
 	log.Printf("tunnel connected (sandbox: %s)", c.SandboxID)
 
+	// Send agent info as a JSON text message.
+	agentInfo := collectAgentInfo(c.OpencodeURL)
+	infoMsg := struct {
+		Type string          `json:"type"`
+		Data *AgentInfoData  `json:"data"`
+	}{
+		Type: tunnel.FrameTypeAgentInfo,
+		Data: agentInfo,
+	}
+	if infoBytes, err := json.Marshal(infoMsg); err == nil {
+		if err := conn.Write(ctx, websocket.MessageText, infoBytes); err != nil {
+			log.Printf("failed to send agent info: %v", err)
+		}
+	} else {
+		log.Printf("failed to marshal agent info: %v", err)
+	}
+
 	// Read and process binary frames.
 	for {
 		_, data, err := conn.Read(ctx)

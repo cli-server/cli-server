@@ -31,6 +31,23 @@ export interface Sandbox {
   cpu?: number
   memory?: number
   idle_timeout?: number
+  agent_info?: AgentInfo
+}
+
+export interface AgentInfo {
+  hostname: string
+  os: string
+  platform: string
+  platform_version: string
+  kernel_arch: string
+  cpu_model_name: string
+  cpu_count_logical: number
+  memory_total: number
+  disk_total: number
+  disk_free: number
+  agent_version: string
+  opencode_version: string
+  updated_at: string
 }
 
 export async function login(username: string, password: string): Promise<boolean> {

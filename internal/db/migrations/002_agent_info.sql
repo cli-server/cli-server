@@ -1,0 +1,20 @@
+CREATE TABLE agent_info (
+    sandbox_id         TEXT PRIMARY KEY REFERENCES sandboxes(id) ON DELETE CASCADE,
+    hostname           TEXT NOT NULL DEFAULT '',
+    os                 TEXT NOT NULL DEFAULT '',
+    platform           TEXT NOT NULL DEFAULT '',
+    platform_version   TEXT NOT NULL DEFAULT '',
+    kernel_arch        TEXT NOT NULL DEFAULT '',
+    cpu_model_name     TEXT NOT NULL DEFAULT '',
+    cpu_count_logical  INTEGER NOT NULL DEFAULT 0,
+    memory_total       BIGINT NOT NULL DEFAULT 0,
+    disk_total         BIGINT NOT NULL DEFAULT 0,
+    disk_free          BIGINT NOT NULL DEFAULT 0,
+    agent_version      TEXT NOT NULL DEFAULT '',
+    opencode_version   TEXT NOT NULL DEFAULT '',
+    host_info          JSONB,
+    cpu_info           JSONB,
+    memory_info        JSONB,
+    disk_info          JSONB,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

@@ -384,6 +384,22 @@ type workspaceMemberResponse struct {
 	Picture  *string `json:"picture,omitempty"`
 }
 
+type agentInfoResponse struct {
+	Hostname        string `json:"hostname"`
+	OS              string `json:"os"`
+	Platform        string `json:"platform"`
+	PlatformVersion string `json:"platform_version"`
+	KernelArch      string `json:"kernel_arch"`
+	CPUModelName    string `json:"cpu_model_name"`
+	CPUCountLogical int    `json:"cpu_count_logical"`
+	MemoryTotal     int64  `json:"memory_total"`
+	DiskTotal       int64  `json:"disk_total"`
+	DiskFree        int64  `json:"disk_free"`
+	AgentVersion    string `json:"agent_version"`
+	OpencodeVersion string `json:"opencode_version"`
+	UpdatedAt       string `json:"updated_at"`
+}
+
 type sandboxResponse struct {
 	ID              string  `json:"id"`
 	ShortID         string  `json:"short_id,omitempty"`
@@ -401,6 +417,7 @@ type sandboxResponse struct {
 	CPU             int     `json:"cpu,omitempty"`
 	Memory          int64   `json:"memory,omitempty"`
 	IdleTimeout     *int    `json:"idle_timeout,omitempty"`
+	AgentInfo       *agentInfoResponse `json:"agent_info,omitempty"`
 }
 
 func (s *Server) toWorkspaceResponse(ws *db.Workspace) workspaceResponse {
@@ -449,6 +466,25 @@ func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sand
 	if sbx.LastHeartbeatAt != nil {
 		s := sbx.LastHeartbeatAt.Format(time.RFC3339)
 		resp.LastHeartbeatAt = &s
+	}
+	if sbx.IsLocal {
+		if ai, err := s.DB.GetAgentInfo(sbx.ID); err == nil && ai != nil {
+			resp.AgentInfo = &agentInfoResponse{
+				Hostname:        ai.Hostname,
+				OS:              ai.OS,
+				Platform:        ai.Platform,
+				PlatformVersion: ai.PlatformVersion,
+				KernelArch:      ai.KernelArch,
+				CPUModelName:    ai.CPUModelName,
+				CPUCountLogical: ai.CPUCountLogical,
+				MemoryTotal:     ai.MemoryTotal,
+				DiskTotal:       ai.DiskTotal,
+				DiskFree:        ai.DiskFree,
+				AgentVersion:    ai.AgentVersion,
+				OpencodeVersion: ai.OpencodeVersion,
+				UpdatedAt:       ai.UpdatedAt.Format(time.RFC3339),
+			}
+		}
 	}
 	return resp
 }
