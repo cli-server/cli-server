@@ -16,11 +16,13 @@ import {
   LayoutDashboard,
   Copy,
   Check,
+  Pencil,
 } from 'lucide-react'
 import {
   getSandboxUsage,
   getSandboxTraces,
   getTraceDetail,
+  renameSandbox,
   type Sandbox,
   type UsageSummary,
   type TraceItem,
@@ -36,6 +38,7 @@ interface SandboxDetailProps {
   onPause: (id: string) => void
   onResume: (id: string) => void
   onDelete: (id: string) => void
+  onRename?: (id: string, name: string) => void
 }
 
 export const TRACES_PER_PAGE = 20
@@ -98,7 +101,7 @@ function CopyableId({ id }: { id: string }) {
   )
 }
 
-export function SandboxDetail({ sandbox, onPause, onResume, onDelete }: SandboxDetailProps) {
+export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }: SandboxDetailProps) {
   const [tab, setTab] = useState<Tab>('overview')
   const [usageData, setUsageData] = useState<UsageSummary[] | null>(null)
   const [traces, setTraces] = useState<TraceItem[]>([])
@@ -106,6 +109,8 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete }: SandboxD
   const [tracesPage, setTracesPage] = useState(0)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [confirmPause, setConfirmPause] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editName, setEditName] = useState(sandbox.name)
 
   // Fetch data on sandbox change.
   useEffect(() => {
@@ -154,7 +159,42 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete }: SandboxD
       <div className="shrink-0 border-b border-[var(--border)] bg-[var(--card)] px-6 py-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
-            <h1 className="text-lg font-semibold text-[var(--foreground)] truncate">{sandbox.name}</h1>
+            <div className="flex items-center gap-2">
+              {editing ? (
+                <input
+                  autoFocus
+                  className="text-lg font-semibold text-[var(--foreground)] bg-transparent border-b border-[var(--border)] outline-none"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const trimmed = editName.trim()
+                      if (trimmed && trimmed !== sandbox.name) {
+                        renameSandbox(sandbox.id, trimmed).then(() => onRename?.(sandbox.id, trimmed)).catch(() => {})
+                      }
+                      setEditing(false)
+                    } else if (e.key === 'Escape') {
+                      setEditName(sandbox.name)
+                      setEditing(false)
+                    }
+                  }}
+                  onBlur={() => {
+                    const trimmed = editName.trim()
+                    if (trimmed && trimmed !== sandbox.name) {
+                      renameSandbox(sandbox.id, trimmed).then(() => onRename?.(sandbox.id, trimmed)).catch(() => {})
+                    }
+                    setEditing(false)
+                  }}
+                />
+              ) : (
+                <>
+                  <h1 className="text-lg font-semibold text-[var(--foreground)] truncate">{sandbox.name}</h1>
+                  <button onClick={() => { setEditName(sandbox.name); setEditing(true) }} className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
+                    <Pencil size={14} />
+                  </button>
+                </>
+              )}
+            </div>
             <div className="mt-1.5 flex items-center gap-3">
               <StatusBadge status={sandbox.status} isLocal={sandbox.is_local} />
               <CopyableId id={sandbox.id} />

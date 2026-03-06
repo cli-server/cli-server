@@ -63,6 +63,14 @@ func (db *DB) DeleteWorkspace(id string) error {
 	return nil
 }
 
+func (db *DB) UpdateWorkspaceName(id, name string) error {
+	_, err := db.Exec("UPDATE workspaces SET name = $2, updated_at = NOW() WHERE id = $1", id, name)
+	if err != nil {
+		return fmt.Errorf("update workspace name: %w", err)
+	}
+	return nil
+}
+
 func (db *DB) ListWorkspacesByUser(userID string) ([]*Workspace, error) {
 	rows, err := db.Query(
 		`SELECT w.id, w.name, w.k8s_namespace, w.created_at, w.updated_at

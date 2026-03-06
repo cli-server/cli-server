@@ -105,6 +105,14 @@ func (db *DB) DeleteSandbox(id string) error {
 	return nil
 }
 
+func (db *DB) UpdateSandboxName(id, name string) error {
+	_, err := db.Exec("UPDATE sandboxes SET name = $2 WHERE id = $1", id, name)
+	if err != nil {
+		return fmt.Errorf("update sandbox name: %w", err)
+	}
+	return nil
+}
+
 func (db *DB) UpdateSandboxStatus(id, status string) error {
 	var query string
 	switch status {

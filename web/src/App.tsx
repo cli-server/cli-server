@@ -33,11 +33,13 @@ function SandboxDetailRoute({
   onPause,
   onResume,
   onDelete,
+  onRename,
 }: {
   sandboxes: Sandbox[]
   onPause: (id: string) => void
   onResume: (id: string) => void
   onDelete: (id: string) => void
+  onRename?: (id: string, name: string) => void
 }) {
   const { id } = useParams<{ id: string }>()
   const sandbox = sandboxes.find((s) => s.id === id)
@@ -54,6 +56,7 @@ function SandboxDetailRoute({
       onPause={onPause}
       onResume={onResume}
       onDelete={onDelete}
+      onRename={onRename}
     />
   )
 }
@@ -134,6 +137,14 @@ export default function App() {
     } catch { /* ignore */ }
   }, [navigate])
 
+  const handleRenameWorkspace = useCallback((id: string, name: string) => {
+    setWorkspaces((prev) => prev.map((w) => (w.id === id ? { ...w, name } : w)))
+  }, [])
+
+  const handleRenameSandbox = useCallback((id: string, name: string) => {
+    setSandboxes((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)))
+  }, [])
+
   if (authed === null) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -210,6 +221,7 @@ export default function App() {
               onPause={handlePause}
               onResume={handleResume}
               onDelete={handleDelete}
+              onRename={handleRenameSandbox}
             />
           )}
         />
@@ -220,6 +232,7 @@ export default function App() {
               workspaces={workspaces}
               selectedWorkspaceId={selectedWorkspaceId}
               onSelectWorkspace={handleSelectWorkspace}
+              onRenameWorkspace={handleRenameWorkspace}
             />
           }
         />

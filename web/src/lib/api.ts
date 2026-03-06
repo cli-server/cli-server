@@ -138,6 +138,16 @@ export async function deleteWorkspace(id: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to delete workspace')
 }
 
+export async function renameWorkspace(id: string, name: string): Promise<Workspace> {
+  const res = await fetch(`/api/workspaces/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) throw new Error('Failed to rename workspace')
+  return res.json()
+}
+
 export async function getWorkspacesQuota(): Promise<WorkspacesQuota> {
   const res = await fetch('/api/workspaces/quota')
   if (!res.ok) throw new Error('Failed to get workspaces quota')
@@ -247,6 +257,16 @@ export async function getSandbox(id: string): Promise<Sandbox> {
 export async function deleteSandbox(id: string): Promise<void> {
   const res = await fetch(`/api/sandboxes/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to delete sandbox')
+}
+
+export async function renameSandbox(id: string, name: string): Promise<Sandbox> {
+  const res = await fetch(`/api/sandboxes/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) throw new Error('Failed to rename sandbox')
+  return res.json()
 }
 
 export async function pauseSandbox(id: string): Promise<void> {

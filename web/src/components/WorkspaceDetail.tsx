@@ -8,6 +8,7 @@ import {
   Trash2,
   X,
   MessageSquare,
+  Pencil,
 } from 'lucide-react'
 import {
   listMembers,
@@ -17,6 +18,7 @@ import {
   getWorkspaceLLMQuota,
   getWorkspaceTraces,
   getWorkspaceTraceDetail,
+  renameWorkspace,
   type Workspace,
   type WorkspaceMember,
   type WorkspaceSandboxDefaults,
@@ -30,9 +32,10 @@ type Tab = 'overview' | 'members' | 'traces'
 
 interface WorkspaceDetailProps {
   workspace: Workspace
+  onRename?: (id: string, name: string) => void
 }
 
-export function WorkspaceDetail({ workspace }: WorkspaceDetailProps) {
+export function WorkspaceDetail({ workspace, onRename }: WorkspaceDetailProps) {
   const [tab, setTab] = useState<Tab>('overview')
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [sbxQuota, setSbxQuota] = useState<{ current: number; max: number } | null>(null)
@@ -41,6 +44,8 @@ export function WorkspaceDetail({ workspace }: WorkspaceDetailProps) {
   const [traces, setTraces] = useState<TraceItem[]>([])
   const [tracesTotal, setTracesTotal] = useState(0)
   const [tracesPage, setTracesPage] = useState(0)
+  const [editing, setEditing] = useState(false)
+  const [editName, setEditName] = useState(workspace.name)
 
   useEffect(() => {
     setTab('overview')
@@ -87,7 +92,42 @@ export function WorkspaceDetail({ workspace }: WorkspaceDetailProps) {
       <div className="shrink-0 border-b border-[var(--border)] bg-[var(--card)] px-6 py-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
-            <h1 className="text-lg font-semibold text-[var(--foreground)] truncate">{workspace.name}</h1>
+            <div className="flex items-center gap-2">
+              {editing ? (
+                <input
+                  autoFocus
+                  className="text-lg font-semibold text-[var(--foreground)] bg-transparent border-b border-[var(--border)] outline-none"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const trimmed = editName.trim()
+                      if (trimmed && trimmed !== workspace.name) {
+                        renameWorkspace(workspace.id, trimmed).then(() => onRename?.(workspace.id, trimmed)).catch(() => {})
+                      }
+                      setEditing(false)
+                    } else if (e.key === 'Escape') {
+                      setEditName(workspace.name)
+                      setEditing(false)
+                    }
+                  }}
+                  onBlur={() => {
+                    const trimmed = editName.trim()
+                    if (trimmed && trimmed !== workspace.name) {
+                      renameWorkspace(workspace.id, trimmed).then(() => onRename?.(workspace.id, trimmed)).catch(() => {})
+                    }
+                    setEditing(false)
+                  }}
+                />
+              ) : (
+                <>
+                  <h1 className="text-lg font-semibold text-[var(--foreground)] truncate">{workspace.name}</h1>
+                  <button onClick={() => { setEditName(workspace.name); setEditing(true) }} className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
+                    <Pencil size={14} />
+                  </button>
+                </>
+              )}
+            </div>
             <div className="mt-1 text-xs text-[var(--muted-foreground)]">Workspace</div>
           </div>
         </div>

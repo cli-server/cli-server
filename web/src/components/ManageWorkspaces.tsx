@@ -6,9 +6,10 @@ interface ManageWorkspacesProps {
   workspaces: Workspace[]
   selectedWorkspaceId: string | null
   onSelectWorkspace: (id: string) => void
+  onRenameWorkspace?: (id: string, name: string) => void
 }
 
-export function ManageWorkspaces({ workspaces, selectedWorkspaceId, onSelectWorkspace }: ManageWorkspacesProps) {
+export function ManageWorkspaces({ workspaces, selectedWorkspaceId, onSelectWorkspace, onRenameWorkspace }: ManageWorkspacesProps) {
   const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
 
   return (
@@ -40,7 +41,7 @@ export function ManageWorkspaces({ workspaces, selectedWorkspaceId, onSelectWork
       {/* Detail panel */}
       <div className="flex-1 overflow-hidden">
         {selectedWorkspace ? (
-          <WorkspaceDetail workspace={selectedWorkspace} />
+          <WorkspaceDetail workspace={selectedWorkspace} onRename={onRenameWorkspace} />
         ) : (
           <div className="flex items-center justify-center h-full">
             <span className="text-[var(--muted-foreground)]">Select a workspace</span>
