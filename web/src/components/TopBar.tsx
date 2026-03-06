@@ -140,7 +140,7 @@ export function TopBar({
 
   return (
     <>
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] bg-[var(--card)] px-4">
+      <div className="sticky top-0 z-40 flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] bg-[var(--card)] px-4">
         {/* Left: brand + workspace selector */}
         <div className="flex items-center gap-4">
           <span className="text-sm font-semibold text-[var(--foreground)]">agentserver</span>
@@ -210,8 +210,13 @@ export function TopBar({
             onClick={() => setMenuOpen((v) => !v)}
             className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--secondary)]"
           >
+            <div className="flex flex-col items-end text-right">
+              <span className="max-w-[120px] truncate text-sm text-[var(--foreground)] leading-tight">{displayName}</span>
+              {user?.email && (
+                <span className="max-w-[160px] truncate text-[11px] text-[var(--muted-foreground)] leading-tight">{user.email}</span>
+              )}
+            </div>
             <UserAvatar name={displayName} picture={user?.picture} />
-            <span className="max-w-[120px] truncate text-sm text-[var(--foreground)]">{displayName}</span>
             <ChevronDown size={14} className={`shrink-0 transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
           </button>
           {menuOpen && (
