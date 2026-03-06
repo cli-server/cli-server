@@ -7,6 +7,7 @@ import {
   type QuotaDefaults,
   type UserQuotaResponse,
   type WorkspaceQuotaResponse,
+  type LLMQuotaResponse,
   adminListUsers,
   adminListWorkspaces,
   adminListSandboxes,
@@ -194,6 +195,25 @@ function UsersTable({
 
 function WorkspacesTable({ workspaces }: { workspaces: AdminWorkspace[] }) {
   const [quotaWorkspace, setQuotaWorkspace] = useState<AdminWorkspace | null>(null)
+  const [quotaMap, setQuotaMap] = useState<Map<string, LLMQuotaResponse>>(new Map())
+
+  useEffect(() => {
+    if (workspaces.length === 0) return
+    const fetchQuotas = async () => {
+      const entries = await Promise.all(
+        workspaces.map(async (ws) => {
+          try {
+            const q = await adminGetWorkspaceLLMQuota(ws.id)
+            return [ws.id, q] as const
+          } catch {
+            return null
+          }
+        })
+      )
+      setQuotaMap(new Map(entries.filter((e): e is NonNullable<typeof e> => e !== null)))
+    }
+    fetchQuotas()
+  }, [workspaces])
 
   if (workspaces.length === 0) {
     return <p className="text-sm text-[var(--muted-foreground)]">No workspaces found.</p>
@@ -206,32 +226,40 @@ function WorkspacesTable({ workspaces }: { workspaces: AdminWorkspace[] }) {
             <tr className="border-b border-[var(--border)] bg-[var(--muted)]">
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Name</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">ID</th>
+              <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">RPD</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Quota</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Created At</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Updated At</th>
             </tr>
           </thead>
           <tbody>
-            {workspaces.map((ws) => (
-              <tr key={ws.id} className="border-b border-[var(--border)] last:border-b-0">
-                <td className="px-4 py-3 text-[var(--foreground)]">{ws.name}</td>
-                <td className="px-4 py-3 font-mono text-xs text-[var(--muted-foreground)]">{ws.id}</td>
-                <td className="px-4 py-3">
-                  <button
-                    onClick={() => setQuotaWorkspace(ws)}
-                    className="rounded-md border border-[var(--border)] px-2 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)]"
-                  >
-                    Edit
-                  </button>
-                </td>
-                <td className="px-4 py-3 text-[var(--muted-foreground)]">
-                  {new Date(ws.created_at).toLocaleString()}
-                </td>
-                <td className="px-4 py-3 text-[var(--muted-foreground)]">
-                  {new Date(ws.updated_at).toLocaleString()}
-                </td>
-              </tr>
-            ))}
+            {workspaces.map((ws) => {
+              const q = quotaMap.get(ws.id)
+              const effectiveMax = q?.workspace_quota?.max_rpd ?? q?.default_max_rpd ?? null
+              const used = q?.today_request_count ?? 0
+              const limitStr = effectiveMax === null ? '—' : effectiveMax === 0 ? '\u221E' : String(effectiveMax)
+              return (
+                <tr key={ws.id} className="border-b border-[var(--border)] last:border-b-0">
+                  <td className="px-4 py-3 text-[var(--foreground)]">{ws.name}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted-foreground)]">{ws.id}</td>
+                  <td className="px-4 py-3 text-[var(--muted-foreground)]">{q ? `${used} / ${limitStr}` : '—'}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() => setQuotaWorkspace(ws)}
+                      className="rounded-md border border-[var(--border)] px-2 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)]"
+                    >
+                      Edit
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-[var(--muted-foreground)]">
+                    {new Date(ws.created_at).toLocaleString()}
+                  </td>
+                  <td className="px-4 py-3 text-[var(--muted-foreground)]">
+                    {new Date(ws.updated_at).toLocaleString()}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>

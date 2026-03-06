@@ -174,8 +174,8 @@ function OverviewTab({ workspace, sbxQuota, defaults, llmQuota }: {
         {effectiveMaxRpd !== null && (
           <InfoCard
             icon={<Box size={14} />}
-            label="Max RPD"
-            value={effectiveMaxRpd === 0 ? '\u221E' : String(effectiveMaxRpd)}
+            label="RPD"
+            value={`${llmQuota?.today_request_count ?? 0} / ${effectiveMaxRpd === 0 ? '\u221E' : String(effectiveMaxRpd)}`}
           />
         )}
       </div>

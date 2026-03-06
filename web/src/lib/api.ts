@@ -195,6 +195,7 @@ export async function getWorkspaceDefaults(workspaceId: string): Promise<Workspa
 export interface WorkspaceLLMQuota {
   default_max_rpd: number
   workspace_quota: { workspace_id: string; max_rpd: number | null; updated_at: string } | null
+  today_request_count: number
 }
 
 export async function getWorkspaceLLMQuota(workspaceId: string): Promise<WorkspaceLLMQuota> {
@@ -558,6 +559,7 @@ export async function adminDeleteWorkspaceQuota(workspaceId: string): Promise<vo
 export interface LLMQuotaResponse {
   default_max_rpd: number
   workspace_quota: { workspace_id: string; max_rpd: number | null; updated_at: string } | null
+  today_request_count: number
 }
 
 export async function adminGetWorkspaceLLMQuota(workspaceId: string): Promise<LLMQuotaResponse> {

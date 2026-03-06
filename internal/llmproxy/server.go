@@ -143,10 +143,18 @@ func (s *Server) handleGetWorkspaceQuota(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	todayCount, err := s.store.CountTodayRequests(workspaceID)
+	if err != nil {
+		s.logger.Error("count today requests failed", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"quota":           wq,
-		"default_max_rpd": s.config.DefaultMaxRPD,
+		"workspace_quota":     wq,
+		"default_max_rpd":     s.config.DefaultMaxRPD,
+		"today_request_count": todayCount,
 	})
 }
 
