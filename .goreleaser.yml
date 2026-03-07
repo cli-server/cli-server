@@ -18,21 +18,6 @@ builds:
       - amd64
       - arm64
 
-notarize:
-  macos:
-    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
-      ids:
-        - agentserver-agent
-      sign:
-        certificate: "{{.Env.MACOS_SIGN_P12}}"
-        password: "{{.Env.MACOS_SIGN_PASSWORD}}"
-      notarize:
-        issuer_id: "{{.Env.MACOS_NOTARY_ISSUER_ID}}"
-        key_id: "{{.Env.MACOS_NOTARY_KEY_ID}}"
-        key: "{{.Env.MACOS_NOTARY_KEY}}"
-        wait: true
-        timeout: 1h
-
 archives:
   - id: agentserver-agent
     ids:
@@ -83,13 +68,3 @@ release:
     ```bash
     helm install agentserver oci://ghcr.io/agentserver/charts/agentserver --version {{ trimprefix .Tag "v" }}
     ```
-
-homebrew_casks:
-  - name: agentserver
-    repository:
-      owner: agentserver
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Casks
-    homepage: "https://github.com/agentserver/agentserver"
-    description: "Connect local opencode to agentserver via WebSocket tunnel"

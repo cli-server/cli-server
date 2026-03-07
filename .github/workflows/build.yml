@@ -158,32 +158,158 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Decode notary key
-        env:
-          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
-        run: echo "$MACOS_NOTARY_KEY" | base64 -d > "$RUNNER_TEMP/notary_key.p8"
-
-      - name: Verify notary credentials
-        env:
-          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
-          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
-        run: |
-          echo "KEY length: ${#MACOS_NOTARY_KEY}"
-          echo "KEY_ID length: ${#MACOS_NOTARY_KEY_ID}"
-          echo "ISSUER_ID length: ${#MACOS_NOTARY_ISSUER_ID}"
-          echo "KEY first 4: ${MACOS_NOTARY_KEY:0:4}"
-          echo "KEY last 4: ${MACOS_NOTARY_KEY: -4}"
-
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: '~> v2'
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
-          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
-          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
-          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-          MACOS_NOTARY_KEY: ${{ runner.temp }}/notary_key.p8
+
+  sign-macos:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    needs: [release]
+    env:
+      MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+      MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+      MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+      KEYCHAIN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+    steps:
+      - name: Setup keychain and credentials
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEY_PATH=$RUNNER_TEMP/notary_key.p8
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+
+          echo -n "$MACOS_SIGN_P12" | base64 --decode -o "$CERTIFICATE_PATH"
+          echo -n "$MACOS_NOTARY_KEY" | base64 --decode -o "$KEY_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERTIFICATE_PATH" -P "$MACOS_SIGN_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          xcrun notarytool store-credentials "notary-profile" \
+            --key "$KEY_PATH" \
+            --key-id "$MACOS_NOTARY_KEY_ID" \
+            --issuer "$MACOS_NOTARY_ISSUER_ID" \
+            --keychain "$KEYCHAIN_PATH"
+
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Sign, notarize and replace darwin assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+
+          for ARCH in amd64 arm64; do
+            ASSET="agentserver-darwin-${ARCH}.tar.gz"
+            echo "::group::Processing $ASSET"
+
+            gh release download "$TAG" -p "$ASSET" -R agentserver/agentserver
+            mkdir -p "work-${ARCH}"
+            tar -xzf "$ASSET" -C "work-${ARCH}"
+
+            codesign --force --options runtime \
+              --sign "$SIGNING_IDENTITY" \
+              --keychain "$KEYCHAIN_PATH" \
+              --timestamp \
+              "work-${ARCH}/agentserver"
+
+            codesign --verify --verbose "work-${ARCH}/agentserver"
+
+            ditto -c -k "work-${ARCH}/agentserver" "work-${ARCH}/agentserver.zip"
+
+            xcrun notarytool submit "work-${ARCH}/agentserver.zip" \
+              --keychain-profile "notary-profile" \
+              --keychain "$KEYCHAIN_PATH" \
+              --wait
+
+            tar -czf "$ASSET" -C "work-${ARCH}" agentserver
+            gh release upload "$TAG" "$ASSET" --clobber -R agentserver/agentserver
+
+            echo "::endgroup::"
+          done
+
+      - name: Update checksums and Homebrew Cask
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+
+          SHA_AMD64=$(shasum -a 256 agentserver-darwin-amd64.tar.gz | awk '{print $1}')
+          SHA_ARM64=$(shasum -a 256 agentserver-darwin-arm64.tar.gz | awk '{print $1}')
+
+          gh release download "$TAG" -p "agentserver-linux-amd64.tar.gz" -R agentserver/agentserver -D /tmp
+          gh release download "$TAG" -p "agentserver-linux-arm64.tar.gz" -R agentserver/agentserver -D /tmp
+          SHA_LINUX_AMD64=$(shasum -a 256 /tmp/agentserver-linux-amd64.tar.gz | awk '{print $1}')
+          SHA_LINUX_ARM64=$(shasum -a 256 /tmp/agentserver-linux-arm64.tar.gz | awk '{print $1}')
+
+          cat > /tmp/agentserver.rb << CASK
+          # This file was generated during release. DO NOT EDIT.
+          cask "agentserver" do
+            name "agentserver"
+            desc "Connect local opencode to agentserver via WebSocket tunnel"
+            homepage "https://github.com/agentserver/agentserver"
+            version "${VERSION}"
+
+            livecheck do
+              skip "Auto-generated on release."
+            end
+
+            binary "agentserver"
+
+            on_macos do
+              on_intel do
+                url "https://github.com/agentserver/agentserver/releases/download/v#{version}/agentserver-darwin-amd64.tar.gz"
+                sha256 "${SHA_AMD64}"
+              end
+              on_arm do
+                url "https://github.com/agentserver/agentserver/releases/download/v#{version}/agentserver-darwin-arm64.tar.gz"
+                sha256 "${SHA_ARM64}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/agentserver/agentserver/releases/download/v#{version}/agentserver-linux-amd64.tar.gz"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+              on_arm do
+                url "https://github.com/agentserver/agentserver/releases/download/v#{version}/agentserver-linux-arm64.tar.gz"
+                sha256 "${SHA_LINUX_ARM64}"
+              end
+            end
+
+            # No zap stanza required
+          end
+          CASK
+
+          CONTENT=$(base64 -i /tmp/agentserver.rb)
+          EXISTING_SHA=$(gh api repos/agentserver/homebrew-tap/contents/Casks/agentserver.rb --jq '.sha' 2>/dev/null || echo "")
+
+          if [ -n "$EXISTING_SHA" ]; then
+            gh api -X PUT repos/agentserver/homebrew-tap/contents/Casks/agentserver.rb \
+              -f message="chore: update agentserver cask to ${VERSION} (signed+notarized)" \
+              -f content="$CONTENT" \
+              -f sha="$EXISTING_SHA"
+          else
+            gh api -X PUT repos/agentserver/homebrew-tap/contents/Casks/agentserver.rb \
+              -f message="chore: add agentserver cask ${VERSION} (signed+notarized)" \
+              -f content="$CONTENT"
+          fi
+
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
