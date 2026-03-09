@@ -6,3 +6,4 @@ sidecar-ts/dist/
 agentserver/dist/
 *.tgz
 AuthKey_*.p8
+.worktrees/
