@@ -76,7 +76,7 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {

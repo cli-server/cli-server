@@ -19,21 +19,21 @@ import (
 // Client is the cli-agent tunnel client that connects to the server
 // and forwards HTTP requests to a local opencode instance.
 type Client struct {
-	ServerURL        string
-	SandboxID        string
-	TunnelToken      string
-	OpencodeURL      string
+	ServerURL     string
+	SandboxID     string
+	TunnelToken   string
+	OpencodeURL   string
 	OpencodeToken string
-	httpClient       *http.Client
+	httpClient    *http.Client
 }
 
 // NewClient creates a new agent tunnel client.
 func NewClient(serverURL, sandboxID, tunnelToken, opencodeURL, opencodeToken string) *Client {
 	return &Client{
-		ServerURL:        serverURL,
-		SandboxID:        sandboxID,
-		TunnelToken:      tunnelToken,
-		OpencodeURL:      opencodeURL,
+		ServerURL:     serverURL,
+		SandboxID:     sandboxID,
+		TunnelToken:   tunnelToken,
+		OpencodeURL:   opencodeURL,
 		OpencodeToken: opencodeToken,
 		httpClient: &http.Client{
 			Timeout: 0, // No timeout for SSE streams.
@@ -84,12 +84,19 @@ func (c *Client) Run(ctx context.Context) error {
 	maxBackoff := 60 * time.Second
 
 	for {
+		connectedAt := time.Now()
 		err := c.connectAndServe(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil {
 			log.Printf("tunnel disconnected: %v", err)
+		}
+
+		// Reset backoff if we were connected for a reasonable duration,
+		// indicating the disconnect was not an immediate failure.
+		if time.Since(connectedAt) > 30*time.Second {
+			backoff = time.Second
 		}
 
 		log.Printf("reconnecting in %s...", backoff)
@@ -125,8 +132,8 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 	// Send agent info as a JSON text message.
 	agentInfo := collectAgentInfo(c.OpencodeURL)
 	infoMsg := struct {
-		Type string          `json:"type"`
-		Data *AgentInfoData  `json:"data"`
+		Type string         `json:"type"`
+		Data *AgentInfoData `json:"data"`
 	}{
 		Type: tunnel.FrameTypeAgentInfo,
 		Data: agentInfo,
@@ -139,9 +146,32 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 		log.Printf("failed to marshal agent info: %v", err)
 	}
 
+	// Start client-side ping to keep connection alive through proxies.
+	// Sends a ping every 20s so that both directions have traffic,
+	// preventing intermediate proxies (e.g. Cloudflare) from closing
+	// the WebSocket due to idle timeout.
+	pingCtx, pingCancel := context.WithCancel(ctx)
+	defer pingCancel()
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-pingCtx.Done():
+				return
+			case <-ticker.C:
+				if err := conn.Ping(pingCtx); err != nil {
+					log.Printf("client ping failed: %v", err)
+					pingCancel()
+					return
+				}
+			}
+		}
+	}()
+
 	// Read and process binary frames.
 	for {
-		_, data, err := conn.Read(ctx)
+		_, data, err := conn.Read(pingCtx)
 		if err != nil {
 			return fmt.Errorf("read: %w", err)
 		}

@@ -37,10 +37,12 @@ func RunConnect(opts ConnectOptions) {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// If no saved config, register with the code.
-	if cfg == nil || cfg.SandboxID == "" {
+	// If --code is provided, always re-register (even if saved credentials exist).
+	// Otherwise, fall back to saved credentials.
+	needsRegister := opts.Code != "" || cfg == nil || cfg.SandboxID == ""
+	if needsRegister {
 		if opts.Server == "" {
-			log.Fatal("--server is required for first-time registration")
+			log.Fatal("--server is required for registration")
 		}
 		if opts.Code == "" {
 			log.Fatal("--code is required for first-time registration")
