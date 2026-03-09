@@ -27,7 +27,6 @@ import (
 	"github.com/agentserver/agentserver/internal/server"
 	"github.com/agentserver/agentserver/internal/storage"
 	"github.com/agentserver/agentserver/internal/tunnel"
-	"github.com/agentserver/agentserver/opencodeweb"
 	"github.com/agentserver/agentserver/web"
 	"github.com/spf13/cobra"
 )
@@ -66,14 +65,6 @@ var serveCmd = &cobra.Command{
 			log.Printf("Warning: embedded static files not available: %v", err)
 		} else {
 			staticFS = distFS
-		}
-
-		var opencodeStaticFS fs.FS
-		ocDistFS, err := fs.Sub(opencodeweb.StaticFS, "dist")
-		if err != nil {
-			log.Printf("Warning: embedded opencode static files not available: %v", err)
-		} else {
-			opencodeStaticFS = ocDistFS
 		}
 
 		var procMgr process.Manager
@@ -210,7 +201,7 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
-		srv := server.New(authSvc, oidcMgr, database, sandboxStore, procMgr, driveMgr, nsMgr, tunnel.NewRegistry(), staticFS, opencodeStaticFS, !strings.EqualFold(os.Getenv("PASSWORD_AUTH_ENABLED"), "false"))
+		srv := server.New(authSvc, oidcMgr, database, sandboxStore, procMgr, driveMgr, nsMgr, tunnel.NewRegistry(), staticFS, !strings.EqualFold(os.Getenv("PASSWORD_AUTH_ENABLED"), "false"))
 		srv.LLMProxyURL = os.Getenv("LLMPROXY_URL")
 		addr := fmt.Sprintf(":%d", port)
 

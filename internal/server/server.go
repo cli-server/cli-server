@@ -11,8 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -38,25 +36,15 @@ type Server struct {
 	NamespaceManager *namespace.Manager
 	TunnelRegistry   *tunnel.Registry
 	StaticFS         fs.FS
-	OpencodeStaticFS         fs.FS  // embedded opencode frontend dist (served on subdomain requests)
-	BaseDomain               string // e.g. "agentserver.dev" — used for subdomain routing
-	OpencodeAssetDomain      string // e.g. "opencodeapp.agentserver.dev" — shared static asset domain
+	BaseDomain               string // e.g. "agentserver.dev" — used for sandbox URL generation
 	OpencodeSubdomainPrefix  string // e.g. "code" — subdomain: code-{id}.{baseDomain}
 	OpenclawSubdomainPrefix  string // e.g. "claw" — subdomain: claw-{id}.{baseDomain}
 	PasswordAuthEnabled      bool   // when false, /api/auth/login and /api/auth/register are not registered
 	LLMProxyURL              string // base URL for the llmproxy service (e.g. "http://agentserver-llmproxy:8081")
-	// activityThrottle prevents excessive DB writes for activity tracking.
-	activityMu   sync.Mutex
-	activityLast map[string]time.Time
 }
 
-func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, nsMgr *namespace.Manager, tunnelReg *tunnel.Registry, staticFS fs.FS, opcodeStaticFS fs.FS, passwordAuthEnabled bool) *Server {
+func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, nsMgr *namespace.Manager, tunnelReg *tunnel.Registry, staticFS fs.FS, passwordAuthEnabled bool) *Server {
 	baseDomain := os.Getenv("BASE_DOMAIN")
-
-	opencodeAssetDomain := os.Getenv("OPENCODE_ASSET_DOMAIN")
-	if opencodeAssetDomain == "" && baseDomain != "" {
-		opencodeAssetDomain = "opencodeapp." + baseDomain
-	}
 
 	opcodePrefix := os.Getenv("OPENCODE_SUBDOMAIN_PREFIX")
 	if opcodePrefix == "" {
@@ -77,15 +65,11 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 		NamespaceManager:        nsMgr,
 		TunnelRegistry:          tunnelReg,
 		StaticFS:                staticFS,
-		OpencodeStaticFS:        opcodeStaticFS,
 		BaseDomain:              baseDomain,
-		OpencodeAssetDomain:     opencodeAssetDomain,
 		OpencodeSubdomainPrefix: opcodePrefix,
 		OpenclawSubdomainPrefix: openclawPrefix,
 		PasswordAuthEnabled:     passwordAuthEnabled,
-		activityLast:            make(map[string]time.Time),
 	}
-	s.initOpencodeAssetIndex()
 	if s.OIDC != nil {
 		s.OIDC.OnUserCreated = s.createDefaultWorkspace
 	}
@@ -116,60 +100,10 @@ func (s *Server) createDefaultWorkspace(userID string) {
 	}
 }
 
-// throttledActivity updates activity at most once per 30 seconds per sandbox.
-func (s *Server) throttledActivity(sandboxID string) {
-	s.activityMu.Lock()
-	last, ok := s.activityLast[sandboxID]
-	now := time.Now()
-	if ok && now.Sub(last) < 30*time.Second {
-		s.activityMu.Unlock()
-		return
-	}
-	s.activityLast[sandboxID] = now
-	s.activityMu.Unlock()
-	s.Sandboxes.UpdateActivity(sandboxID)
-}
-
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-
-	// Subdomain middleware: if the Host matches {prefix}-{sandboxID}.{baseDomain},
-	// proxy the entire request to the sandbox pod and skip all other routes.
-	if s.BaseDomain != "" {
-		r.Use(func(next http.Handler) http.Handler {
-			suffix := "." + s.BaseDomain
-			opcodePrefix := s.OpencodeSubdomainPrefix + "-"
-			clawPrefix := s.OpenclawSubdomainPrefix + "-"
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				host := r.Host
-				// Strip port if present.
-				if idx := strings.LastIndex(host, ":"); idx != -1 {
-					host = host[:idx]
-				}
-				if strings.HasSuffix(host, suffix) {
-					sub := strings.TrimSuffix(host, suffix)
-					// Shared static asset domain (e.g. "opencodeapp.{baseDomain}").
-					if s.OpencodeAssetDomain != "" && host == s.OpencodeAssetDomain {
-						s.handleAssetDomainRequest(w, r)
-						return
-					}
-					if strings.HasPrefix(sub, opcodePrefix) {
-						sandboxID := sub[len(opcodePrefix):]
-						s.handleSubdomainProxy(w, r, sandboxID)
-						return
-					}
-					if strings.HasPrefix(sub, clawPrefix) {
-						sandboxID := sub[len(clawPrefix):]
-						s.handleOpenclawSubdomainProxy(w, r, sandboxID)
-						return
-					}
-				}
-				next.ServeHTTP(w, r)
-			})
-		})
-	}
 
 	// Health endpoint (no auth required, for K8s probes)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -178,9 +112,6 @@ func (s *Server) Router() http.Handler {
 
 	// Internal API for LLM proxy token validation (no cookie auth).
 	r.Post("/internal/validate-proxy-token", s.handleValidateProxyToken)
-
-	// Agent tunnel endpoint (auth via tunnel token, no cookie auth needed).
-	r.HandleFunc("/api/tunnel/{sandboxId}", s.handleTunnel)
 
 	// Agent registration (auth via one-time code, no cookie auth needed).
 	r.Post("/api/agent/register", s.handleAgentRegister)
