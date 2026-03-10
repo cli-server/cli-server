@@ -42,7 +42,7 @@ func NewClient(serverURL, sandboxID, tunnelToken, opencodeURL, opencodeToken str
 }
 
 // Register registers a new local agent with the server using a one-time code.
-func Register(serverURL, code, name string) (*Config, error) {
+func Register(serverURL, code, name string) (*RegistryEntry, error) {
 	body := fmt.Sprintf(`{"code":%q,"name":%q}`, code, name)
 	resp, err := http.Post(
 		serverURL+"/api/agent/register",
@@ -68,7 +68,7 @@ func Register(serverURL, code, name string) (*Config, error) {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
-	return &Config{
+	return &RegistryEntry{
 		Server:      serverURL,
 		SandboxID:   result.SandboxID,
 		TunnelToken: result.TunnelToken,
