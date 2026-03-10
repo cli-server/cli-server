@@ -326,7 +326,7 @@ export function SandboxList({
                       <span>
                         <span className="font-medium text-[var(--foreground)]">Install agentserver CLI</span>
                         <br />
-                        macOS / Linux: <code className="rounded bg-[var(--secondary)] px-1.5 py-0.5 text-xs text-[var(--foreground)]">brew install opencode-ai/tap/agentserver</code>
+                        macOS / Linux: <code className="rounded bg-[var(--secondary)] px-1.5 py-0.5 text-xs text-[var(--foreground)]">brew install agentserver/tap/agentserver</code>
                         <br />
                         Windows / Other:{' '}
                         <a
