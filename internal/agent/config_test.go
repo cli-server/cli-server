@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -240,90 +239,5 @@ func TestRegistryNextPort(t *testing.T) {
 	port = reg.NextPort()
 	if port != 4096 {
 		t.Errorf("NextPort after remove = %d, want 4096 (reuse)", port)
-	}
-}
-
-func TestMigrateLegacyConfig(t *testing.T) {
-	dir := t.TempDir()
-	legacyPath := filepath.Join(dir, "agent.json")
-	regPath := filepath.Join(dir, "registry.json")
-	cwd := "/home/user/myproject"
-
-	// Write a legacy config.
-	legacy := &Config{
-		Server:      "https://example.com",
-		SandboxID:   "sbx-legacy",
-		TunnelToken: "tok-legacy",
-		WorkspaceID: "ws-legacy",
-		Name:        "legacy-agent",
-	}
-	if err := SaveConfig(legacyPath, legacy); err != nil {
-		t.Fatalf("SaveConfig: %v", err)
-	}
-
-	// Migrate.
-	migrated, err := MaybeMigrateLegacy(legacyPath, regPath, cwd)
-	if err != nil {
-		t.Fatalf("MaybeMigrateLegacy: %v", err)
-	}
-	if migrated == nil {
-		t.Fatal("expected non-nil registry after migration")
-	}
-	if len(migrated.Entries) != 1 {
-		t.Fatalf("migrated registry: expected 1 entry, got %d", len(migrated.Entries))
-	}
-
-	// Verify registry was persisted.
-	reg, err := LoadRegistry(regPath)
-	if err != nil {
-		t.Fatalf("LoadRegistry: %v", err)
-	}
-	if len(reg.Entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(reg.Entries))
-	}
-
-	e := reg.Entries[0]
-	if e.Dir != cwd {
-		t.Errorf("Dir = %q, want %q", e.Dir, cwd)
-	}
-	if e.Server != legacy.Server {
-		t.Errorf("Server = %q, want %q", e.Server, legacy.Server)
-	}
-	if e.SandboxID != legacy.SandboxID {
-		t.Errorf("SandboxID = %q, want %q", e.SandboxID, legacy.SandboxID)
-	}
-	if e.TunnelToken != legacy.TunnelToken {
-		t.Errorf("TunnelToken = %q, want %q", e.TunnelToken, legacy.TunnelToken)
-	}
-	if e.WorkspaceID != legacy.WorkspaceID {
-		t.Errorf("WorkspaceID = %q, want %q", e.WorkspaceID, legacy.WorkspaceID)
-	}
-	if e.Name != legacy.Name {
-		t.Errorf("Name = %q, want %q", e.Name, legacy.Name)
-	}
-	if e.OpencodePort != basePort {
-		t.Errorf("OpencodePort = %d, want %d", e.OpencodePort, basePort)
-	}
-
-	// Second call is a no-op (registry already exists).
-	migrated2, err := MaybeMigrateLegacy(legacyPath, regPath, cwd)
-	if err != nil {
-		t.Fatalf("MaybeMigrateLegacy (second call): %v", err)
-	}
-	if migrated2 != nil {
-		t.Fatal("expected nil when registry already exists")
-	}
-
-	reg, err = LoadRegistry(regPath)
-	if err != nil {
-		t.Fatalf("LoadRegistry after second migrate: %v", err)
-	}
-	if len(reg.Entries) != 1 {
-		t.Fatalf("expected 1 entry after second migrate, got %d", len(reg.Entries))
-	}
-
-	// Verify legacy file still exists (not deleted).
-	if _, err := os.Stat(legacyPath); os.IsNotExist(err) {
-		t.Error("legacy config was deleted, expected it to remain")
 	}
 }

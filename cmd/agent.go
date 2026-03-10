@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/agentserver/agentserver/internal/agent"
@@ -86,6 +88,7 @@ var agentRemoveCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		removeWorkspace, _ := cmd.Flags().GetString("workspace")
 		removeDir, _ := cmd.Flags().GetString("dir")
+		yes, _ := cmd.Flags().GetBool("yes")
 
 		if removeDir == "" {
 			var err error
@@ -109,17 +112,37 @@ var agentRemoveCmd = &cobra.Command{
 		}
 
 		var wsID string
+		var entryName string
 		switch {
 		case removeWorkspace != "":
 			wsID = removeWorkspace
+			if e := reg.Find(removeDir, wsID); e != nil {
+				entryName = e.Name
+			}
 		case len(entries) == 1:
 			wsID = entries[0].WorkspaceID
+			entryName = entries[0].Name
 		default:
 			fmt.Fprintf(os.Stderr, "Multiple agents registered for this directory. Use --workspace to specify which one:\n")
 			for _, e := range entries {
 				fmt.Fprintf(os.Stderr, "  workspace=%s  name=%s  sandbox=%s\n", e.WorkspaceID, e.Name, e.SandboxID)
 			}
 			os.Exit(1)
+		}
+
+		if !yes {
+			label := entryName
+			if label == "" {
+				label = wsID
+			}
+			fmt.Printf("Remove agent %q for directory %s? [y/N] ", label, removeDir)
+			reader := bufio.NewReader(os.Stdin)
+			answer, _ := reader.ReadString('\n')
+			answer = strings.TrimSpace(strings.ToLower(answer))
+			if answer != "y" && answer != "yes" {
+				fmt.Println("Aborted.")
+				return
+			}
 		}
 
 		if !reg.Remove(removeDir, wsID) {
@@ -136,9 +159,17 @@ var agentRemoveCmd = &cobra.Command{
 	},
 }
 
+var agentVersionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print the agent version",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("agentserver-agent %s\n", agent.Version)
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(agentCmd)
-	agentCmd.AddCommand(agentConnectCmd, agentListCmd, agentRemoveCmd)
+	agentCmd.AddCommand(agentConnectCmd, agentListCmd, agentRemoveCmd, agentVersionCmd)
 
 	agentConnectCmd.Flags().StringVar(&agentServer, "server", "", "Agent server URL (e.g., https://cli.example.com)")
 	agentConnectCmd.Flags().StringVar(&agentCode, "code", "", "One-time registration code from Web UI")
@@ -152,4 +183,5 @@ func init() {
 
 	agentRemoveCmd.Flags().String("workspace", "", "Workspace ID of the agent to remove")
 	agentRemoveCmd.Flags().String("dir", "", "Directory of the agent to remove (default: current directory)")
+	agentRemoveCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 }

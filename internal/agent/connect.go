@@ -35,14 +35,6 @@ func RunConnect(opts ConnectOptions) {
 
 	registryPath := DefaultRegistryPath()
 
-	// Attempt legacy migration (before locking — migration creates the file).
-	legacyPath := DefaultConfigPath()
-	if migrated, err := MaybeMigrateLegacy(legacyPath, registryPath, cwd); err != nil {
-		log.Printf("Warning: legacy migration failed: %v", err)
-	} else if migrated != nil {
-		log.Printf("Migrated legacy config to registry")
-	}
-
 	// Lock registry for the read-modify-write cycle.
 	locked, err := LockRegistry(registryPath)
 	if err != nil {
