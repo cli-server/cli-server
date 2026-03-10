@@ -6,15 +6,15 @@ import (
 )
 
 var (
-	agentServer           string
-	agentCode             string
-	agentName             string
-	agentOpencodeURL      string
-	agentOpencodeToken    string
-	agentConfigPath       string
-	agentAutoStart        bool
-	agentOpencodeBin      string
-	agentOpencodePort     int
+	agentServer        string
+	agentCode          string
+	agentName          string
+	agentWorkspaceID   string
+	agentOpencodeURL   string
+	agentOpencodeToken string
+	agentAutoStart     bool
+	agentOpencodeBin   string
+	agentOpencodePort  int
 )
 
 var agentCmd = &cobra.Command{
@@ -35,16 +35,17 @@ By default, opencode serve is started automatically on --opencode-port (4096).
 Use --auto-start=false to disable this and manage opencode manually.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		agent.RunConnect(agent.ConnectOptions{
-			Server:           agentServer,
-			Code:             agentCode,
-			Name:             agentName,
-			OpencodeURL:      agentOpencodeURL,
-			OpencodeURLSet:   cmd.Flags().Changed("opencode-url"),
-			OpencodeToken:    agentOpencodeToken,
-			ConfigPath:       agentConfigPath,
-			AutoStart:        agentAutoStart,
-			OpencodeBin:      agentOpencodeBin,
-			OpencodePort:     agentOpencodePort,
+			Server:          agentServer,
+			Code:            agentCode,
+			Name:            agentName,
+			WorkspaceID:     agentWorkspaceID,
+			OpencodeURL:     agentOpencodeURL,
+			OpencodeURLSet:  cmd.Flags().Changed("opencode-url"),
+			OpencodeToken:   agentOpencodeToken,
+			AutoStart:       agentAutoStart,
+			OpencodeBin:     agentOpencodeBin,
+			OpencodePort:    agentOpencodePort,
+			OpencodePortSet: cmd.Flags().Changed("opencode-port"),
 		})
 	},
 }
@@ -56,9 +57,9 @@ func init() {
 	agentConnectCmd.Flags().StringVar(&agentServer, "server", "", "Agent server URL (e.g., https://cli.example.com)")
 	agentConnectCmd.Flags().StringVar(&agentCode, "code", "", "One-time registration code from Web UI")
 	agentConnectCmd.Flags().StringVar(&agentName, "name", "", "Name for this agent (default: hostname)")
+	agentConnectCmd.Flags().StringVar(&agentWorkspaceID, "workspace", "", "Workspace ID to connect to")
 	agentConnectCmd.Flags().StringVar(&agentOpencodeURL, "opencode-url", "", "Local opencode server URL (default: http://localhost:{opencode-port})")
 	agentConnectCmd.Flags().StringVar(&agentOpencodeToken, "opencode-token", "", "Local opencode server token")
-	agentConnectCmd.Flags().StringVar(&agentConfigPath, "config", "", "Config file path (default: ~/.agentserver/agent.json)")
 	agentConnectCmd.Flags().BoolVar(&agentAutoStart, "auto-start", true, "Automatically start opencode serve")
 	agentConnectCmd.Flags().StringVar(&agentOpencodeBin, "opencode-bin", "opencode", "Path to the opencode binary")
 	agentConnectCmd.Flags().IntVar(&agentOpencodePort, "opencode-port", 4096, "Port to start opencode on")
