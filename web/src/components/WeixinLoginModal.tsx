@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { X, Loader2, CheckCircle2, AlertCircle, SmartphoneNfc } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import { weixinQRStart, weixinQRWait } from '../lib/api'
 
 interface WeixinLoginModalProps {
@@ -103,7 +104,7 @@ export function WeixinLoginModal({ sandboxId, onClose }: WeixinLoginModalProps) 
         {(phase === 'qr' || phase === 'scanned') && (
           <div className="flex flex-col items-center gap-4">
             <div className="rounded-lg border border-[var(--border)] bg-white p-3">
-              <img src={qrUrl} alt="WeChat QR Code" className="h-48 w-48" />
+              <QRCodeSVG value={qrUrl} size={192} />
             </div>
             <div className="flex items-center gap-2 text-sm text-[var(--muted-foreground)]">
               {phase === 'scanned' ? (
