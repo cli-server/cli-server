@@ -133,6 +133,9 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string, weixinEn
 		Enabled bool   `json:"enabled,omitempty"`
 		BaseURL string `json:"baseUrl,omitempty"`
 	}
+	type pluginsConfig struct {
+		Allow []string `json:"allow,omitempty"`
+	}
 	type config struct {
 		Gateway struct {
 			Auth           *gatewayAuth `json:"auth,omitempty"`
@@ -144,6 +147,7 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string, weixinEn
 				DisableDeviceAuth   bool `json:"dangerouslyDisableDeviceAuth,omitempty"`
 			} `json:"controlUi"`
 		} `json:"gateway"`
+		Plugins  *pluginsConfig `json:"plugins,omitempty"`
 		Channels *struct {
 			Weixin weixinChannel `json:"openclaw-weixin,omitempty"`
 		} `json:"channels,omitempty"`
@@ -165,6 +169,7 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string, weixinEn
 	c.Gateway.ControlUI.DisableDeviceAuth = true
 
 	if weixinEnabled {
+		c.Plugins = &pluginsConfig{Allow: []string{"openclaw-weixin"}}
 		c.Channels = &struct {
 			Weixin weixinChannel `json:"openclaw-weixin,omitempty"`
 		}{
