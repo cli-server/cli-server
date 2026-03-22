@@ -10,6 +10,7 @@ type Config struct {
 	PidsLimit             int64
 	NetworkMode           string
 	OpencodeConfigContent string
+	OpenclawWeixinEnabled bool
 }
 
 func DefaultConfig() Config {
@@ -21,6 +22,7 @@ func DefaultConfig() Config {
 		PidsLimit:             envInt64OrDefault("AGENT_PIDS_LIMIT", 256),
 		NetworkMode:           envOrDefault("AGENT_NETWORK_MODE", "bridge"),
 		OpencodeConfigContent: os.Getenv("OPENCODE_CONFIG_CONTENT"),
+		OpenclawWeixinEnabled: os.Getenv("OPENCLAW_WEIXIN_ENABLED") == "true",
 	}
 }
 

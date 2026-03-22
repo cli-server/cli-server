@@ -91,6 +91,7 @@ sandbox:
     image: ""
     runtimeClassName: ""
     subdomainPrefix: "claw"  # subdomain: {prefix}-{sessionID}.{baseDomain}
+    weixinEnabled: false     # Install and enable the official WeChat channel plugin
   networkPolicy:
     enabled: false
     # CIDR ranges to deny egress to (internal/private networks).

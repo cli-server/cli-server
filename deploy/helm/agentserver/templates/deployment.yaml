@@ -134,6 +134,10 @@ spec:
             - name: OPENCLAW_RUNTIME_CLASS
               value: {{ .Values.sandbox.openclaw.runtimeClassName | quote }}
             {{- end }}
+            {{- if .Values.sandbox.openclaw.weixinEnabled }}
+            - name: OPENCLAW_WEIXIN_ENABLED
+              value: "true"
+            {{- end }}
             - name: OPENCODE_SUBDOMAIN_PREFIX
               value: {{ .Values.sandbox.opencode.subdomainPrefix | default "code" | quote }}
             - name: OPENCLAW_SUBDOMAIN_PREFIX

@@ -17,6 +17,7 @@ type Config struct {
 	OpenclawImage            string
 	OpenclawPort             int
 	OpenclawRuntimeClassName string
+	OpenclawWeixinEnabled    bool
 }
 
 // DefaultConfig returns a Config populated from environment variables with sensible defaults.
@@ -32,6 +33,7 @@ func DefaultConfig() Config {
 		OpenclawImage:            os.Getenv("OPENCLAW_IMAGE"),
 		OpenclawPort:             18789,
 		OpenclawRuntimeClassName: os.Getenv("OPENCLAW_RUNTIME_CLASS"),
+		OpenclawWeixinEnabled:    os.Getenv("OPENCLAW_WEIXIN_ENABLED") == "true",
 	}
 }
 
@@ -113,7 +115,7 @@ func ExtractProxyBaseURL(configJSON string) string {
 // gateway.auth.token so that the gateway and Control UI share the same secret;
 // without this, OpenClaw v2026.3.12+ auto-generates a random token on startup
 // that won't match the token our proxy injects.
-func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string) string {
+func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string, weixinEnabled bool) string {
 	type modelDef struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
@@ -127,6 +129,10 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string) string {
 	type gatewayAuth struct {
 		Token string `json:"token,omitempty"`
 	}
+	type weixinChannel struct {
+		Enabled bool   `json:"enabled,omitempty"`
+		BaseURL string `json:"baseUrl,omitempty"`
+	}
 	type config struct {
 		Gateway struct {
 			Auth      *gatewayAuth `json:"auth,omitempty"`
@@ -137,6 +143,9 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string) string {
 				DisableDeviceAuth   bool `json:"dangerouslyDisableDeviceAuth,omitempty"`
 			} `json:"controlUi"`
 		} `json:"gateway"`
+		Channels *struct {
+			Weixin weixinChannel `json:"openclaw-weixin,omitempty"`
+		} `json:"channels,omitempty"`
 		Models *struct {
 			Providers map[string]provider `json:"providers"`
 		} `json:"models,omitempty"`
@@ -150,6 +159,17 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string) string {
 	c.Gateway.ControlUI.AllowInsecureAuth = true
 	c.Gateway.ControlUI.AllowOriginFallback = true
 	c.Gateway.ControlUI.DisableDeviceAuth = true
+
+	if weixinEnabled {
+		c.Channels = &struct {
+			Weixin weixinChannel `json:"openclaw-weixin,omitempty"`
+		}{
+			Weixin: weixinChannel{
+				Enabled: true,
+				BaseURL: "https://ilinkai.weixin.qq.com",
+			},
+		}
+	}
 
 	if proxyBaseURL != "" && proxyToken != "" {
 		c.Models = &struct {

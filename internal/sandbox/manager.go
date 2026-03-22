@@ -337,11 +337,16 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 			containerPort = 18789
 		}
 		// Build openclaw config JSON with gateway settings and Anthropic proxy.
-		openclawCfg := BuildOpenclawConfig(proxyBaseURL, opts.ProxyToken, opts.OpenclawToken)
+		openclawCfg := BuildOpenclawConfig(proxyBaseURL, opts.ProxyToken, opts.OpenclawToken, m.cfg.OpenclawWeixinEnabled)
+		installPlugin := ""
+		if m.cfg.OpenclawWeixinEnabled {
+			installPlugin = `openclaw plugins install "@tencent-weixin/openclaw-weixin" 2>/dev/null || true
+`
+		}
 		containerCmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
 ` + openclawCfg + `
 CFGEOF
-exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
+` + installPlugin + `exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 		if opts.OpenclawToken != "" {
 			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: opts.OpenclawToken})
 		}
