@@ -57,7 +57,7 @@ func (s *Server) handleOpenclawSubdomainProxy(w http.ResponseWriter, r *http.Req
 		// can authenticate the WebSocket connection automatically.
 		redirectURL := "/"
 		if sbx.OpenclawToken != "" {
-			redirectURL = "/?token=" + url.QueryEscape(sbx.OpenclawToken)
+			redirectURL = "/#token=" + url.QueryEscape(sbx.OpenclawToken)
 		}
 		http.Redirect(w, r, redirectURL, http.StatusFound)
 		return
