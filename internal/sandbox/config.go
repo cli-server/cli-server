@@ -109,8 +109,11 @@ func ExtractProxyBaseURL(configJSON string) string {
 }
 
 // BuildOpenclawConfig returns the openclaw.json content with gateway settings
-// and optional Anthropic proxy credentials.
-func BuildOpenclawConfig(proxyBaseURL, proxyToken string) string {
+// and optional Anthropic proxy credentials. The gatewayToken is written into
+// gateway.auth.token so that the gateway and Control UI share the same secret;
+// without this, OpenClaw v2026.3.12+ auto-generates a random token on startup
+// that won't match the token our proxy injects.
+func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string) string {
 	type modelDef struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
@@ -121,8 +124,12 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken string) string {
 		API     string     `json:"api"`
 		Models  []modelDef `json:"models"`
 	}
+	type gatewayAuth struct {
+		Token string `json:"token,omitempty"`
+	}
 	type config struct {
 		Gateway struct {
+			Auth      *gatewayAuth `json:"auth,omitempty"`
 			ControlUI struct {
 				Enabled             bool `json:"enabled,omitempty"`
 				AllowInsecureAuth   bool `json:"allowInsecureAuth,omitempty"`
@@ -136,6 +143,9 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken string) string {
 	}
 
 	var c config
+	if gatewayToken != "" {
+		c.Gateway.Auth = &gatewayAuth{Token: gatewayToken}
+	}
 	c.Gateway.ControlUI.Enabled = true
 	c.Gateway.ControlUI.AllowInsecureAuth = true
 	c.Gateway.ControlUI.AllowOriginFallback = true

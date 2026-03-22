@@ -197,7 +197,7 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 	}
 	if opts.SandboxType == "openclaw" {
 		proxyBaseURL := sandbox.ExtractProxyBaseURL(m.cfg.OpencodeConfigContent)
-		openclawCfg := sandbox.BuildOpenclawConfig(proxyBaseURL, opts.ProxyToken)
+		openclawCfg := sandbox.BuildOpenclawConfig(proxyBaseURL, opts.ProxyToken, opts.OpenclawToken)
 		containerConfig.Cmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
 ` + openclawCfg + `
 CFGEOF
