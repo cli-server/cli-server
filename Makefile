@@ -40,6 +40,6 @@ docker-llmproxy:
 	docker build -f Dockerfile.llmproxy -t llmproxy:latest .
 
 docker-openclaw:
-	docker build -f Dockerfile.openclaw -t openclaw-weixin:latest .
+	docker build -f Dockerfile.openclaw -t openclaw-agent:latest .
 
 docker-all: docker docker-agent docker-llmproxy
