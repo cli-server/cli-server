@@ -343,10 +343,10 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 			installPlugin = `openclaw plugins install "@tencent-weixin/openclaw-weixin" 2>/dev/null || true
 `
 		}
-		containerCmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
+		containerCmd = []string{"sh", "-c", installPlugin + `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
 ` + openclawCfg + `
 CFGEOF
-` + installPlugin + `exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
+exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 		if opts.OpenclawToken != "" {
 			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: opts.OpenclawToken})
 		}

@@ -203,10 +203,10 @@ func (m *Manager) EnsureContainer(id string, opts process.StartOptions) (string,
 			installPlugin = `openclaw plugins install "@tencent-weixin/openclaw-weixin" 2>/dev/null || true
 `
 		}
-		containerConfig.Cmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
+		containerConfig.Cmd = []string{"sh", "-c", installPlugin + `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
 ` + openclawCfg + `
 CFGEOF
-` + installPlugin + `exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
+exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 	}
 	resp, err := m.cli.ContainerCreate(ctx,
 		containerConfig,
