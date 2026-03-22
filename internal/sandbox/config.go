@@ -124,6 +124,8 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken string) string {
 	type config struct {
 		Gateway struct {
 			ControlUI struct {
+				Enabled             bool `json:"enabled,omitempty"`
+				AllowInsecureAuth   bool `json:"allowInsecureAuth,omitempty"`
 				AllowOriginFallback bool `json:"dangerouslyAllowHostHeaderOriginFallback,omitempty"`
 				DisableDeviceAuth   bool `json:"dangerouslyDisableDeviceAuth,omitempty"`
 			} `json:"controlUi"`
@@ -134,6 +136,8 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken string) string {
 	}
 
 	var c config
+	c.Gateway.ControlUI.Enabled = true
+	c.Gateway.ControlUI.AllowInsecureAuth = true
 	c.Gateway.ControlUI.AllowOriginFallback = true
 	c.Gateway.ControlUI.DisableDeviceAuth = true
 
