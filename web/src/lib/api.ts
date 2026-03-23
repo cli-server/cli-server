@@ -260,6 +260,26 @@ export async function deleteWorkspaceLLMConfig(workspaceId: string): Promise<voi
   if (!res.ok) throw new Error('Failed to delete LLM config')
 }
 
+// ModelServer connection
+export interface ModelserverStatus {
+  connected: boolean
+  project_id?: string
+  project_name?: string
+  models?: LLMModel[]
+  connected_at?: string
+}
+
+export async function getModelserverStatus(workspaceId: string): Promise<ModelserverStatus> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/modelserver/status`)
+  if (!res.ok) throw new Error('Failed to fetch modelserver status')
+  return res.json()
+}
+
+export async function disconnectModelserver(workspaceId: string): Promise<void> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/modelserver/disconnect`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to disconnect')
+}
+
 export async function listSandboxes(workspaceId: string): Promise<Sandbox[]> {
   const res = await fetch(`/api/workspaces/${workspaceId}/sandboxes`)
   if (!res.ok) throw new Error('Failed to list sandboxes')

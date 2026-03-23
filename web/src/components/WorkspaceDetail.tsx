@@ -25,6 +25,8 @@ import {
   getWorkspaceLLMConfig,
   setWorkspaceLLMConfig,
   deleteWorkspaceLLMConfig,
+  getModelserverStatus,
+  disconnectModelserver,
   renameWorkspace,
   type Workspace,
   type WorkspaceMember,
@@ -33,6 +35,7 @@ import {
   type WorkspaceLLMConfig,
   type LLMModel,
   type TraceItem,
+  type ModelserverStatus,
 } from '../lib/api'
 import { ConfirmModal } from './Modals'
 import { TracesTab, TRACES_PER_PAGE } from './SandboxDetail'
@@ -403,12 +406,32 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [msStatus, setMsStatus] = useState<ModelserverStatus | null>(null)
 
   const load = useCallback(() => {
     getWorkspaceLLMConfig(workspaceId).then(setConfig).catch(() => {})
   }, [workspaceId])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    getModelserverStatus(workspaceId).then(setMsStatus).catch(() => setMsStatus({ connected: false }))
+  }, [workspaceId])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const msParam = params.get('modelserver')
+    if (msParam === 'connected' || msParam === 'error') {
+      if (msParam === 'connected') {
+        getModelserverStatus(workspaceId).then(setMsStatus)
+      }
+      // Clean URL params
+      const url = new URL(window.location.href)
+      url.searchParams.delete('modelserver')
+      url.searchParams.delete('message')
+      window.history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : ''))
+    }
+  }, [])
 
   const startEdit = () => {
     if (config?.configured) {
@@ -531,6 +554,57 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div className="max-w-2xl">
+      {/* ModelServer Connection */}
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>ModelServer</h3>
+        </div>
+        {msStatus?.connected ? (
+          <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8 }}>
+            <p style={{ margin: '0 0 8px', fontSize: '0.9rem' }}>
+              Connected to project: <strong>{msStatus.project_name}</strong>
+            </p>
+            {msStatus.models && msStatus.models.length > 0 && (
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 12 }}>
+                {msStatus.models.map(m => (
+                  <span key={m.id} style={{ padding: '2px 8px', background: '#f3f4f6', borderRadius: 4, fontSize: '0.8rem' }}>{m.id}</span>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => { window.location.href = `/api/workspaces/${workspaceId}/modelserver/connect` }}
+                style={{ padding: '6px 12px', fontSize: '0.85rem', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer' }}
+              >
+                Reconnect
+              </button>
+              <button
+                onClick={async () => {
+                  await disconnectModelserver(workspaceId)
+                  setMsStatus({ connected: false })
+                }}
+                style={{ padding: '6px 12px', fontSize: '0.85rem', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer', color: '#dc2626' }}
+              >
+                Disconnect
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => { window.location.href = `/api/workspaces/${workspaceId}/modelserver/connect` }}
+            style={{ padding: '8px 16px', fontSize: '0.9rem', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer' }}
+          >
+            Connect to ModelServer
+          </button>
+        )}
+      </div>
+
+      {msStatus?.connected && (
+        <p style={{ color: '#6b7280', fontSize: '0.85rem', marginBottom: 16 }}>
+          Manual LLM configuration below is overridden by the ModelServer connection.
+        </p>
+      )}
+
       <div className="rounded-lg border border-[var(--border)] bg-[var(--card)]">
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
           <div className="flex items-center gap-2">
