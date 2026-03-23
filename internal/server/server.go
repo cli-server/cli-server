@@ -125,6 +125,9 @@ func (s *Server) Router() http.Handler {
 	// Internal API for LLM proxy token validation (no cookie auth).
 	r.Post("/internal/validate-proxy-token", s.handleValidateProxyToken)
 
+	// Internal API for ModelServer token retrieval (no cookie auth).
+	r.Get("/internal/workspaces/{id}/modelserver-token", s.handleInternalModelserverToken)
+
 	// Agent registration (auth via one-time code, no cookie auth needed).
 	r.Post("/api/agent/register", s.handleAgentRegister)
 
