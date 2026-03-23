@@ -13,10 +13,11 @@ import (
 
 // Server is the LLM proxy HTTP server.
 type Server struct {
-	config     Config
-	store      *Store
-	logger     *slog.Logger
-	httpClient *http.Client // for calling agentserver API
+	config       Config
+	store        *Store
+	logger       *slog.Logger
+	httpClient   *http.Client // for calling agentserver API
+	msTokenCache *modelserverTokenCache
 }
 
 // NewServer creates a new LLM proxy server.
@@ -28,6 +29,7 @@ func NewServer(cfg Config, store *Store, logger *slog.Logger) *Server {
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
+		msTokenCache: newModelserverTokenCache(),
 	}
 }
 

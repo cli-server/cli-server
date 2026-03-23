@@ -39,9 +39,16 @@ func (s *Server) handleAnthropicProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1b. Check RPD quota (only for messages endpoint).
+	// 1a. Determine upstream target.
+	targetURL := s.config.AnthropicBaseURL
+	useModelserver := sbx.ModelserverUpstreamURL != ""
+	if useModelserver {
+		targetURL = sbx.ModelserverUpstreamURL
+	}
+
+	// 1b. Check RPD quota (only for messages endpoint, skip for modelserver).
 	isMessagesEndpoint := strings.HasSuffix(r.URL.Path, "/messages")
-	if isMessagesEndpoint {
+	if isMessagesEndpoint && !useModelserver {
 		if exceeded, current, max := s.checkRPD(sbx.WorkspaceID); exceeded {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -90,11 +97,23 @@ func (s *Server) handleAnthropicProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 5. Set up reverse proxy.
-	target, err := url.Parse(s.config.AnthropicBaseURL)
+	target, err := url.Parse(targetURL)
 	if err != nil {
 		logger.Error("invalid upstream URL", "error", err)
 		http.Error(w, "invalid upstream URL", http.StatusInternalServerError)
 		return
+	}
+
+	// 5a. Pre-fetch modelserver token (before creating proxy, so we can fail early).
+	var msToken string
+	if useModelserver {
+		var tokenErr error
+		msToken, tokenErr = s.fetchModelserverToken(sbx.WorkspaceID)
+		if tokenErr != nil {
+			logger.Error("failed to get modelserver token", "error", tokenErr)
+			http.Error(w, "modelserver token unavailable", http.StatusBadGateway)
+			return
+		}
 	}
 
 	startTime := time.Now()
@@ -107,12 +126,18 @@ func (s *Server) handleAnthropicProxy(w http.ResponseWriter, r *http.Request) {
 			req.URL.RawQuery = r.URL.RawQuery
 			req.Host = target.Host
 
-			// Inject real API credentials.
-			if s.config.AnthropicAPIKey != "" {
-				req.Header.Set("x-api-key", s.config.AnthropicAPIKey)
-			}
-			if s.config.AnthropicAuthToken != "" {
-				req.Header.Set("Authorization", "Bearer "+s.config.AnthropicAuthToken)
+			if useModelserver {
+				// Modelserver auth: Bearer token, no x-api-key.
+				req.Header.Del("x-api-key")
+				req.Header.Set("Authorization", "Bearer "+msToken)
+			} else {
+				// Anthropic auth: inject real API credentials.
+				if s.config.AnthropicAPIKey != "" {
+					req.Header.Set("x-api-key", s.config.AnthropicAPIKey)
+				}
+				if s.config.AnthropicAuthToken != "" {
+					req.Header.Set("Authorization", "Bearer "+s.config.AnthropicAuthToken)
+				}
 			}
 			if req.Header.Get("anthropic-version") == "" {
 				req.Header.Set("anthropic-version", "2023-06-01")
