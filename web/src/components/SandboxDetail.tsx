@@ -23,12 +23,14 @@ import {
   FolderOpen,
 } from 'lucide-react'
 import {
+  getSandbox,
   getSandboxUsage,
   getSandboxTraces,
   getTraceDetail,
   renameSandbox,
   type Sandbox,
   type AgentInfo,
+  type WeixinBinding,
   type UsageSummary,
   type TraceItem,
   type TokenUsageItem,
@@ -126,6 +128,11 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(sandbox.name)
   const [showWeixinLogin, setShowWeixinLogin] = useState(false)
+  const [weixinBindings, setWeixinBindings] = useState<WeixinBinding[]>(sandbox.weixin_bindings || [])
+
+  const refreshWeixinBindings = useCallback(() => {
+    getSandbox(sandbox.id).then((s) => setWeixinBindings(s.weixin_bindings || [])).catch(() => {})
+  }, [sandbox.id])
 
   // Fetch data on sandbox change.
   useEffect(() => {
@@ -139,7 +146,10 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
       setTraces(r.traces || [])
       setTracesTotal(r.total || 0)
     }).catch(() => {})
-  }, [sandbox.id])
+    if (sandbox.type === 'openclaw') {
+      refreshWeixinBindings()
+    }
+  }, [sandbox.id, refreshWeixinBindings])
 
   // Fetch traces on page change.
   useEffect(() => {
@@ -291,7 +301,7 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
-        {tab === 'overview' && <OverviewTab sandbox={sandbox} usageData={usageData} totals={{ totalRequests, totalInput, totalOutput, totalCacheRead, totalCacheWrite }} />}
+        {tab === 'overview' && <OverviewTab sandbox={sandbox} weixinBindings={weixinBindings} usageData={usageData} totals={{ totalRequests, totalInput, totalOutput, totalCacheRead, totalCacheWrite }} />}
         {tab === 'traces' && <TracesTab traces={traces} tracesTotal={tracesTotal} tracesPage={tracesPage} totalPages={totalPages} onPageChange={setTracesPage} fetchDetail={(traceId) => getTraceDetail(sandbox.id, traceId)} />}
       </div>
 
@@ -316,7 +326,7 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
         />
       )}
       {showWeixinLogin && (
-        <WeixinLoginModal sandboxId={sandbox.id} onClose={() => setShowWeixinLogin(false)} />
+        <WeixinLoginModal sandboxId={sandbox.id} onClose={() => setShowWeixinLogin(false)} onConnected={refreshWeixinBindings} />
       )}
     </div>
   )
@@ -372,8 +382,9 @@ function AgentInfoSection({ info }: { info: AgentInfo }) {
   )
 }
 
-function OverviewTab({ sandbox, usageData, totals }: {
+function OverviewTab({ sandbox, weixinBindings, usageData, totals }: {
   sandbox: Sandbox
+  weixinBindings: WeixinBinding[]
   usageData: UsageSummary[] | null
   totals: { totalRequests: number; totalInput: number; totalOutput: number; totalCacheRead: number; totalCacheWrite: number }
 }) {
@@ -434,14 +445,14 @@ function OverviewTab({ sandbox, usageData, totals }: {
       )}
 
       {/* WeChat Bindings */}
-      {isOpenClaw && sandbox.weixin_bindings && sandbox.weixin_bindings.length > 0 && (
+      {isOpenClaw && weixinBindings.length > 0 && (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--card)]">
           <div className="flex items-center gap-2 border-b border-[var(--border)] px-5 py-3">
             <MessageSquare size={14} className="text-green-400" />
             <span className="text-sm font-medium text-[var(--foreground)]">WeChat Bindings</span>
           </div>
           <div className="divide-y divide-[var(--border)]">
-            {sandbox.weixin_bindings.map((b, i) => (
+            {weixinBindings.map((b, i) => (
               <div key={i} className="flex items-center justify-between px-5 py-3">
                 <div className="flex flex-col gap-0.5">
                   <span className="text-xs font-mono text-[var(--foreground)]">{b.bot_id}</span>

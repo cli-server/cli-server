@@ -337,6 +337,8 @@ export interface WeixinQRWaitResult {
   status: 'wait' | 'scaned' | 'confirmed' | 'expired'
   message: string
   qrcode_url?: string
+  bot_id?: string
+  user_id?: string
 }
 
 export async function weixinQRStart(sandboxId: string): Promise<WeixinQRStartResult> {

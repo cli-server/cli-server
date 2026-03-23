@@ -6,11 +6,12 @@ import { weixinQRStart, weixinQRWait } from '../lib/api'
 interface WeixinLoginModalProps {
   sandboxId: string
   onClose: () => void
+  onConnected?: () => void
 }
 
 type Phase = 'loading' | 'qr' | 'scanned' | 'connected' | 'error'
 
-export function WeixinLoginModal({ sandboxId, onClose }: WeixinLoginModalProps) {
+export function WeixinLoginModal({ sandboxId, onClose, onConnected }: WeixinLoginModalProps) {
   const [phase, setPhase] = useState<Phase>('loading')
   const [qrUrl, setQrUrl] = useState('')
   const [message, setMessage] = useState('')
@@ -55,6 +56,7 @@ export function WeixinLoginModal({ sandboxId, onClose }: WeixinLoginModalProps) 
           if (res.connected) {
             setPhase('connected')
             setMessage(res.message)
+            onConnected?.()
             return
           }
 

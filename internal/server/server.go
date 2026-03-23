@@ -478,18 +478,26 @@ func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sand
 			}
 		}
 	}
-	if sbx.Type == "openclaw" {
-		if bindings, err := s.DB.ListWeixinBindings(sbx.ID); err == nil && len(bindings) > 0 {
-			for _, b := range bindings {
-				resp.WeixinBindings = append(resp.WeixinBindings, weixinBindingResponse{
-					BotID:   b.BotID,
-					UserID:  b.UserID,
-					BoundAt: b.BoundAt.Format(time.RFC3339),
-				})
-			}
-		}
-	}
 	return resp
+}
+
+// attachWeixinBindings fetches and attaches weixin binding records to a sandbox response.
+func (s *Server) attachWeixinBindings(resp *sandboxResponse) {
+	if resp.Type != "openclaw" {
+		return
+	}
+	bindings, err := s.DB.ListWeixinBindings(resp.ID)
+	if err != nil {
+		log.Printf("list weixin bindings for %s: %v", resp.ID, err)
+		return
+	}
+	for _, b := range bindings {
+		resp.WeixinBindings = append(resp.WeixinBindings, weixinBindingResponse{
+			BotID:   b.BotID,
+			UserID:  b.UserID,
+			BoundAt: b.BoundAt.Format(time.RFC3339),
+		})
+	}
 }
 
 // authTokenFromRequest extracts the raw auth token from the request cookie.
@@ -1240,8 +1248,10 @@ func (s *Server) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
 		return
 	}
+	resp := s.toSandboxResponse(sbx, authTokenFromRequest(r))
+	s.attachWeixinBindings(&resp)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.toSandboxResponse(sbx, authTokenFromRequest(r)))
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) handleRenameSandbox(w http.ResponseWriter, r *http.Request) {
