@@ -4,9 +4,10 @@ import "time"
 
 // SandboxInfo is returned by the agentserver token validation API.
 type SandboxInfo struct {
-	ID          string `json:"sandbox_id"`
-	WorkspaceID string `json:"workspace_id"`
-	Status      string `json:"status"`
+	ID                     string `json:"sandbox_id"`
+	WorkspaceID            string `json:"workspace_id"`
+	Status                 string `json:"status"`
+	ModelserverUpstreamURL string `json:"modelserver_upstream_url,omitempty"`
 }
 
 // Trace represents a logical session/trace spanning multiple API requests.

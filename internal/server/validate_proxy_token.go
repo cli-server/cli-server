@@ -28,10 +28,20 @@ func (s *Server) handleValidateProxyToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	resp := map[string]interface{}{
 		"sandbox_id":   sbx.ID,
 		"workspace_id": sbx.WorkspaceID,
 		"status":       sbx.Status,
-	})
+	}
+
+	// Include modelserver upstream URL if workspace has a connection
+	if s.ModelserverProxyURL != "" {
+		hasMSConn, _ := s.DB.HasModelserverConnection(sbx.WorkspaceID)
+		if hasMSConn {
+			resp["modelserver_upstream_url"] = s.ModelserverProxyURL
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
