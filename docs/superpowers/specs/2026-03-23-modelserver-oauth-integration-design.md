@@ -53,7 +53,7 @@ User Browser           agentserver          Hydra(:4444)        modelserver(:808
     │    ?client_id=agentserver                 │                     │
     │    &redirect_uri=...                      │                     │
     │    &state=<random_hex>                    │                     │
-    │    &scope=project:llm offline_access      │                     │
+    │    &scope=project:inference offline_access      │                     │
     │    &response_type=code                    │                     │
     │    &code_challenge=<S256>                 │                     │
     │    &code_challenge_method=S256            │                     │
@@ -80,7 +80,7 @@ User Browser           agentserver          Hydra(:4444)        modelserver(:808
     │───────────────────────────────────────────────────────────────>│
     │                                                                 │
     │ 10. Accept consent with:                                        │
-    │     grant_scope: ["project:llm", "offline_access"]              │
+    │     grant_scope: ["project:inference", "offline_access"]              │
     │     session.access_token: {project_id, project_name, user_id}   │
     │     remember: false                                             │
     │     302 → back to Hydra                                         │
@@ -160,7 +160,7 @@ Register agentserver as OAuth client:
   "redirect_uris": ["https://<agentserver>/api/auth/modelserver/callback"],
   "grant_types": ["authorization_code", "refresh_token"],
   "response_types": ["code"],
-  "scope": "project:llm offline_access",
+  "scope": "project:inference offline_access",
   "token_endpoint_auth_method": "client_secret_post"
 }
 ```
@@ -202,7 +202,7 @@ Register agentserver as OAuth client:
 - Body: `{consent_challenge, project_id}`
 - Validates user has access to the project
 - Accepts consent via Hydra Admin API:
-  - `grant_scope: ["project:llm", "offline_access"]`
+  - `grant_scope: ["project:inference", "offline_access"]`
   - `session.access_token: {project_id, project_name, user_id}`
   - `remember: false`
 - Redirects to URL from Hydra
@@ -301,7 +301,7 @@ func (db *DB) UpdateModelserverTokens(workspaceID, accessToken, refreshToken str
 - State: random 32-byte hex → cookie `modelserver-oauth-state` (10-min, HttpOnly, Secure, SameSite=Lax)
 - Workspace ID: cookie `modelserver-oauth-wsid` (same flags)
 - PKCE: generate `code_verifier` → cookie `modelserver-oauth-pkce`, compute `code_challenge` (S256)
-- 302 → `MODELSERVER_OAUTH_AUTH_URL?client_id=...&redirect_uri=...&state=...&scope=project:llm offline_access&response_type=code&code_challenge=...&code_challenge_method=S256`
+- 302 → `MODELSERVER_OAUTH_AUTH_URL?client_id=...&redirect_uri=...&state=...&scope=project:inference offline_access&response_type=code&code_challenge=...&code_challenge_method=S256`
 
 **`GET /api/auth/modelserver/callback`**
 - Query: `code`, `state`
