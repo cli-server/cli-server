@@ -100,6 +100,7 @@ func (s *Server) handleModelserverConnect(w http.ResponseWriter, r *http.Request
 		"state":                 {state},
 		"code_challenge":        {codeChallenge},
 		"code_challenge_method": {"S256"},
+		"prompt":                {"consent"}, // Always show project selection, never skip
 	}
 	authURL := s.ModelserverOAuthAuthURL + "?" + params.Encode()
 	http.Redirect(w, r, authURL, http.StatusFound)
