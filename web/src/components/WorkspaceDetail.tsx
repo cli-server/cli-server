@@ -555,26 +555,26 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
   return (
     <div className="max-w-2xl">
       {/* ModelServer Connection */}
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>ModelServer</h3>
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <h3 className="text-base font-semibold text-[var(--foreground)]">ModelServer</h3>
         </div>
         {msStatus?.connected ? (
-          <div style={{ padding: 16, border: '1px solid #e5e7eb', borderRadius: 8 }}>
-            <p style={{ margin: '0 0 8px', fontSize: '0.9rem' }}>
+          <div className="p-4 border border-[var(--border)] rounded-lg bg-[var(--card)]">
+            <p className="mb-2 text-sm text-[var(--foreground)]">
               Connected to project: <strong>{msStatus.project_name}</strong>
             </p>
             {msStatus.models && msStatus.models.length > 0 && (
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 12 }}>
+              <div className="flex flex-wrap gap-1 mb-3">
                 {msStatus.models.map(m => (
-                  <span key={m.id} style={{ padding: '2px 8px', background: '#f3f4f6', borderRadius: 4, fontSize: '0.8rem' }}>{m.id}</span>
+                  <span key={m.id} className="px-2 py-0.5 text-xs rounded bg-[var(--muted)] text-[var(--muted-foreground)]">{m.id}</span>
                 ))}
               </div>
             )}
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="flex gap-2">
               <button
                 onClick={() => { window.location.href = `/api/workspaces/${workspaceId}/modelserver/connect` }}
-                style={{ padding: '6px 12px', fontSize: '0.85rem', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer' }}
+                className="px-3 py-1.5 text-sm border border-[var(--border)] rounded-md bg-[var(--card)] text-[var(--foreground)] cursor-pointer hover:bg-[var(--muted)]"
               >
                 Reconnect
               </button>
@@ -583,7 +583,7 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
                   await disconnectModelserver(workspaceId)
                   setMsStatus({ connected: false })
                 }}
-                style={{ padding: '6px 12px', fontSize: '0.85rem', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer', color: '#dc2626' }}
+                className="px-3 py-1.5 text-sm border border-[var(--border)] rounded-md bg-[var(--card)] text-red-500 cursor-pointer hover:bg-[var(--muted)]"
               >
                 Disconnect
               </button>
@@ -592,7 +592,7 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
         ) : (
           <button
             onClick={() => { window.location.href = `/api/workspaces/${workspaceId}/modelserver/connect` }}
-            style={{ padding: '8px 16px', fontSize: '0.9rem', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer' }}
+            className="px-4 py-2 text-sm border border-[var(--border)] rounded-md bg-[var(--card)] text-[var(--foreground)] cursor-pointer hover:bg-[var(--muted)]"
           >
             Connect to ModelServer
           </button>
@@ -600,7 +600,7 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
       </div>
 
       {msStatus?.connected && (
-        <p style={{ color: '#6b7280', fontSize: '0.85rem', marginBottom: 16 }}>
+        <p className="text-sm text-[var(--muted-foreground)] mb-4">
           Manual LLM configuration below is overridden by the ModelServer connection.
         </p>
       )}
