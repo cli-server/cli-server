@@ -264,14 +264,14 @@ func (s *Server) Router() http.Handler {
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username string `json:"username"`
+		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	token, _, ok := s.Auth.Login(req.Username, req.Password)
+	token, _, ok := s.Auth.Login(req.Email, req.Password)
 	if !ok {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
@@ -283,32 +283,31 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
 		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if req.Username == "" || req.Password == "" || req.Email == "" {
-		http.Error(w, "username, password, and email required", http.StatusBadRequest)
+	if req.Email == "" || req.Password == "" {
+		http.Error(w, "email and password required", http.StatusBadRequest)
 		return
 	}
 
 	// Check if user already exists.
-	existing, err := s.Auth.GetUserByUsername(req.Username)
+	existing, err := s.Auth.GetUserByEmail(req.Email)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if existing != nil {
-		http.Error(w, "username already taken", http.StatusConflict)
+		http.Error(w, "email already taken", http.StatusConflict)
 		return
 	}
 
 	id := uuid.New().String()
-	if err := s.Auth.Register(id, req.Username, req.Email, req.Password); err != nil {
+	if err := s.Auth.Register(id, req.Email, req.Password); err != nil {
 		log.Printf("register error: %v", err)
 		http.Error(w, "failed to create user", http.StatusInternalServerError)
 		return
@@ -325,7 +324,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"id": id, "username": req.Username})
+	json.NewEncoder(w).Encode(map[string]string{"id": id, "email": req.Email})
 }
 
 func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
@@ -360,12 +359,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":       user.ID,
-		"username": user.Username,
-		"email":    user.Email,
-		"name":     user.Name,
-		"picture":  user.Picture,
-		"role":     user.Role,
+		"id":      user.ID,
+		"email":   user.Email,
+		"name":    user.Name,
+		"picture": user.Picture,
+		"role":    user.Role,
 	})
 }
 
@@ -379,10 +377,10 @@ type workspaceResponse struct {
 }
 
 type workspaceMemberResponse struct {
-	UserID   string  `json:"user_id"`
-	Username string  `json:"username"`
-	Role     string  `json:"role"`
-	Picture  *string `json:"picture,omitempty"`
+	UserID  string  `json:"user_id"`
+	Email   string  `json:"email"`
+	Role    string  `json:"role"`
+	Picture *string `json:"picture,omitempty"`
 }
 
 type agentInfoResponse struct {
@@ -789,17 +787,17 @@ func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
 	resp := make([]workspaceMemberResponse, 0, len(members))
 	for _, m := range members {
 		user, err := s.Auth.GetUserByID(m.UserID)
-		username := m.UserID
+		email := m.UserID
 		var picture *string
 		if err == nil && user != nil {
-			username = user.Username
+			email = user.Email
 			picture = user.Picture
 		}
 		resp = append(resp, workspaceMemberResponse{
-			UserID:   m.UserID,
-			Username: username,
-			Role:     m.Role,
-			Picture:  picture,
+			UserID:  m.UserID,
+			Email:   email,
+			Role:    m.Role,
+			Picture: picture,
 		})
 	}
 
@@ -814,8 +812,8 @@ func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Username string `json:"username"`
-		Role     string `json:"role"`
+		Email string `json:"email"`
+		Role  string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -825,7 +823,7 @@ func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
 		req.Role = "developer"
 	}
 
-	user, err := s.Auth.GetUserByUsername(req.Username)
+	user, err := s.Auth.GetUserByEmail(req.Email)
 	if err != nil || user == nil {
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
@@ -840,10 +838,10 @@ func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(workspaceMemberResponse{
-		UserID:   user.ID,
-		Username: user.Username,
-		Role:     req.Role,
-		Picture:  user.Picture,
+		UserID:  user.ID,
+		Email:   user.Email,
+		Role:    req.Role,
+		Picture: user.Picture,
 	})
 }
 

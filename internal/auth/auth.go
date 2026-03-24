@@ -29,20 +29,20 @@ func New(database *db.DB) *Auth {
 }
 
 // Register creates a new user with a bcrypt-hashed password.
-func (a *Auth) Register(id, username, email, password string) error {
+func (a *Auth) Register(id, email, password string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	if err := a.db.CreateUser(id, username, email, string(hash)); err != nil {
+	if err := a.db.CreateUser(id, email, string(hash)); err != nil {
 		return err
 	}
 	return nil
 }
 
-// Login verifies credentials and returns a token.
-func (a *Auth) Login(username, password string) (string, string, bool) {
-	user, err := a.db.GetUserByUsername(username)
+// Login verifies credentials by email and returns a token.
+func (a *Auth) Login(email, password string) (string, string, bool) {
+	user, err := a.db.GetUserByEmail(email)
 	if err != nil || user == nil {
 		return "", "", false
 	}
@@ -118,9 +118,9 @@ func (a *Auth) GetUserByID(id string) (*db.User, error) {
 	return a.db.GetUserByID(id)
 }
 
-// GetUserByUsername returns user info by username.
-func (a *Auth) GetUserByUsername(username string) (*db.User, error) {
-	return a.db.GetUserByUsername(username)
+// GetUserByEmail returns user info by email.
+func (a *Auth) GetUserByEmail(email string) (*db.User, error) {
+	return a.db.GetUserByEmail(email)
 }
 
 // DB returns the underlying database for use by other auth subsystems.

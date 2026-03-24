@@ -182,7 +182,7 @@ func (m *OIDCManager) HandleCallback(w http.ResponseWriter, r *http.Request, pro
 }
 
 // resolveUser finds or creates a user for the given OIDC identity.
-func (m *OIDCManager) resolveUser(provider, subject, email, displayName, login, avatarURL string) (string, bool, error) {
+func (m *OIDCManager) resolveUser(provider, subject, email, displayName, _, avatarURL string) (string, bool, error) {
 	database := m.auth.DB()
 
 	// 1. Check if this OIDC identity is already linked.
@@ -233,11 +233,7 @@ func (m *OIDCManager) resolveUser(provider, subject, email, displayName, login, 
 		return "", false, fmt.Errorf("OIDC provider did not return an email address")
 	}
 	userID := uuid.New().String()
-	username := login
-	if username == "" {
-		username = sanitizeUsername(displayName, userID)
-	}
-	if err := database.CreateUserWithEmail(userID, username, nil, email); err != nil {
+	if err := database.CreateUserWithEmail(userID, nil, email); err != nil {
 		return "", false, fmt.Errorf("create user: %w", err)
 	}
 	if count, err := database.CountUsers(); err == nil && count == 1 {
@@ -255,27 +251,6 @@ func (m *OIDCManager) resolveUser(provider, subject, email, displayName, login, 
 	return userID, true, nil
 }
 
-// sanitizeUsername generates a safe username from the display name.
-func sanitizeUsername(displayName, fallbackID string) string {
-	name := strings.TrimSpace(displayName)
-	if name == "" {
-		name = "user-" + fallbackID[:8]
-	}
-	// Replace spaces with hyphens, keep alphanumeric and hyphens.
-	var b strings.Builder
-	for _, r := range strings.ToLower(name) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			b.WriteRune(r)
-		} else if r == ' ' {
-			b.WriteRune('-')
-		}
-	}
-	result := b.String()
-	if result == "" {
-		result = "user-" + fallbackID[:8]
-	}
-	return result
-}
 
 // --- GitHub Provider ---
 

@@ -260,19 +260,19 @@ function MembersTab({ workspaceId, members, setMembers }: {
   setMembers: React.Dispatch<React.SetStateAction<WorkspaceMember[]>>
 }) {
   const [showAdd, setShowAdd] = useState(false)
-  const [addUsername, setAddUsername] = useState('')
+  const [addEmail, setAddEmail] = useState('')
   const [addRole, setAddRole] = useState('developer')
   const [addError, setAddError] = useState<string | null>(null)
   const [confirmRemove, setConfirmRemove] = useState<WorkspaceMember | null>(null)
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!addUsername.trim()) return
+    if (!addEmail.trim()) return
     setAddError(null)
     try {
-      const m = await addMember(workspaceId, addUsername.trim(), addRole)
+      const m = await addMember(workspaceId, addEmail.trim(), addRole)
       setMembers((prev) => [...prev, m])
-      setAddUsername('')
+      setAddEmail('')
       setShowAdd(false)
     } catch {
       setAddError('Failed to add member. User may not exist.')
@@ -315,9 +315,9 @@ function MembersTab({ workspaceId, members, setMembers }: {
             <input
               autoFocus
               type="text"
-              value={addUsername}
-              onChange={(e) => setAddUsername(e.target.value)}
-              placeholder="Username"
+              value={addEmail}
+              onChange={(e) => setAddEmail(e.target.value)}
+              placeholder="Email"
               className="flex-1 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-sm text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
             />
             <select
@@ -331,7 +331,7 @@ function MembersTab({ workspaceId, members, setMembers }: {
             </select>
             <button
               type="submit"
-              disabled={!addUsername.trim()}
+              disabled={!addEmail.trim()}
               className="rounded-md bg-[var(--primary)] px-4 py-1.5 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90 disabled:opacity-50"
             >
               Add
@@ -355,13 +355,13 @@ function MembersTab({ workspaceId, members, setMembers }: {
               <div key={m.user_id} className="group flex items-center justify-between px-4 py-3 hover:bg-[var(--secondary)]/30 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
                   {m.picture ? (
-                    <img src={m.picture} alt={m.username} className="h-8 w-8 shrink-0 rounded-full object-cover" />
+                    <img src={m.picture} alt={m.email} className="h-8 w-8 shrink-0 rounded-full object-cover" />
                   ) : (
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--secondary)] text-xs font-medium text-[var(--foreground)]">
-                      {(m.username || '?')[0].toUpperCase()}
+                      {(m.email || '?')[0].toUpperCase()}
                     </div>
                   )}
-                  <span className="text-sm text-[var(--foreground)] truncate">{m.username}</span>
+                  <span className="text-sm text-[var(--foreground)] truncate">{m.email}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-medium ${roleColors[m.role] || roleColors.guest}`}>
@@ -386,7 +386,7 @@ function MembersTab({ workspaceId, members, setMembers }: {
       {confirmRemove && (
         <ConfirmModal
           title="Remove Member"
-          message={`Remove "${confirmRemove.username}" from this workspace?`}
+          message={`Remove "${confirmRemove.email}" from this workspace?`}
           confirmLabel="Remove"
           destructive
           onConfirm={() => doRemove(confirmRemove.user_id)}

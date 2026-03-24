@@ -41,7 +41,6 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 
 	type adminUserResponse struct {
 		ID        string  `json:"id"`
-		Username  string  `json:"username"`
 		Email     string  `json:"email"`
 		Name      *string `json:"name"`
 		Role      string  `json:"role"`
@@ -52,7 +51,6 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 	for i, u := range users {
 		resp[i] = adminUserResponse{
 			ID:        u.ID,
-			Username:  u.Username,
 			Email:     u.Email,
 			Name:      u.Name,
 			Role:      u.Role,
@@ -75,10 +73,10 @@ func (s *Server) handleAdminListWorkspaces(w http.ResponseWriter, r *http.Reques
 	rd := s.getResourceDefaults()
 
 	type ownerInfo struct {
-		ID       string  `json:"id"`
-		Username string  `json:"username"`
-		Name     *string `json:"name"`
-		Picture  *string `json:"picture"`
+		ID      string  `json:"id"`
+		Email   string  `json:"email"`
+		Name    *string `json:"name"`
+		Picture *string `json:"picture"`
 	}
 	type adminWorkspaceResponse struct {
 		ID            string    `json:"id"`
@@ -101,11 +99,15 @@ func (s *Server) handleAdminListWorkspaces(w http.ResponseWriter, r *http.Reques
 			MaxSandboxes: rd.MaxSandboxesPerWorkspace,
 		}
 		if ws.OwnerID != nil {
+			ownerEmail := ""
+			if ws.OwnerEmail != nil {
+				ownerEmail = *ws.OwnerEmail
+			}
 			r.Owner = &ownerInfo{
-				ID:       *ws.OwnerID,
-				Username: *ws.OwnerUsername,
-				Name:     ws.OwnerName,
-				Picture:  ws.OwnerPicture,
+				ID:      *ws.OwnerID,
+				Email:   ownerEmail,
+				Name:    ws.OwnerName,
+				Picture: ws.OwnerPicture,
 			}
 		}
 		// Check for workspace-level quota override.

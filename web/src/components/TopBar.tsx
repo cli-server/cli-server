@@ -86,7 +86,7 @@ export function TopBar({
   }, [wsDropdownOpen, menuOpen])
 
   const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
-  const displayName = user?.name || user?.username || 'User'
+  const displayName = user?.name || user?.email || 'User'
 
   const handleCreateWorkspace = () => {
     setWsDropdownOpen(false)

@@ -10,7 +10,7 @@ export interface Workspace {
 
 export interface WorkspaceMember {
   user_id: string
-  username: string
+  email: string
   role: WorkspaceRole
   picture?: string
 }
@@ -58,20 +58,20 @@ export interface AgentInfo {
   updated_at: string
 }
 
-export async function login(username: string, password: string): Promise<boolean> {
+export async function login(email: string, password: string): Promise<boolean> {
   const res = await fetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ email, password }),
   })
   return res.ok
 }
 
-export async function register(username: string, email: string, password: string): Promise<boolean> {
+export async function register(email: string, password: string): Promise<boolean> {
   const res = await fetch('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, email, password }),
+    body: JSON.stringify({ email, password }),
   })
   return res.ok
 }
@@ -91,7 +91,7 @@ export async function getOIDCProviders(): Promise<{ providers: string[]; passwor
   }
 }
 
-export async function getMe(): Promise<{ id: string; username: string; email: string; name?: string | null; picture?: string | null; role: string }> {
+export async function getMe(): Promise<{ id: string; email: string; name?: string | null; picture?: string | null; role: string }> {
   const res = await fetch('/api/auth/me')
   if (!res.ok) throw new Error('Failed to get user info')
   return res.json()
@@ -170,11 +170,11 @@ export async function listMembers(workspaceId: string): Promise<WorkspaceMember[
   return res.json()
 }
 
-export async function addMember(workspaceId: string, username: string, role?: string): Promise<WorkspaceMember> {
+export async function addMember(workspaceId: string, email: string, role?: string): Promise<WorkspaceMember> {
   const res = await fetch(`/api/workspaces/${workspaceId}/members`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, role: role || 'developer' }),
+    body: JSON.stringify({ email, role: role || 'developer' }),
   })
   if (!res.ok) throw new Error('Failed to add member')
   return res.json()
@@ -475,7 +475,6 @@ export async function createAgentCode(workspaceId: string): Promise<{ code: stri
 
 export interface AdminUser {
   id: string
-  username: string
   email: string
   name: string | null
   role: string
@@ -484,7 +483,7 @@ export interface AdminUser {
 
 export interface AdminWorkspaceOwner {
   id: string
-  username: string
+  email: string
   name: string | null
   picture: string | null
 }

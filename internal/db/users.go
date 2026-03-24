@@ -8,7 +8,6 @@ import (
 
 type User struct {
 	ID        string
-	Username  string
 	Email     string
 	Name      *string
 	Picture   *string
@@ -17,7 +16,7 @@ type User struct {
 	UpdatedAt time.Time
 }
 
-func (db *DB) CreateUser(id, username, email, passwordHash string) error {
+func (db *DB) CreateUser(id, email, passwordHash string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
@@ -25,8 +24,8 @@ func (db *DB) CreateUser(id, username, email, passwordHash string) error {
 	defer tx.Rollback()
 
 	_, err = tx.Exec(
-		"INSERT INTO users (id, username, email) VALUES ($1, $2, $3)",
-		id, username, email,
+		"INSERT INTO users (id, email) VALUES ($1, $2)",
+		id, email,
 	)
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
@@ -41,7 +40,7 @@ func (db *DB) CreateUser(id, username, email, passwordHash string) error {
 	return tx.Commit()
 }
 
-func (db *DB) CreateUserWithEmail(id, username string, passwordHash *string, email string) error {
+func (db *DB) CreateUserWithEmail(id string, passwordHash *string, email string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
@@ -49,8 +48,8 @@ func (db *DB) CreateUserWithEmail(id, username string, passwordHash *string, ema
 	defer tx.Rollback()
 
 	_, err = tx.Exec(
-		"INSERT INTO users (id, username, email) VALUES ($1, $2, $3)",
-		id, username, email,
+		"INSERT INTO users (id, email) VALUES ($1, $2)",
+		id, email,
 	)
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
@@ -67,27 +66,12 @@ func (db *DB) CreateUserWithEmail(id, username string, passwordHash *string, ema
 	return tx.Commit()
 }
 
-func (db *DB) GetUserByUsername(username string) (*User, error) {
-	u := &User{}
-	err := db.QueryRow(
-		"SELECT id, username, email, name, picture, role, created_at, updated_at FROM users WHERE username = $1",
-		username,
-	).Scan(&u.ID, &u.Username, &u.Email, &u.Name, &u.Picture, &u.Role, &u.CreatedAt, &u.UpdatedAt)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get user by username: %w", err)
-	}
-	return u, nil
-}
-
 func (db *DB) GetUserByID(id string) (*User, error) {
 	u := &User{}
 	err := db.QueryRow(
-		"SELECT id, username, email, name, picture, role, created_at, updated_at FROM users WHERE id = $1",
+		"SELECT id, email, name, picture, role, created_at, updated_at FROM users WHERE id = $1",
 		id,
-	).Scan(&u.ID, &u.Username, &u.Email, &u.Name, &u.Picture, &u.Role, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.Picture, &u.Role, &u.CreatedAt, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -100,9 +84,9 @@ func (db *DB) GetUserByID(id string) (*User, error) {
 func (db *DB) GetUserByEmail(email string) (*User, error) {
 	u := &User{}
 	err := db.QueryRow(
-		"SELECT id, username, email, name, picture, role, created_at, updated_at FROM users WHERE email = $1",
+		"SELECT id, email, name, picture, role, created_at, updated_at FROM users WHERE email = $1",
 		email,
-	).Scan(&u.ID, &u.Username, &u.Email, &u.Name, &u.Picture, &u.Role, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.Picture, &u.Role, &u.CreatedAt, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -122,7 +106,7 @@ func (db *DB) UpdateUserEmail(userID, email string) error {
 
 func (db *DB) ListAllUsers() ([]*User, error) {
 	rows, err := db.Query(
-		"SELECT id, username, email, name, picture, role, created_at, updated_at FROM users ORDER BY created_at ASC",
+		"SELECT id, email, name, picture, role, created_at, updated_at FROM users ORDER BY created_at ASC",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list all users: %w", err)
@@ -132,7 +116,7 @@ func (db *DB) ListAllUsers() ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		u := &User{}
-		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Name, &u.Picture, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Picture, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		users = append(users, u)

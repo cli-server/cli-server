@@ -269,8 +269,8 @@ func (db *DB) ListAllWorkspaces() ([]*Workspace, error) {
 // AdminWorkspaceInfo holds enriched workspace data for the admin panel.
 type AdminWorkspaceInfo struct {
 	Workspace
-	OwnerID       *string
-	OwnerUsername *string
+	OwnerID      *string
+	OwnerEmail   *string
 	OwnerName    *string
 	OwnerPicture *string
 	SandboxCount int
@@ -279,7 +279,7 @@ type AdminWorkspaceInfo struct {
 func (db *DB) ListAllWorkspacesAdmin() ([]*AdminWorkspaceInfo, error) {
 	rows, err := db.Query(
 		`SELECT w.id, w.name, w.k8s_namespace, w.created_at, w.updated_at,
-		        u.id, u.username, u.name, u.picture,
+		        u.id, u.email, u.name, u.picture,
 		        (SELECT COUNT(*) FROM sandboxes s WHERE s.workspace_id = w.id)
 		 FROM workspaces w
 		 LEFT JOIN workspace_members wm ON w.id = wm.workspace_id AND wm.role = 'owner'
@@ -296,7 +296,7 @@ func (db *DB) ListAllWorkspacesAdmin() ([]*AdminWorkspaceInfo, error) {
 		w := &AdminWorkspaceInfo{}
 		if err := rows.Scan(
 			&w.ID, &w.Name, &w.K8sNamespace, &w.CreatedAt, &w.UpdatedAt,
-			&w.OwnerID, &w.OwnerUsername, &w.OwnerName, &w.OwnerPicture,
+			&w.OwnerID, &w.OwnerEmail, &w.OwnerName, &w.OwnerPicture,
 			&w.SandboxCount,
 		); err != nil {
 			return nil, fmt.Errorf("scan admin workspace: %w", err)

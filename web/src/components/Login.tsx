@@ -11,7 +11,6 @@ const providerLabels: Record<string, string> = {
 }
 
 export function Login({ onSuccess }: LoginProps) {
-  const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -35,20 +34,20 @@ export function Login({ onSuccess }: LoginProps) {
     setLoading(true)
     try {
       if (isRegister) {
-        const ok = await register(username, email, password)
+        const ok = await register(email, password)
         if (ok) {
           // Auto-login after registration.
-          const loginOk = await login(username, password)
+          const loginOk = await login(email, password)
           if (loginOk) {
             onSuccess()
           } else {
             setError('Registration succeeded but login failed')
           }
         } else {
-          setError('Registration failed (username may be taken)')
+          setError('Registration failed')
         }
       } else {
-        const ok = await login(username, password)
+        const ok = await login(email, password)
         if (ok) {
           onSuccess()
         } else {
@@ -83,25 +82,14 @@ export function Login({ onSuccess }: LoginProps) {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <input
-                  type="text"
-                  placeholder="Username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  type="email"
+                  placeholder="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   autoFocus
                   className="w-full rounded-md border border-[var(--input)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] placeholder-[var(--muted-foreground)] outline-none focus:ring-2 focus:ring-[var(--ring)]"
                 />
               </div>
-              {isRegister && (
-                <div>
-                  <input
-                    type="email"
-                    placeholder="Email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full rounded-md border border-[var(--input)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] placeholder-[var(--muted-foreground)] outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                  />
-                </div>
-              )}
               <div>
                 <input
                   type="password"
@@ -116,7 +104,7 @@ export function Login({ onSuccess }: LoginProps) {
               )}
               <button
                 type="submit"
-                disabled={loading || !username || !password || (isRegister && !email)}
+                disabled={loading || !email || !password}
                 className="w-full rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90 disabled:opacity-50"
               >
                 {loading

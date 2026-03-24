@@ -21,7 +21,6 @@ import { AdminPanel } from './components/AdminPanel'
 
 export interface UserInfo {
   id: string
-  username: string
   email: string
   name?: string | null
   picture?: string | null

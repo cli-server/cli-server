@@ -175,7 +175,7 @@ function LoadingSpinner() {
 function OwnerAvatar({ owner }: { owner: AdminWorkspace['owner'] }) {
   if (!owner) return <span className="text-[var(--muted-foreground)]">—</span>
 
-  const displayName = owner.name || owner.username
+  const displayName = owner.name || owner.email
   const initials = (displayName || '?').charAt(0).toUpperCase()
 
   return (
@@ -210,9 +210,8 @@ function UsersTable({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-[var(--border)] bg-[var(--muted)]">
-              <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Username</th>
-              <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Name</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Email</th>
+              <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Name</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Role</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Quota</th>
               <th className="px-4 py-3 text-left font-medium text-[var(--muted-foreground)]">Created At</th>
@@ -221,9 +220,8 @@ function UsersTable({
           <tbody>
             {users.map((u) => (
               <tr key={u.id} className="border-b border-[var(--border)] last:border-b-0">
-                <td className="px-4 py-3 text-[var(--foreground)]">{u.username}</td>
+                <td className="px-4 py-3 text-[var(--foreground)]">{u.email}</td>
                 <td className="px-4 py-3 text-[var(--muted-foreground)]">{u.name || '—'}</td>
-                <td className="px-4 py-3 text-[var(--muted-foreground)]">{u.email || '—'}</td>
                 <td className="px-4 py-3">
                   <select
                     value={u.role}
@@ -687,7 +685,7 @@ function UserQuotaModal({ user, onClose }: { user: AdminUser; onClose: () => voi
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="text-lg font-semibold text-[var(--foreground)] mb-4">
-          Quota: {user.username}
+          Quota: {user.email}
         </h2>
         {loading ? (
           <LoadingSpinner />
