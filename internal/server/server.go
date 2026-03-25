@@ -1773,11 +1773,20 @@ func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, re
 	// For nanoclaw: store credentials in DB (bridge mode).
 	sbx, ok := s.Sandboxes.Get(sandboxID)
 	if ok && sbx.Type == "nanoclaw" {
-		// Phase 3 will add SaveBotCredentials call here.
-		// For now, just save the binding record.
-		if dbErr := s.DB.CreateWeixinBinding(sandboxID, accountID, result.UserID); dbErr != nil {
-			log.Printf("weixin: failed to save binding record: %v", dbErr)
+		baseURL := result.BaseURL
+		if baseURL == "" {
+			baseURL = weixin.DefaultAPIBaseURL
 		}
+		// Save binding record first.
+		if dbErr := s.DB.CreateWeixinBinding(sandboxID, accountID, result.UserID); dbErr != nil {
+			return fmt.Errorf("save binding: %w", dbErr)
+		}
+		// Store bot credentials for bridge messaging.
+		if dbErr := s.DB.SaveBotCredentials(sandboxID, accountID, result.Token, baseURL); dbErr != nil {
+			return fmt.Errorf("save bot credentials: %w", dbErr)
+		}
+		// TODO: Register webhook with iLink for inbound message delivery
+		// (blocked on iLink API investigation)
 		return nil
 	}
 
