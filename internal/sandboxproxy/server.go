@@ -1,6 +1,7 @@
 package sandboxproxy
 
 import (
+	"context"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -15,6 +16,22 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
+type contextKey string
+
+const matchedDomainKey contextKey = "matchedBaseDomain"
+
+// matchedBaseDomain returns the base domain that matched the current request,
+// falling back to the first configured domain.
+func (s *Server) matchedBaseDomain(r *http.Request) string {
+	if d, ok := r.Context().Value(matchedDomainKey).(string); ok {
+		return d
+	}
+	if len(s.BaseDomains) > 0 {
+		return s.BaseDomains[0]
+	}
+	return ""
+}
+
 // Server is the sandbox-proxy HTTP server that handles subdomain traffic
 // proxying and WebSocket tunnel connections.
 type Server struct {
@@ -23,7 +40,7 @@ type Server struct {
 	Sandboxes               *sbxstore.Store
 	TunnelRegistry          *tunnel.Registry
 	OpencodeStaticFS        fs.FS
-	BaseDomain              string
+	BaseDomains             []string // all configured base domains (first is primary)
 	OpencodeAssetDomain     string
 	OpencodeSubdomainPrefix string
 	OpenclawSubdomainPrefix string
@@ -40,7 +57,7 @@ func New(cfg Config, authSvc *auth.Auth, database *db.DB, sandboxStore *sbxstore
 		Sandboxes:               sandboxStore,
 		TunnelRegistry:          tunnelReg,
 		OpencodeStaticFS:        opcodeStaticFS,
-		BaseDomain:              cfg.BaseDomain,
+		BaseDomains:             cfg.BaseDomains,
 		OpencodeAssetDomain:     cfg.OpencodeAssetDomain,
 		OpencodeSubdomainPrefix: cfg.OpencodeSubdomainPrefix,
 		OpenclawSubdomainPrefix: cfg.OpenclawSubdomainPrefix,
@@ -72,9 +89,17 @@ func (s *Server) Router() http.Handler {
 
 	// Subdomain middleware: if the Host matches {prefix}-{sandboxID}.{baseDomain},
 	// proxy the entire request to the sandbox and skip all other routes.
-	if s.BaseDomain != "" {
+	// Supports multiple base domains.
+	if len(s.BaseDomains) > 0 {
 		r.Use(func(next http.Handler) http.Handler {
-			suffix := "." + s.BaseDomain
+			type domainEntry struct {
+				suffix string
+				domain string
+			}
+			entries := make([]domainEntry, len(s.BaseDomains))
+			for i, d := range s.BaseDomains {
+				entries[i] = domainEntry{suffix: "." + d, domain: d}
+			}
 			opcodePrefix := s.OpencodeSubdomainPrefix + "-"
 			clawPrefix := s.OpenclawSubdomainPrefix + "-"
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,8 +107,15 @@ func (s *Server) Router() http.Handler {
 				if idx := strings.LastIndex(host, ":"); idx != -1 {
 					host = host[:idx]
 				}
-				if strings.HasSuffix(host, suffix) {
-					sub := strings.TrimSuffix(host, suffix)
+				for _, e := range entries {
+					if !strings.HasSuffix(host, e.suffix) {
+						continue
+					}
+					sub := strings.TrimSuffix(host, e.suffix)
+					// Store matched domain in context for login redirects.
+					ctx := context.WithValue(r.Context(), matchedDomainKey, e.domain)
+					r = r.WithContext(ctx)
+
 					if s.OpencodeAssetDomain != "" && host == s.OpencodeAssetDomain {
 						s.handleAssetDomainRequest(w, r)
 						return

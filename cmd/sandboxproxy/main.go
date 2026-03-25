@@ -24,7 +24,7 @@ func main() {
 	if cfg.DatabaseURL == "" {
 		log.Fatal("DATABASE_URL is required")
 	}
-	if cfg.BaseDomain == "" {
+	if len(cfg.BaseDomains) == 0 {
 		log.Fatal("BASE_DOMAIN is required")
 	}
 
@@ -69,7 +69,7 @@ func main() {
 		}
 	}()
 
-	log.Printf("Starting sandbox-proxy on %s (domain: %s)", cfg.ListenAddr, cfg.BaseDomain)
+	log.Printf("Starting sandbox-proxy on %s (domains: %v)", cfg.ListenAddr, cfg.BaseDomains)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

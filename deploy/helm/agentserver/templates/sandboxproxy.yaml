@@ -42,8 +42,14 @@ spec:
                   key: database-url
             - name: LISTEN_ADDR
               value: ":{{ .Values.sandboxProxy.port }}"
+            {{- if .Values.sandbox.baseDomain }}
             - name: BASE_DOMAIN
-              value: {{ .Values.sandbox.baseDomain | quote }}
+              {{- $allDomains := list .Values.sandbox.baseDomain }}
+              {{- range .Values.sandbox.additionalBaseDomains }}
+              {{- $allDomains = append $allDomains . }}
+              {{- end }}
+              value: {{ join "," $allDomains | quote }}
+            {{- end }}
             - name: OPENCODE_SUBDOMAIN_PREFIX
               value: {{ .Values.sandbox.opencode.subdomainPrefix | default "code" | quote }}
             - name: OPENCLAW_SUBDOMAIN_PREFIX

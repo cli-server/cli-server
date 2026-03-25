@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -39,8 +40,8 @@ type Server struct {
 	NamespaceManager *namespace.Manager
 	TunnelRegistry   *tunnel.Registry
 	StaticFS         fs.FS
-	BaseDomain               string // e.g. "agentserver.dev" — used for sandbox URL generation
-	OpencodeSubdomainPrefix  string // e.g. "code" — subdomain: code-{id}.{baseDomain}
+	BaseDomains              []string // e.g. ["agentserver.dev", "agent.cs.ac.cn"] (first is primary)
+	OpencodeSubdomainPrefix  string   // e.g. "code" — subdomain: code-{id}.{baseDomain}
 	OpenclawSubdomainPrefix  string // e.g. "claw" — subdomain: claw-{id}.{baseDomain}
 	PasswordAuthEnabled      bool   // when false, /api/auth/login and /api/auth/register are not registered
 	LLMProxyURL              string // base URL for the llmproxy service (e.g. "http://agentserver-llmproxy:8081")
@@ -56,7 +57,16 @@ type Server struct {
 }
 
 func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, nsMgr *namespace.Manager, tunnelReg *tunnel.Registry, staticFS fs.FS, passwordAuthEnabled bool) *Server {
-	baseDomain := os.Getenv("BASE_DOMAIN")
+	// Parse comma-separated base domains (e.g. "agentserver.dev,agent.cs.ac.cn").
+	var baseDomains []string
+	if raw := os.Getenv("BASE_DOMAIN"); raw != "" {
+		for _, d := range strings.Split(raw, ",") {
+			d = strings.TrimSpace(d)
+			if d != "" {
+				baseDomains = append(baseDomains, d)
+			}
+		}
+	}
 
 	opcodePrefix := os.Getenv("OPENCODE_SUBDOMAIN_PREFIX")
 	if opcodePrefix == "" {
@@ -77,7 +87,7 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 		NamespaceManager:        nsMgr,
 		TunnelRegistry:          tunnelReg,
 		StaticFS:                staticFS,
-		BaseDomain:              baseDomain,
+		BaseDomains:             baseDomains,
 		OpencodeSubdomainPrefix: opcodePrefix,
 		OpenclawSubdomainPrefix: openclawPrefix,
 		PasswordAuthEnabled:     passwordAuthEnabled,
@@ -436,7 +446,25 @@ func (s *Server) toWorkspaceResponse(ws *db.Workspace) workspaceResponse {
 	}
 }
 
-func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sandboxResponse {
+// baseDomainForRequest returns the base domain that best matches the request's
+// Host header. Falls back to the primary base domain.
+func (s *Server) baseDomainForRequest(r *http.Request) string {
+	host := r.Host
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+	for _, d := range s.BaseDomains {
+		if strings.HasSuffix(host, "."+d) || host == d {
+			return d
+		}
+	}
+	if len(s.BaseDomains) > 0 {
+		return s.BaseDomains[0]
+	}
+	return ""
+}
+
+func (s *Server) toSandboxResponse(r *http.Request, sbx *sbxstore.Sandbox, authToken string) sandboxResponse {
 	resp := sandboxResponse{
 		ID:          sbx.ID,
 		ShortID:     sbx.ShortID,
@@ -450,16 +478,17 @@ func (s *Server) toSandboxResponse(sbx *sbxstore.Sandbox, authToken string) sand
 		Memory:      sbx.Memory,
 		IdleTimeout: sbx.IdleTimeout,
 	}
-	if s.BaseDomain != "" {
+	if len(s.BaseDomains) > 0 {
+		domain := s.baseDomainForRequest(r)
 		subID := sbx.ShortID
 		if subID == "" {
 			subID = sbx.ID
 		}
 		switch sbx.Type {
 		case "openclaw":
-			resp.OpenclawURL = "https://" + s.OpenclawSubdomainPrefix + "-" + subID + "." + s.BaseDomain + "/auth?token=" + authToken
+			resp.OpenclawURL = "https://" + s.OpenclawSubdomainPrefix + "-" + subID + "." + domain + "/auth?token=" + authToken
 		default: // "opencode"
-			resp.OpencodeURL = "https://" + s.OpencodeSubdomainPrefix + "-" + subID + "." + s.BaseDomain + "/auth?token=" + authToken
+			resp.OpencodeURL = "https://" + s.OpencodeSubdomainPrefix + "-" + subID + "." + domain + "/auth?token=" + authToken
 		}
 	}
 	if sbx.LastActivityAt != nil {
@@ -1040,7 +1069,7 @@ func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
 	token := authTokenFromRequest(r)
 	resp := make([]sandboxResponse, len(sandboxes))
 	for i, sbx := range sandboxes {
-		resp[i] = s.toSandboxResponse(sbx, token)
+		resp[i] = s.toSandboxResponse(r, sbx, token)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -1259,7 +1288,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(s.toSandboxResponse(sbx, authTokenFromRequest(r)))
+	json.NewEncoder(w).Encode(s.toSandboxResponse(r, sbx, authTokenFromRequest(r)))
 }
 
 func (s *Server) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
@@ -1272,7 +1301,7 @@ func (s *Server) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
 		return
 	}
-	resp := s.toSandboxResponse(sbx, authTokenFromRequest(r))
+	resp := s.toSandboxResponse(r, sbx, authTokenFromRequest(r))
 	s.attachWeixinBindings(&resp)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -1302,7 +1331,7 @@ func (s *Server) handleRenameSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	sbx.Name = req.Name
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.toSandboxResponse(sbx, authTokenFromRequest(r)))
+	json.NewEncoder(w).Encode(s.toSandboxResponse(r, sbx, authTokenFromRequest(r)))
 }
 
 func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {

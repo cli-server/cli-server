@@ -104,7 +104,11 @@ spec:
             {{- end }}
             {{- if .Values.sandbox.baseDomain }}
             - name: BASE_DOMAIN
-              value: {{ .Values.sandbox.baseDomain | quote }}
+              {{- $allDomains := list .Values.sandbox.baseDomain }}
+              {{- range .Values.sandbox.additionalBaseDomains }}
+              {{- $allDomains = append $allDomains . }}
+              {{- end }}
+              value: {{ join "," $allDomains | quote }}
             {{- end }}
             - name: SESSION_STORAGE_SIZE
               value: {{ .Values.sandbox.sessionStorageSize | quote }}

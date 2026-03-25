@@ -70,6 +70,9 @@ sandbox:
   # Base domain for subdomain-based sandbox routing (e.g. "agentserver.dev").
   # Each sandbox gets a subdomain: {prefix}-{sessionID}.{baseDomain}
   baseDomain: ""
+  # Additional base domains for multi-domain support (e.g. ["agent.cs.ac.cn"]).
+  # Sandbox subdomains will be accessible on all configured domains.
+  additionalBaseDomains: []
   # Prefix for per-workspace K8s namespaces (e.g. "agent-ws" → "agent-ws-a1b2c3d4").
   namespacePrefix: "agent-ws"
   # StorageClass for sandbox session volumes (empty = cluster default).

@@ -67,13 +67,13 @@ func (s *Server) handleOpenclawSubdomainProxy(w http.ResponseWriter, r *http.Req
 	cookie, err := r.Cookie(clawCookieKey)
 	if err != nil {
 		// No subdomain cookie — redirect to main site login.
-		loginURL := "https://" + s.BaseDomain + "/"
+		loginURL := "https://" + s.matchedBaseDomain(r) + "/"
 		http.Redirect(w, r, loginURL, http.StatusFound)
 		return
 	}
 	userID, ok := s.Auth.ValidateToken(cookie.Value)
 	if !ok {
-		loginURL := "https://" + s.BaseDomain + "/"
+		loginURL := "https://" + s.matchedBaseDomain(r) + "/"
 		http.Redirect(w, r, loginURL, http.StatusFound)
 		return
 	}

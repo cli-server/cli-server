@@ -27,6 +27,9 @@ spec:
     {{- toYaml .Values.gateway.parentRefs | nindent 4 }}
   hostnames:
     - {{ printf "*.%s" .Values.sandbox.baseDomain | quote }}
+    {{- range .Values.sandbox.additionalBaseDomains }}
+    - {{ printf "*.%s" . | quote }}
+    {{- end }}
   rules:
     - matches:
         - path:

@@ -16,6 +16,9 @@ spec:
         {{- if .Values.sandbox.baseDomain }}
         - {{ printf "*.%s" .Values.sandbox.baseDomain | quote }}
         {{- end }}
+        {{- range .Values.sandbox.additionalBaseDomains }}
+        - {{ printf "*.%s" . | quote }}
+        {{- end }}
       secretName: {{ .Release.Name }}-tls
   {{- end }}
   rules:
@@ -40,5 +43,17 @@ spec:
                 name: {{ .Release.Name }}-sandboxproxy
                 port:
                   number: {{ .Values.sandboxProxy.port }}
+    {{- end }}
+    {{- range .Values.sandbox.additionalBaseDomains }}
+    - host: {{ printf "*.%s" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $.Release.Name }}-sandboxproxy
+                port:
+                  number: {{ $.Values.sandboxProxy.port }}
     {{- end }}
 {{- end }}
