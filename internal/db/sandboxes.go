@@ -19,7 +19,8 @@ type Sandbox struct {
 	ProxyToken      sql.NullString
 	OpencodeToken   sql.NullString
 	OpenclawToken   sql.NullString
-	TunnelToken     sql.NullString
+	TunnelToken              sql.NullString
+	NanoclawBridgeSecret     sql.NullString
 	LastActivityAt  sql.NullTime
 	CreatedAt       time.Time
 	PausedAt        sql.NullTime
@@ -42,11 +43,11 @@ func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, ope
 }
 
 // sandboxColumns is the list of columns selected for sandbox queries.
-const sandboxColumns = `id, workspace_id, name, type, status, is_local, short_id, sandbox_name, pod_ip, proxy_token, opencode_token, openclaw_token, tunnel_token, last_activity_at, created_at, paused_at, last_heartbeat_at, cpu, memory, idle_timeout`
+const sandboxColumns = `id, workspace_id, name, type, status, is_local, short_id, sandbox_name, pod_ip, proxy_token, opencode_token, openclaw_token, tunnel_token, last_activity_at, created_at, paused_at, last_heartbeat_at, cpu, memory, idle_timeout, nanoclaw_bridge_secret`
 
 func scanSandbox(scanner interface{ Scan(...interface{}) error }) (*Sandbox, error) {
 	s := &Sandbox{}
-	err := scanner.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.IsLocal, &s.ShortID, &s.SandboxName, &s.PodIP, &s.ProxyToken, &s.OpencodeToken, &s.OpenclawToken, &s.TunnelToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt, &s.LastHeartbeatAt, &s.CPU, &s.Memory, &s.IdleTimeout)
+	err := scanner.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.IsLocal, &s.ShortID, &s.SandboxName, &s.PodIP, &s.ProxyToken, &s.OpencodeToken, &s.OpenclawToken, &s.TunnelToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt, &s.LastHeartbeatAt, &s.CPU, &s.Memory, &s.IdleTimeout, &s.NanoclawBridgeSecret)
 	return s, err
 }
 
@@ -303,6 +304,18 @@ func (db *DB) ConsumeAgentRegistrationCode(code string) (*AgentRegistrationCode,
 		return nil, fmt.Errorf("consume agent registration code: %w", err)
 	}
 	return arc, nil
+}
+
+// UpdateSandboxNanoclawBridgeSecret stores the bridge secret for a nanoclaw sandbox.
+func (db *DB) UpdateSandboxNanoclawBridgeSecret(id, secret string) error {
+	_, err := db.Exec(
+		`UPDATE sandboxes SET nanoclaw_bridge_secret = $1 WHERE id = $2`,
+		secret, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update nanoclaw bridge secret: %w", err)
+	}
+	return nil
 }
 
 func (db *DB) ListAllSandboxes() ([]*Sandbox, error) {

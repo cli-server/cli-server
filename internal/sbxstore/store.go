@@ -18,8 +18,9 @@ type Sandbox struct {
 	PodIP           string     `json:"pod_ip,omitempty"`
 	ProxyToken      string     `json:"-"`
 	OpencodeToken   string     `json:"-"`
-	OpenclawToken   string     `json:"-"`
-	TunnelToken     string     `json:"-"`
+	OpenclawToken        string     `json:"-"`
+	NanoclawBridgeSecret string     `json:"-"`
+	TunnelToken          string     `json:"-"`
 	CreatedAt       time.Time  `json:"created_at"`
 	LastActivityAt  *time.Time `json:"last_activity_at,omitempty"`
 	PausedAt        *time.Time `json:"paused_at,omitempty"`
@@ -165,6 +166,7 @@ func dbSandboxToSandbox(ds *db.Sandbox) *Sandbox {
 	if ds.TunnelToken.Valid {
 		sbx.TunnelToken = ds.TunnelToken.String
 	}
+	sbx.NanoclawBridgeSecret = ds.NanoclawBridgeSecret.String
 	if ds.LastHeartbeatAt.Valid {
 		t := ds.LastHeartbeatAt.Time
 		sbx.LastHeartbeatAt = &t
