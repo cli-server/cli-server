@@ -12,6 +12,18 @@ RUN git clone --branch ${NANOCLAW_VERSION} --depth 1 \
     https://github.com/qwibitai/nanoclaw.git . && \
     npm ci && npm run build
 
+# Copy weixin channel implementation for bridge mode
+COPY nanoclaw-weixin-channel/ src/channels/weixin/
+
+# Copy no-container mode adapter for K8s Pod execution
+COPY nanoclaw-patches/process-runner.ts src/process-runner.ts
+
+# Register weixin channel in barrel import
+RUN echo 'import "./weixin/index.js";' >> src/channels/index.ts
+
+# Rebuild with weixin channel and process-runner
+RUN npm run build
+
 FROM node:20-slim
 
 WORKDIR /app
