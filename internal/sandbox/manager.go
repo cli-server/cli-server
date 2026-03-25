@@ -371,6 +371,9 @@ exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 		bridgeSecret := ""
 		if m.cfg.NanoclawWeixinEnabled && opts.NanoclawBridgeSecret != "" {
 			bridgeSecret = opts.NanoclawBridgeSecret
+			if m.cfg.NanoclawBridgeBaseURL != "" && opts.SandboxID != "" {
+				weixinBridgeURL = m.cfg.NanoclawBridgeBaseURL + "/api/internal/nanoclaw/" + opts.SandboxID + "/weixin/send"
+			}
 		}
 		nanoclawCfg := BuildNanoclawConfig(
 			proxyBaseURL, opts.ProxyToken, "Andy",

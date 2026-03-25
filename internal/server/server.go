@@ -46,6 +46,9 @@ type Server struct {
 	PasswordAuthEnabled      bool   // when false, /api/auth/login and /api/auth/register are not registered
 	LLMProxyURL              string // base URL for the llmproxy service (e.g. "http://agentserver-llmproxy:8081")
 
+	// WeChat bridge for NanoClaw sandboxes (long-poll goroutine management)
+	WeixinBridge *weixin.Bridge
+
 	// ModelServer OAuth
 	ModelserverOAuthClientID      string
 	ModelserverOAuthClientSecret  string
@@ -92,6 +95,7 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 		OpenclawSubdomainPrefix: openclawPrefix,
 		PasswordAuthEnabled:     passwordAuthEnabled,
 	}
+	s.WeixinBridge = weixin.NewBridge(database)
 	if s.OIDC != nil {
 		s.OIDC.OnUserCreated = s.createDefaultWorkspace
 	}
@@ -1260,6 +1264,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	if sandboxType == "nanoclaw" {
 		startOpts.NanoclawBridgeSecret = sbx.NanoclawBridgeSecret
+		startOpts.SandboxID = id
 	}
 	// Priority: modelserver > BYOK > platform default
 	if msConn != nil {
@@ -1391,6 +1396,11 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	// Stop WeChat bridge pollers for nanoclaw sandboxes.
+	if sbx.Type == "nanoclaw" && s.WeixinBridge != nil {
+		s.WeixinBridge.StopPollersForSandbox(id)
 	}
 
 	if err := s.Sandboxes.Delete(id); err != nil {
@@ -1788,8 +1798,18 @@ func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, re
 		if dbErr := s.DB.SaveBotCredentials(sandboxID, accountID, result.Token, baseURL); dbErr != nil {
 			return fmt.Errorf("save bot credentials: %w", dbErr)
 		}
-		// TODO: Register webhook with iLink for inbound message delivery
-		// (blocked on iLink API investigation)
+		// Start long-polling for this newly bound WeChat account.
+		if sbx.PodIP != "" && s.WeixinBridge != nil {
+			s.WeixinBridge.StartPoller(weixin.BridgeBinding{
+				SandboxID:     sandboxID,
+				BotID:         accountID,
+				BotToken:      result.Token,
+				ILinkBaseURL:  baseURL,
+				GetUpdatesBuf: "",
+				PodIP:         sbx.PodIP,
+				BridgeSecret:  sbx.NanoclawBridgeSecret,
+			})
+		}
 		return nil
 	}
 
@@ -1906,40 +1926,20 @@ func (s *Server) handleNanoclawWeixinSend(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Look up bot credentials
-	bindings, err := s.DB.ListWeixinBindings(sandboxID)
-	if err != nil || len(bindings) == 0 {
-		http.Error(w, "no weixin binding found", http.StatusNotFound)
-		return
-	}
-	// Find the binding matching bot_id, or use the first one
-	var binding *db.WeixinBinding
-	for _, b := range bindings {
-		if req.BotID == "" || b.BotID == req.BotID {
-			binding = b
-			break
+	// Resolve bot_id: use provided value, or fall back to the first binding for this sandbox.
+	botID := req.BotID
+	if botID == "" {
+		bindings, err := s.DB.ListWeixinBindings(sandboxID)
+		if err != nil || len(bindings) == 0 {
+			http.Error(w, "no weixin binding found", http.StatusNotFound)
+			return
 		}
-	}
-	if binding == nil {
-		http.Error(w, "weixin binding not found for bot_id", http.StatusNotFound)
-		return
+		botID = bindings[0].BotID
 	}
 
-	// Get bot credentials (bot_token is stored via GetBindingsWithBotToken)
-	botBindings, err := s.DB.GetBindingsWithBotToken()
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	var botToken, baseURL string
-	for _, bb := range botBindings {
-		if bb.SandboxID == sandboxID && bb.BotID == binding.BotID {
-			botToken = bb.BotToken
-			baseURL = bb.ILinkBaseURL
-			break
-		}
-	}
-	if botToken == "" {
+	// Look up bot credentials directly.
+	botToken, baseURL, err := s.DB.GetBotCredentials(sandboxID, botID)
+	if err != nil || botToken == "" {
 		http.Error(w, "bot credentials not found", http.StatusNotFound)
 		return
 	}
@@ -1947,8 +1947,8 @@ func (s *Server) handleNanoclawWeixinSend(w http.ResponseWriter, r *http.Request
 		baseURL = weixin.DefaultAPIBaseURL
 	}
 
-	// Get context token for this user
-	contextToken, _ := s.DB.GetContextToken(sandboxID, binding.BotID, req.ToUserID)
+	// Get context token for this user.
+	contextToken, _ := s.DB.GetContextToken(sandboxID, botID, req.ToUserID)
 
 	// Send via iLink
 	if err := weixin.SendTextMessage(r.Context(), baseURL, botToken, req.ToUserID, req.Text, contextToken); err != nil {

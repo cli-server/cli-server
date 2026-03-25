@@ -82,6 +82,21 @@ func (db *DB) SaveBotCredentials(sandboxID, botID, botToken, baseURL string) err
 	return nil
 }
 
+// GetBotCredentials returns the bot_token and ilink_base_url for a specific binding.
+// Used by the outbound bridge endpoint to send messages via iLink.
+func (db *DB) GetBotCredentials(sandboxID, botID string) (botToken, baseURL string, err error) {
+	err = db.QueryRow(
+		`SELECT COALESCE(bot_token, ''), COALESCE(ilink_base_url, '')
+		 FROM sandbox_weixin_bindings
+		 WHERE sandbox_id = $1 AND bot_id = $2`,
+		sandboxID, botID,
+	).Scan(&botToken, &baseURL)
+	if err != nil {
+		return "", "", fmt.Errorf("get bot credentials: %w", err)
+	}
+	return botToken, baseURL, nil
+}
+
 // GetBindingsWithBotToken returns all nanoclaw bindings that have a bot_token set,
 // for starting long-poll goroutines. Only returns bindings for running nanoclaw sandboxes.
 func (db *DB) GetBindingsWithBotToken() ([]*WeixinBinding, error) {

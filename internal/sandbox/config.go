@@ -24,6 +24,7 @@ type Config struct {
 	NanoclawImage            string
 	NanoclawRuntimeClassName string
 	NanoclawWeixinEnabled    bool
+	NanoclawBridgeBaseURL    string // agentserver internal URL for NanoClaw pods to call back (e.g. "http://agentserver:8080")
 }
 
 // DefaultConfig returns a Config populated from environment variables with sensible defaults.
@@ -43,6 +44,7 @@ func DefaultConfig() Config {
 		NanoclawImage:            os.Getenv("NANOCLAW_IMAGE"),
 		NanoclawRuntimeClassName: os.Getenv("NANOCLAW_RUNTIME_CLASS"),
 		NanoclawWeixinEnabled:    os.Getenv("NANOCLAW_WEIXIN_ENABLED") == "true",
+		NanoclawBridgeBaseURL:    os.Getenv("NANOCLAW_BRIDGE_BASE_URL"),
 	}
 }
 
