@@ -50,3 +50,31 @@ func (db *DB) ListWeixinBindings(sandboxID string) ([]*WeixinBinding, error) {
 	}
 	return bindings, rows.Err()
 }
+
+// GetSandboxByBotID returns the sandbox_id for a given WeChat bot_id.
+// Used for routing inbound iLink messages to the correct NanoClaw sandbox.
+func (db *DB) GetSandboxByBotID(botID string) (string, error) {
+	var sandboxID string
+	err := db.QueryRow(
+		`SELECT sandbox_id FROM sandbox_weixin_bindings WHERE bot_id = $1 ORDER BY bound_at DESC LIMIT 1`,
+		botID,
+	).Scan(&sandboxID)
+	if err != nil {
+		return "", fmt.Errorf("get sandbox by bot ID: %w", err)
+	}
+	return sandboxID, nil
+}
+
+// SaveBotCredentials stores iLink bot credentials for bridge-mode messaging.
+// Used by nanoclaw sandboxes where agentserver holds the credentials.
+func (db *DB) SaveBotCredentials(sandboxID, botID, botToken, baseURL string) error {
+	_, err := db.Exec(
+		`UPDATE sandbox_weixin_bindings SET bot_token = $1, ilink_base_url = $2
+		 WHERE sandbox_id = $3 AND bot_id = $4`,
+		botToken, baseURL, sandboxID, botID,
+	)
+	if err != nil {
+		return fmt.Errorf("save bot credentials: %w", err)
+	}
+	return nil
+}
