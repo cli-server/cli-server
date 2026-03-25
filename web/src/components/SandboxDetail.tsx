@@ -146,7 +146,7 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
       setTraces(r.traces || [])
       setTracesTotal(r.total || 0)
     }).catch(() => {})
-    if (sandbox.type === 'openclaw') {
+    if (sandbox.type === 'openclaw' || sandbox.type === 'nanoclaw') {
       refreshWeixinBindings()
     }
   }, [sandbox.id, refreshWeixinBindings])
@@ -164,7 +164,8 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
   const isPaused = sandbox.status === 'paused'
   const isTransitional = sandbox.status === 'pausing' || sandbox.status === 'resuming' || sandbox.status === 'creating'
   const isOpenClaw = sandbox.type === 'openclaw'
-  const sandboxUrl = isOpenClaw ? sandbox.openclaw_url : sandbox.opencode_url
+  const isNanoClaw = sandbox.type === 'nanoclaw'
+  const sandboxUrl = isOpenClaw ? sandbox.openclaw_url : isNanoClaw ? null : sandbox.opencode_url
 
   const totalRequests = usageData ? usageData.reduce((s, u) => s + u.request_count, 0) : 0
   const totalInput = usageData ? usageData.reduce((s, u) => s + u.input_tokens, 0) : 0
@@ -237,7 +238,7 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
                 {isOpenClaw ? 'Open' : 'Open'}
               </a>
             )}
-            {isOpenClaw && isRunning && (
+            {(isOpenClaw || isNanoClaw) && isRunning && (
               <button
                 onClick={() => setShowWeixinLogin(true)}
                 className="inline-flex items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/10 px-3 py-1.5 text-xs font-medium text-green-400 hover:bg-green-500/20 transition-colors"
@@ -391,7 +392,8 @@ function OverviewTab({ sandbox, weixinBindings, usageData, totals }: {
   const isOffline = sandbox.status === 'offline'
   const isRunning = sandbox.status === 'running'
   const isOpenClaw = sandbox.type === 'openclaw'
-  const sandboxUrl = isOpenClaw ? sandbox.openclaw_url : sandbox.opencode_url
+  const isNanoClaw = sandbox.type === 'nanoclaw'
+  const sandboxUrl = isOpenClaw ? sandbox.openclaw_url : isNanoClaw ? null : sandbox.opencode_url
   const fallbackLabel = isOpenClaw ? 'OpenClaw' : 'OpenCode'
 
   return (
@@ -445,7 +447,7 @@ function OverviewTab({ sandbox, weixinBindings, usageData, totals }: {
       )}
 
       {/* WeChat Bindings */}
-      {isOpenClaw && weixinBindings.length > 0 && (
+      {(isOpenClaw || isNanoClaw) && weixinBindings.length > 0 && (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--card)]">
           <div className="flex items-center gap-2 border-b border-[var(--border)] px-5 py-3">
             <MessageSquare size={14} className="text-green-400" />
