@@ -82,7 +82,7 @@ export function SandboxList({
 
   const handleCreateSandbox = async (
     name: string,
-    type: 'opencode' | 'openclaw',
+    type: 'opencode' | 'openclaw' | 'nanoclaw',
     cpu?: number,
     memory?: number,
     idleTimeout?: number,
