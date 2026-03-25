@@ -3,6 +3,7 @@ package sandbox
 import (
 	"encoding/json"
 	"os"
+	"strings"
 
 	"github.com/agentserver/agentserver/internal/process"
 )
@@ -20,6 +21,9 @@ type Config struct {
 	OpenclawPort             int
 	OpenclawRuntimeClassName string
 	OpenclawWeixinEnabled    bool
+	NanoclawImage            string
+	NanoclawRuntimeClassName string
+	NanoclawWeixinEnabled    bool
 }
 
 // DefaultConfig returns a Config populated from environment variables with sensible defaults.
@@ -36,6 +40,9 @@ func DefaultConfig() Config {
 		OpenclawPort:             18789,
 		OpenclawRuntimeClassName: os.Getenv("OPENCLAW_RUNTIME_CLASS"),
 		OpenclawWeixinEnabled:    os.Getenv("OPENCLAW_WEIXIN_ENABLED") == "true",
+		NanoclawImage:            os.Getenv("NANOCLAW_IMAGE"),
+		NanoclawRuntimeClassName: os.Getenv("NANOCLAW_RUNTIME_CLASS"),
+		NanoclawWeixinEnabled:    os.Getenv("NANOCLAW_WEIXIN_ENABLED") == "true",
 	}
 }
 
@@ -214,4 +221,31 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string, weixinEn
 
 	b, _ := json.Marshal(c)
 	return string(b)
+}
+
+// BuildNanoclawConfig returns the environment variable content for a nanoclaw
+// container. When byokBaseURL and byokAPIKey are non-empty (BYOK mode), they
+// override the default proxy credentials.
+func BuildNanoclawConfig(proxyBaseURL, proxyToken, assistantName string, weixinBridgeURL, bridgeSecret string, byokBaseURL, byokAPIKey string) string {
+	baseURL := proxyBaseURL
+	apiKey := proxyToken
+	if byokBaseURL != "" {
+		baseURL = byokBaseURL
+		apiKey = byokAPIKey
+	}
+	var lines []string
+	lines = append(lines, "ANTHROPIC_BASE_URL="+baseURL)
+	lines = append(lines, "ANTHROPIC_API_KEY="+apiKey)
+	if assistantName == "" {
+		assistantName = "Andy"
+	}
+	lines = append(lines, "ASSISTANT_NAME="+assistantName)
+	lines = append(lines, "NANOCLAW_NO_CONTAINER=true")
+	if weixinBridgeURL != "" {
+		lines = append(lines, "NANOCLAW_WEIXIN_BRIDGE_URL="+weixinBridgeURL)
+	}
+	if bridgeSecret != "" {
+		lines = append(lines, "NANOCLAW_BRIDGE_SECRET="+bridgeSecret)
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
