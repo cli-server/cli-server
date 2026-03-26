@@ -382,6 +382,10 @@ exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 			opts.BYOKBaseURL, opts.BYOKAPIKey,
 		)
 		containerEnv = append(containerEnv, corev1.EnvVar{Name: "NANOCLAW_CONFIG_CONTENT", Value: nanoclawCfg})
+		// NANOCLAW_NO_CONTAINER must be a real env var (not just in .env file)
+		// because container-runtime.ts reads process.env before NanoClaw's
+		// readEnvFile() has a chance to parse the .env file.
+		containerEnv = append(containerEnv, corev1.EnvVar{Name: "NANOCLAW_NO_CONTAINER", Value: "true"})
 	default: // "opencode"
 		if opts.OpencodeToken != "" {
 			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", Value: opts.OpencodeToken})
