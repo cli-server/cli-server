@@ -371,17 +371,17 @@ exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 		}
 		sandboxImage = m.cfg.NanoclawImage
 		containerPort = 3002 // Health/bridge endpoint
-		weixinBridgeURL := ""
+		imBridgeURL := ""
 		bridgeSecret := ""
-		if m.cfg.NanoclawWeixinEnabled && opts.NanoclawBridgeSecret != "" {
+		if m.cfg.NanoclawIMBridgeEnabled && opts.NanoclawBridgeSecret != "" {
 			bridgeSecret = opts.NanoclawBridgeSecret
 			if m.cfg.NanoclawBridgeBaseURL != "" && opts.SandboxID != "" {
-				weixinBridgeURL = m.cfg.NanoclawBridgeBaseURL + "/api/internal/nanoclaw/" + opts.SandboxID + "/weixin/send"
+				imBridgeURL = m.cfg.NanoclawBridgeBaseURL + "/api/internal/nanoclaw/" + opts.SandboxID + "/im/send"
 			}
 		}
 		nanoclawCfg := BuildNanoclawConfig(
 			proxyBaseURL, opts.ProxyToken, "Andy",
-			weixinBridgeURL, bridgeSecret,
+			imBridgeURL, bridgeSecret,
 			opts.BYOKBaseURL, opts.BYOKAPIKey,
 		)
 		containerEnv = append(containerEnv, corev1.EnvVar{Name: "NANOCLAW_CONFIG_CONTENT", Value: nanoclawCfg})

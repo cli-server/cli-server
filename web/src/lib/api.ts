@@ -21,6 +21,19 @@ export interface WeixinBinding {
   bound_at: string
 }
 
+export interface IMBinding {
+  provider: string
+  bot_id: string
+  user_id?: string
+  bound_at: string
+}
+
+export interface TelegramConfigureResult {
+  connected: boolean
+  bot_id: string
+  bot_name: string
+}
+
 export interface Sandbox {
   id: string
   workspace_id: string
@@ -39,6 +52,7 @@ export interface Sandbox {
   idle_timeout?: number
   agent_info?: AgentInfo
   weixin_bindings?: WeixinBinding[]
+  im_bindings?: IMBinding[]
 }
 
 export interface AgentInfo {
@@ -362,14 +376,38 @@ export interface WeixinQRWaitResult {
 }
 
 export async function weixinQRStart(sandboxId: string): Promise<WeixinQRStartResult> {
-  const res = await fetch(`/api/sandboxes/${sandboxId}/weixin/qr-start`, { method: 'POST' })
+  const res = await fetch(`/api/sandboxes/${sandboxId}/im/weixin/qr-start`, { method: 'POST' })
   if (!res.ok) throw new Error('Failed to start WeChat login')
   return res.json()
 }
 
 export async function weixinQRWait(sandboxId: string): Promise<WeixinQRWaitResult> {
-  const res = await fetch(`/api/sandboxes/${sandboxId}/weixin/qr-wait`, { method: 'POST' })
+  const res = await fetch(`/api/sandboxes/${sandboxId}/im/weixin/qr-wait`, { method: 'POST' })
   if (!res.ok) throw new Error('Failed to poll WeChat login status')
+  return res.json()
+}
+
+export async function telegramConfigure(sandboxId: string, botToken: string): Promise<TelegramConfigureResult> {
+  const res = await fetch(`/api/sandboxes/${sandboxId}/im/telegram/configure`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bot_token: botToken }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Failed to configure Telegram bot')
+  }
+  return res.json()
+}
+
+export async function telegramDisconnect(sandboxId: string): Promise<void> {
+  const res = await fetch(`/api/sandboxes/${sandboxId}/im/telegram`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to disconnect Telegram')
+}
+
+export async function listIMBindings(sandboxId: string): Promise<{ bindings: IMBinding[] }> {
+  const res = await fetch(`/api/sandboxes/${sandboxId}/im/bindings`)
+  if (!res.ok) throw new Error('Failed to list IM bindings')
   return res.json()
 }
 

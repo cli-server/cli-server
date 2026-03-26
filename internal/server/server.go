@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/agentserver/agentserver/internal/auth"
 	"github.com/agentserver/agentserver/internal/db"
+	"github.com/agentserver/agentserver/internal/imbridge"
 	"github.com/agentserver/agentserver/internal/namespace"
 	"github.com/agentserver/agentserver/internal/process"
 	"github.com/agentserver/agentserver/internal/sbxstore"
@@ -46,8 +47,8 @@ type Server struct {
 	PasswordAuthEnabled      bool   // when false, /api/auth/login and /api/auth/register are not registered
 	LLMProxyURL              string // base URL for the llmproxy service (e.g. "http://agentserver-llmproxy:8081")
 
-	// WeChat bridge for NanoClaw sandboxes (long-poll goroutine management)
-	WeixinBridge *weixin.Bridge
+	// IM bridge for NanoClaw sandboxes (long-poll goroutine management)
+	IMBridge *imbridge.Bridge
 
 	// ModelServer OAuth
 	ModelserverOAuthClientID      string
@@ -96,12 +97,15 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 		PasswordAuthEnabled:     passwordAuthEnabled,
 	}
 	// Pass ExecCommander if the process manager supports it (K8s backend does).
-	var execCmd weixin.ExecCommander
-	if ec, ok := processManager.(weixin.ExecCommander); ok {
+	var execCmd imbridge.ExecCommander
+	if ec, ok := processManager.(imbridge.ExecCommander); ok {
 		execCmd = ec
 	}
-	s.WeixinBridge = weixin.NewBridge(database, sandboxStore, execCmd)
-	s.restoreWeixinBridgePollers()
+	s.IMBridge = imbridge.NewBridge(database, sandboxStore, execCmd, []imbridge.Provider{
+		&imbridge.WeixinProvider{},
+		&imbridge.TelegramProvider{},
+	})
+	s.restoreIMBridgePollers()
 	if s.OIDC != nil {
 		s.OIDC.OnUserCreated = s.createDefaultWorkspace
 	}
@@ -148,8 +152,9 @@ func (s *Server) Router() http.Handler {
 	// Internal API for ModelServer token retrieval (no cookie auth).
 	r.Get("/internal/workspaces/{id}/modelserver-token", s.handleInternalModelserverToken)
 
-	// Internal API for NanoClaw pods to send WeChat replies (auth via bridge secret).
-	r.Post("/api/internal/nanoclaw/{id}/weixin/send", s.handleNanoclawWeixinSend)
+	// Internal API for NanoClaw pods to send IM replies (auth via bridge secret).
+	r.Post("/api/internal/nanoclaw/{id}/im/send", s.handleNanoclawIMSend)
+	r.Post("/api/internal/nanoclaw/{id}/weixin/send", s.handleNanoclawIMSend) // legacy alias
 
 	// Agent registration (auth via one-time code, no cookie auth needed).
 	r.Post("/api/agent/register", s.handleAgentRegister)
@@ -232,9 +237,15 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/workspaces/{wid}/traces", s.handleWorkspaceTraces)
 		r.Get("/api/workspaces/{wid}/traces/{traceId}", s.handleWorkspaceTraceDetail)
 
-		// WeChat channel QR login
-		r.Post("/api/sandboxes/{id}/weixin/qr-start", s.handleWeixinQRStart)
-		r.Post("/api/sandboxes/{id}/weixin/qr-wait", s.handleWeixinQRWait)
+		// IM Bridge routes (unified)
+		r.Post("/api/sandboxes/{id}/im/weixin/qr-start", s.handleIMWeixinQRStart)
+		r.Post("/api/sandboxes/{id}/im/weixin/qr-wait", s.handleIMWeixinQRWait)
+		r.Post("/api/sandboxes/{id}/im/telegram/configure", s.handleIMTelegramConfigure)
+		r.Delete("/api/sandboxes/{id}/im/telegram", s.handleIMTelegramDisconnect)
+		r.Get("/api/sandboxes/{id}/im/bindings", s.handleListIMBindings)
+		// Legacy WeChat routes
+		r.Post("/api/sandboxes/{id}/weixin/qr-start", s.handleIMWeixinQRStart)
+		r.Post("/api/sandboxes/{id}/weixin/qr-wait", s.handleIMWeixinQRWait)
 
 		// Agent registration code generation
 		r.Post("/api/workspaces/{wid}/agent-code", s.handleCreateAgentCode)
@@ -423,10 +434,11 @@ type agentInfoResponse struct {
 	UpdatedAt       string `json:"updated_at"`
 }
 
-type weixinBindingResponse struct {
-	BotID   string `json:"bot_id"`
-	UserID  string `json:"user_id"`
-	BoundAt string `json:"bound_at"`
+type imBindingResponse struct {
+	Provider string `json:"provider"`
+	BotID    string `json:"bot_id"`
+	UserID   string `json:"user_id,omitempty"`
+	BoundAt  string `json:"bound_at"`
 }
 
 type sandboxResponse struct {
@@ -446,8 +458,9 @@ type sandboxResponse struct {
 	CPU             int     `json:"cpu,omitempty"`
 	Memory          int64   `json:"memory,omitempty"`
 	IdleTimeout     *int    `json:"idle_timeout,omitempty"`
-	AgentInfo       *agentInfoResponse   `json:"agent_info,omitempty"`
-	WeixinBindings  []weixinBindingResponse `json:"weixin_bindings,omitempty"`
+	AgentInfo       *agentInfoResponse `json:"agent_info,omitempty"`
+	WeixinBindings  []imBindingResponse `json:"weixin_bindings,omitempty"`
+	IMBindings      []imBindingResponse `json:"im_bindings,omitempty"`
 }
 
 func (s *Server) toWorkspaceResponse(ws *db.Workspace) workspaceResponse {
@@ -541,22 +554,28 @@ func (s *Server) toSandboxResponse(r *http.Request, sbx *sbxstore.Sandbox, authT
 	return resp
 }
 
-// attachWeixinBindings fetches and attaches weixin binding records to a sandbox response.
-func (s *Server) attachWeixinBindings(resp *sandboxResponse) {
+// attachIMBindings fetches and attaches IM binding records to a sandbox response.
+func (s *Server) attachIMBindings(resp *sandboxResponse) {
 	if resp.Type != "openclaw" && resp.Type != "nanoclaw" {
 		return
 	}
-	bindings, err := s.DB.ListWeixinBindings(resp.ID)
+	bindings, err := s.DB.ListIMBindings(resp.ID, "")
 	if err != nil {
-		log.Printf("list weixin bindings for %s: %v", resp.ID, err)
+		log.Printf("list im bindings for %s: %v", resp.ID, err)
 		return
 	}
 	for _, b := range bindings {
-		resp.WeixinBindings = append(resp.WeixinBindings, weixinBindingResponse{
-			BotID:   b.BotID,
-			UserID:  b.UserID,
-			BoundAt: b.BoundAt.Format(time.RFC3339),
-		})
+		entry := imBindingResponse{
+			Provider: b.Provider,
+			BotID:    b.BotID,
+			UserID:   b.UserID,
+			BoundAt:  b.BoundAt.Format(time.RFC3339),
+		}
+		resp.IMBindings = append(resp.IMBindings, entry)
+		// Backwards compat: only weixin bindings go into weixin_bindings.
+		if b.Provider == "weixin" {
+			resp.WeixinBindings = append(resp.WeixinBindings, entry)
+		}
 	}
 }
 
@@ -1333,7 +1352,7 @@ func (s *Server) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := s.toSandboxResponse(r, sbx, authTokenFromRequest(r))
-	s.attachWeixinBindings(&resp)
+	s.attachIMBindings(&resp)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -1404,9 +1423,9 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Stop WeChat bridge pollers for nanoclaw sandboxes.
-	if sbx.Type == "nanoclaw" && s.WeixinBridge != nil {
-		s.WeixinBridge.StopPollersForSandbox(id)
+	// Stop IM bridge pollers for nanoclaw sandboxes.
+	if sbx.Type == "nanoclaw" && s.IMBridge != nil {
+		s.IMBridge.StopPollersForSandbox(id)
 	}
 
 	if err := s.Sandboxes.Delete(id); err != nil {
@@ -1444,9 +1463,9 @@ func (s *Server) handlePauseSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stop WeChat bridge pollers before pausing (pod will be gone).
-	if sbx.Type == "nanoclaw" && s.WeixinBridge != nil {
-		s.WeixinBridge.StopPollersForSandbox(id)
+	// Stop IM bridge pollers before pausing (pod will be gone).
+	if sbx.Type == "nanoclaw" && s.IMBridge != nil {
+		s.IMBridge.StopPollersForSandbox(id)
 	}
 
 	// Pause asynchronously.
@@ -1521,11 +1540,11 @@ func (s *Server) handleResumeSandbox(w http.ResponseWriter, r *http.Request) {
 		s.Sandboxes.UpdateActivity(id)
 		s.Sandboxes.UpdateStatus(id, sbxstore.StatusRunning)
 
-		// Restart WeChat bridge pollers for nanoclaw sandboxes after resume.
+		// Restart IM bridge pollers for nanoclaw sandboxes after resume.
 		// The Pod has a new IP; pollers were stopped during pause.
 		sbxNow, ok := s.Sandboxes.Get(id)
-		if ok && sbxNow.Type == "nanoclaw" && s.WeixinBridge != nil {
-			s.restoreWeixinBridgePollersForSandbox(id)
+		if ok && sbxNow.Type == "nanoclaw" && s.IMBridge != nil {
+			s.restoreIMBridgePollersForSandbox(id)
 		}
 
 		// Re-inject WeChat credentials for openclaw sandboxes after resume.
@@ -1674,68 +1693,68 @@ func generatePassword() string {
 }
 
 // ---------------------------------------------------------------------------
-// WeChat bridge restore (on agentserver restart)
+// IM bridge restore (on agentserver restart)
 // ---------------------------------------------------------------------------
 
-// restoreWeixinBridgePollers restarts long-poll goroutines for all active
-// nanoclaw WeChat bindings. Called once during server startup to recover
-// from agentserver restarts — the get_updates_buf cursor is persisted in DB,
+// restoreIMBridgePollers restarts long-poll goroutines for all active
+// nanoclaw IM bindings. Called once during server startup to recover
+// from agentserver restarts — the cursor is persisted in DB,
 // so pollers resume from where they left off without message loss.
-func (s *Server) restoreWeixinBridgePollers() {
-	if s.WeixinBridge == nil {
-		return
-	}
-	bindings, err := s.DB.GetBindingsWithBotToken()
-	if err != nil {
-		log.Printf("weixin bridge restore: failed to query bindings: %v", err)
+func (s *Server) restoreIMBridgePollers() {
+	if s.IMBridge == nil {
 		return
 	}
 	restored := 0
-	for _, b := range bindings {
-		sbx, ok := s.Sandboxes.Get(b.SandboxID)
-		if !ok || sbx.PodIP == "" {
+	for _, provider := range s.IMBridge.Providers() {
+		bindings, err := s.DB.GetActiveBindings(provider.Name())
+		if err != nil {
+			log.Printf("imbridge restore: failed to query %s bindings: %v", provider.Name(), err)
 			continue
 		}
-		s.WeixinBridge.StartPoller(weixin.BridgeBinding{
-			SandboxID:     b.SandboxID,
-			BotID:         b.BotID,
-			BotToken:      b.BotToken,
-			ILinkBaseURL:  b.ILinkBaseURL,
-			GetUpdatesBuf: b.GetUpdatesBuf,
-			PodIP:         sbx.PodIP,
-			BridgeSecret:  sbx.NanoclawBridgeSecret,
-		})
-		restored++
+		for _, b := range bindings {
+			sbx, ok := s.Sandboxes.Get(b.SandboxID)
+			if !ok || sbx.PodIP == "" {
+				continue
+			}
+			s.IMBridge.StartPoller(imbridge.BridgeBinding{
+				Provider:     provider,
+				Credentials:  imbridge.Credentials{SandboxID: b.SandboxID, BotID: b.BotID, BotToken: b.BotToken, BaseURL: b.BaseURL},
+				Cursor:       b.Cursor,
+				BridgeSecret: sbx.NanoclawBridgeSecret,
+			})
+			restored++
+		}
 	}
 	if restored > 0 {
-		log.Printf("weixin bridge restore: started %d poller(s)", restored)
+		log.Printf("imbridge restore: started %d poller(s)", restored)
 	}
 }
 
-// restoreWeixinBridgePollersForSandbox restarts pollers for a single sandbox.
+// restoreIMBridgePollersForSandbox restarts pollers for a single sandbox.
 // Called after sandbox resume when the Pod has a new IP.
-func (s *Server) restoreWeixinBridgePollersForSandbox(sandboxID string) {
-	bindings, err := s.DB.GetBindingsWithBotToken()
-	if err != nil {
-		log.Printf("weixin bridge restore for %s: failed to query bindings: %v", sandboxID, err)
+func (s *Server) restoreIMBridgePollersForSandbox(sandboxID string) {
+	if s.IMBridge == nil {
 		return
 	}
 	sbx, ok := s.Sandboxes.Get(sandboxID)
 	if !ok || sbx.PodIP == "" {
 		return
 	}
+	bindings, err := s.DB.GetActiveBindingsForSandbox(sandboxID)
+	if err != nil {
+		log.Printf("imbridge restore for %s: failed to query bindings: %v", sandboxID, err)
+		return
+	}
 	for _, b := range bindings {
-		if b.SandboxID != sandboxID {
+		provider := s.IMBridge.GetProvider(b.Provider)
+		if provider == nil {
 			continue
 		}
-		s.WeixinBridge.StartPoller(weixin.BridgeBinding{
-			SandboxID:     b.SandboxID,
-			BotID:         b.BotID,
-			BotToken:      b.BotToken,
-			ILinkBaseURL:  b.ILinkBaseURL,
-			GetUpdatesBuf: b.GetUpdatesBuf,
-			PodIP:         sbx.PodIP,
-			BridgeSecret:  sbx.NanoclawBridgeSecret,
+		s.IMBridge.StartPoller(imbridge.BridgeBinding{
+			Provider:     provider,
+			Credentials:  imbridge.Credentials{SandboxID: b.SandboxID, BotID: b.BotID, BotToken: b.BotToken, BaseURL: b.BaseURL},
+			Cursor:       b.Cursor,
+			BridgeSecret: sbx.NanoclawBridgeSecret,
 		})
 	}
 }
@@ -1749,10 +1768,17 @@ func (s *Server) restoreOpenclawWeixinCredentials(sandboxID string) {
 		return
 	}
 
-	bindings, err := s.DB.GetBindingsWithBotTokenForSandbox(sandboxID)
+	allBindings, err := s.DB.GetActiveBindingsForSandbox(sandboxID)
 	if err != nil {
 		log.Printf("openclaw weixin restore for %s: failed to query bindings: %v", sandboxID, err)
 		return
+	}
+	// Filter to weixin bindings only — openclaw only supports weixin.
+	var bindings []*db.IMBinding
+	for _, b := range allBindings {
+		if b.Provider == "weixin" {
+			bindings = append(bindings, b)
+		}
 	}
 	if len(bindings) == 0 {
 		return
@@ -1775,7 +1801,7 @@ func (s *Server) restoreOpenclawWeixinCredentials(sandboxID string) {
 
 	// Write each account credential file, then the combined index, then poke the config.
 	for i, b := range bindings {
-		baseURL := b.ILinkBaseURL
+		baseURL := b.BaseURL
 		if baseURL == "" {
 			baseURL = weixin.DefaultAPIBaseURL
 		}
@@ -1824,7 +1850,7 @@ func (s *Server) restoreOpenclawWeixinCredentials(sandboxID string) {
 // WeChat channel QR login
 // ---------------------------------------------------------------------------
 
-func (s *Server) handleWeixinQRStart(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleIMWeixinQRStart(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	sbx, ok := s.Sandboxes.Get(id)
 	if !ok {
@@ -1863,7 +1889,7 @@ type execCommander interface {
 	ExecSimple(ctx context.Context, sandboxID string, command []string) (string, error)
 }
 
-func (s *Server) handleWeixinQRWait(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleIMWeixinQRWait(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	sbx, ok := s.Sandboxes.Get(id)
 	if !ok {
@@ -1962,23 +1988,20 @@ func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, re
 			baseURL = weixin.DefaultAPIBaseURL
 		}
 		// Save binding record first.
-		if dbErr := s.DB.CreateWeixinBinding(sandboxID, accountID, result.UserID); dbErr != nil {
+		if dbErr := s.DB.CreateIMBinding(sandboxID, "weixin", accountID, result.UserID); dbErr != nil {
 			return fmt.Errorf("save binding: %w", dbErr)
 		}
 		// Store bot credentials for bridge messaging.
-		if dbErr := s.DB.SaveBotCredentials(sandboxID, accountID, result.Token, baseURL); dbErr != nil {
+		if dbErr := s.DB.SaveIMCredentials(sandboxID, "weixin", accountID, result.Token, baseURL); dbErr != nil {
 			return fmt.Errorf("save bot credentials: %w", dbErr)
 		}
 		// Start long-polling for this newly bound WeChat account.
-		if sbx.PodIP != "" && s.WeixinBridge != nil {
-			s.WeixinBridge.StartPoller(weixin.BridgeBinding{
-				SandboxID:     sandboxID,
-				BotID:         accountID,
-				BotToken:      result.Token,
-				ILinkBaseURL:  baseURL,
-				GetUpdatesBuf: "",
-				PodIP:         sbx.PodIP,
-				BridgeSecret:  sbx.NanoclawBridgeSecret,
+		if sbx.PodIP != "" && s.IMBridge != nil {
+			s.IMBridge.StartPoller(imbridge.BridgeBinding{
+				Provider:     &imbridge.WeixinProvider{},
+				Credentials:  imbridge.Credentials{SandboxID: sandboxID, BotID: accountID, BotToken: result.Token, BaseURL: baseURL},
+				Cursor:       "",
+				BridgeSecret: sbx.NanoclawBridgeSecret,
 			})
 		}
 		return nil
@@ -2035,11 +2058,11 @@ func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, re
 	}
 
 	// Persist binding record to DB (non-fatal if it fails).
-	if dbErr := s.DB.CreateWeixinBinding(sandboxID, accountID, result.UserID); dbErr != nil {
+	if dbErr := s.DB.CreateIMBinding(sandboxID, "weixin", accountID, result.UserID); dbErr != nil {
 		log.Printf("weixin: failed to save binding record: %v", dbErr)
 	}
 	// Store bot credentials in DB for post-resume re-injection.
-	if dbErr := s.DB.SaveBotCredentials(sandboxID, accountID, result.Token, baseURL); dbErr != nil {
+	if dbErr := s.DB.SaveIMCredentials(sandboxID, "weixin", accountID, result.Token, baseURL); dbErr != nil {
 		log.Printf("weixin: failed to save bot credentials for openclaw: %v", dbErr)
 	}
 	return nil
@@ -2064,9 +2087,9 @@ func normalizeAccountID(raw string) string {
 	return string(out)
 }
 
-// handleNanoclawWeixinSend handles outbound messages from NanoClaw pods.
-// The NanoClaw weixin channel calls this to send replies to WeChat users.
-func (s *Server) handleNanoclawWeixinSend(w http.ResponseWriter, r *http.Request) {
+// handleNanoclawIMSend handles outbound messages from NanoClaw pods.
+// The NanoClaw IM channel calls this to send replies to IM users.
+func (s *Server) handleNanoclawIMSend(w http.ResponseWriter, r *http.Request) {
 	sandboxID := chi.URLParam(r, "id")
 
 	sbx, ok := s.Sandboxes.Get(sandboxID)
@@ -2079,7 +2102,6 @@ func (s *Server) handleNanoclawWeixinSend(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Validate bridge secret
 	authHeader := r.Header.Get("Authorization")
 	expectedAuth := "Bearer " + sbx.NanoclawBridgeSecret
 	if sbx.NanoclawBridgeSecret == "" || authHeader != expectedAuth {
@@ -2101,37 +2123,179 @@ func (s *Server) handleNanoclawWeixinSend(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Resolve bot_id: use provided value, or fall back to the first binding for this sandbox.
+	provider := s.IMBridge.FindProviderByJID(req.ToUserID)
+	if provider == nil {
+		provider = &imbridge.WeixinProvider{}
+	}
+
+	rawUserID := imbridge.StripJIDSuffix(req.ToUserID, provider)
+
 	botID := req.BotID
 	if botID == "" {
-		bindings, err := s.DB.ListWeixinBindings(sandboxID)
+		bindings, err := s.DB.ListIMBindings(sandboxID, provider.Name())
 		if err != nil || len(bindings) == 0 {
-			http.Error(w, "no weixin binding found", http.StatusNotFound)
+			http.Error(w, "no IM binding found", http.StatusNotFound)
 			return
 		}
 		botID = bindings[0].BotID
 	}
 
-	// Look up bot credentials directly.
-	botToken, baseURL, err := s.DB.GetBotCredentials(sandboxID, botID)
+	botToken, baseURL, err := s.DB.GetIMCredentials(sandboxID, provider.Name(), botID)
 	if err != nil || botToken == "" {
 		http.Error(w, "bot credentials not found", http.StatusNotFound)
 		return
 	}
-	if baseURL == "" {
-		baseURL = weixin.DefaultAPIBaseURL
+
+	meta, _ := s.DB.GetAllProviderMeta(sandboxID, provider.Name(), botID, rawUserID)
+
+	creds := &imbridge.Credentials{
+		SandboxID: sandboxID,
+		BotID:     botID,
+		BotToken:  botToken,
+		BaseURL:   baseURL,
 	}
-
-	// Get context token for this user.
-	contextToken, _ := s.DB.GetContextToken(sandboxID, botID, req.ToUserID)
-
-	// Send via iLink
-	if err := weixin.SendTextMessage(r.Context(), baseURL, botToken, req.ToUserID, req.Text, contextToken); err != nil {
-		log.Printf("nanoclaw weixin send: failed sandbox=%s to=%s: %v", sandboxID, req.ToUserID, err)
+	if err := provider.Send(r.Context(), creds, rawUserID, req.Text, meta); err != nil {
+		log.Printf("nanoclaw im send: failed sandbox=%s provider=%s to=%s: %v", sandboxID, provider.Name(), rawUserID, err)
 		http.Error(w, "failed to send message", http.StatusBadGateway)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "sent"})
+}
+
+// handleIMTelegramConfigure configures a Telegram bot for a nanoclaw sandbox.
+func (s *Server) handleIMTelegramConfigure(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sbx, ok := s.Sandboxes.Get(id)
+	if !ok {
+		http.Error(w, "sandbox not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
+		return
+	}
+	if sbx.Type != "nanoclaw" {
+		http.Error(w, "telegram binding is only available for nanoclaw sandboxes", http.StatusBadRequest)
+		return
+	}
+	if sbx.Status != "running" {
+		http.Error(w, "sandbox is not running", http.StatusConflict)
+		return
+	}
+
+	var req struct {
+		BotToken string `json:"bot_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.BotToken == "" {
+		http.Error(w, "bot_token is required", http.StatusBadRequest)
+		return
+	}
+
+	botInfo, err := imbridge.TelegramGetMe(r.Context(), imbridge.TelegramDefaultBaseURL, req.BotToken)
+	if err != nil {
+		log.Printf("telegram configure: getMe failed: %v", err)
+		http.Error(w, "invalid bot token: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	botID := botInfo.Username
+	if botID == "" {
+		botID = fmt.Sprintf("%d", botInfo.ID)
+	}
+
+	if err := s.DB.CreateIMBinding(id, "telegram", botID, ""); err != nil {
+		log.Printf("telegram configure: create binding: %v", err)
+		http.Error(w, "failed to save binding", http.StatusInternalServerError)
+		return
+	}
+	if err := s.DB.SaveIMCredentials(id, "telegram", botID, req.BotToken, imbridge.TelegramDefaultBaseURL); err != nil {
+		log.Printf("telegram configure: save credentials: %v", err)
+		http.Error(w, "failed to save credentials", http.StatusInternalServerError)
+		return
+	}
+
+	if sbx.PodIP != "" && s.IMBridge != nil {
+		s.IMBridge.StartPoller(imbridge.BridgeBinding{
+			Provider:     &imbridge.TelegramProvider{},
+			Credentials:  imbridge.Credentials{SandboxID: id, BotID: botID, BotToken: req.BotToken, BaseURL: imbridge.TelegramDefaultBaseURL},
+			Cursor:       "",
+			BridgeSecret: sbx.NanoclawBridgeSecret,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"connected": true,
+		"bot_id":    botID,
+		"bot_name":  botInfo.FirstName,
+	})
+}
+
+// handleIMTelegramDisconnect disconnects a Telegram bot from a sandbox.
+func (s *Server) handleIMTelegramDisconnect(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sbx, ok := s.Sandboxes.Get(id)
+	if !ok {
+		http.Error(w, "sandbox not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
+		return
+	}
+
+	bindings, err := s.DB.ListIMBindings(id, "telegram")
+	if err != nil || len(bindings) == 0 {
+		http.Error(w, "no telegram binding found", http.StatusNotFound)
+		return
+	}
+
+	for _, b := range bindings {
+		if s.IMBridge != nil {
+			s.IMBridge.StopPoller(id, "telegram", b.BotID)
+		}
+		if err := s.DB.DeleteIMBinding(id, "telegram", b.BotID); err != nil {
+			log.Printf("telegram disconnect: delete binding: %v", err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "disconnected"})
+}
+
+// handleListIMBindings returns all IM bindings for a sandbox.
+func (s *Server) handleListIMBindings(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sbx, ok := s.Sandboxes.Get(id)
+	if !ok {
+		http.Error(w, "sandbox not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
+		return
+	}
+
+	bindings, err := s.DB.ListIMBindings(id, "")
+	if err != nil {
+		log.Printf("list im bindings: %v", err)
+		http.Error(w, "failed to list bindings", http.StatusInternalServerError)
+		return
+	}
+
+	resp := make([]imBindingResponse, 0, len(bindings))
+	for _, b := range bindings {
+		resp = append(resp, imBindingResponse{
+			Provider: b.Provider,
+			BotID:    b.BotID,
+			UserID:   b.UserID,
+			BoundAt:  b.BoundAt.Format(time.RFC3339),
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"bindings": resp})
 }

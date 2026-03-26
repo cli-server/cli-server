@@ -22,7 +22,7 @@ const (
 	channelVersion       = "agentserver-bridge-1.0"
 	longPollTimeout      = 40 * time.Second // slightly longer than server's 35s
 	sendMessageTimeout   = 15 * time.Second
-	sessionExpiredErrCode = -14
+	SessionExpiredErrCode = -14
 )
 
 // Session holds the state of an in-progress QR login for a single sandbox.
@@ -315,6 +315,16 @@ func SendTextMessage(ctx context.Context, apiBaseURL, botToken, toUserID, text, 
 		return fmt.Errorf("ilink sendmessage: status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// ExtractText extracts the text content from a WeixinMessage.
+func ExtractText(msg WeixinMessage) string {
+	for _, item := range msg.ItemList {
+		if item.Type == 1 && item.TextItem != nil {
+			return item.TextItem.Text
+		}
+	}
+	return ""
 }
 
 // PollLoginStatus long-polls the ilink API for QR code scan status.

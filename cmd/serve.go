@@ -224,8 +224,8 @@ var serveCmd = &cobra.Command{
 			return srv.GetEffectiveIdleTimeout()
 		})
 		idleWatcher.SetOnPrePause(func(sandboxID string) {
-			if srv.WeixinBridge != nil {
-				srv.WeixinBridge.StopPollersForSandbox(sandboxID)
+			if srv.IMBridge != nil {
+				srv.IMBridge.StopPollersForSandbox(sandboxID)
 			}
 		})
 		idleWatcher.Start()
