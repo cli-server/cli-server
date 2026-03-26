@@ -216,6 +216,40 @@ func extractText(msg WeixinMessage) string {
 	return ""
 }
 
+// ensureChatRegistered sends a /metadata request to register the chat JID in NanoClaw's
+// chats table before sending messages. NanoClaw's messages table has a FOREIGN KEY on
+// chat_jid → chats(jid), so the chat must exist first.
+func (b *Bridge) ensureChatRegistered(ctx context.Context, podIP, bridgeSecret, chatJID string) error {
+	meta := map[string]interface{}{
+		"chat_jid":  chatJID,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"name":      chatJID,
+		"is_group":  false,
+	}
+	body, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("marshal metadata: %w", err)
+	}
+
+	url := fmt.Sprintf("http://%s:3002/metadata", podIP)
+	ctx, cancel := context.WithTimeout(ctx, forwardTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+bridgeSecret)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("register chat metadata: %w", err)
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
 // forwardToNanoClaw sends a message to the NanoClaw pod's weixin channel HTTP endpoint.
 // PodIP is resolved dynamically via the SandboxResolver to handle Pod restarts.
 func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, fromUserID, text string) error {
@@ -223,6 +257,12 @@ func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, f
 	podIP := b.resolver.GetPodIP(binding.SandboxID)
 	if podIP == "" {
 		return fmt.Errorf("sandbox %s has no PodIP (pod may be down or paused)", binding.SandboxID)
+	}
+
+	// Ensure the chat is registered in NanoClaw's DB before sending messages.
+	// NanoClaw's messages table has a FOREIGN KEY on chat_jid → chats(jid).
+	if err := b.ensureChatRegistered(ctx, podIP, binding.BridgeSecret, fromUserID); err != nil {
+		log.Printf("weixin bridge: failed to register chat %s: %v (continuing anyway)", fromUserID, err)
 	}
 
 	msg := map[string]interface{}{
