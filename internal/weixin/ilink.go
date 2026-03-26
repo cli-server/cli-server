@@ -61,7 +61,7 @@ type TextItem struct {
 
 // WeixinMessage is a message from/to iLink.
 type WeixinMessage struct {
-	FromUserID   string        `json:"from_user_id,omitempty"`
+	FromUserID   string        `json:"from_user_id"`
 	ToUserID     string        `json:"to_user_id,omitempty"`
 	ClientID     string        `json:"client_id,omitempty"`
 	CreateTimeMs int64         `json:"create_time_ms,omitempty"`
