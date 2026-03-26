@@ -87,6 +87,7 @@ type InboundMessage struct {
     FromUserID string
     SenderName string
     Text       string
+    IsGroup    bool              // true for group/supergroup chats
     Metadata   map[string]string // provider-specific state (e.g., weixin context_token)
 }
 ```
@@ -123,7 +124,7 @@ type BridgeBinding struct {
 | `StopPoller(sandboxID, provider, botID)` | Cancels a specific poller. |
 | `StopPollersForSandbox(sandboxID)` | Cancels all pollers for a sandbox. |
 | `pollLoop(ctx, binding)` | Calls `binding.Provider.Poll()`, forwards messages to nanoclaw, manages cursor. Only advances cursor after all messages successfully forwarded. |
-| `forwardToNanoClaw(ctx, binding, chatJID, senderName, text)` | POST to `http://{podIP}:3002/message`. Calls `ensureGroupRegistered` and `ensureChatRegistered` first. |
+| `forwardToNanoClaw(ctx, binding, msg InboundMessage)` | POST to `http://{podIP}:3002/message`. Calls `ensureGroupRegistered` and `ensureChatRegistered` (with `msg.IsGroup`) first. |
 | `ensureGroupRegistered(ctx, sandboxID, chatJID)` | Writes IPC JSON to `/app/data/ipc/main/tasks/register-{folder}.json` via ExecSimple. Idempotent (tracks in-memory). |
 | `ensureChatRegistered(ctx, podIP, secret, chatJID)` | POST to `http://{podIP}:3002/metadata`. |
 | `FindProviderByJID(jid)` | Matches JID suffix to provider. |
@@ -173,7 +174,9 @@ func (b *Bridge) pollLoop(ctx context.Context, binding BridgeBinding) {
 
             chatJID := msg.FromUserID + binding.Provider.JIDSuffix()
 
-            if err := b.forwardToNanoClaw(ctx, binding, chatJID, msg.SenderName, msg.Text); err != nil {
+            fwdMsg := msg
+            fwdMsg.FromUserID = chatJID // replace with suffixed JID
+            if err := b.forwardToNanoClaw(ctx, binding, fwdMsg); err != nil {
                 allForwarded = false
                 break
             }
@@ -596,8 +599,119 @@ func (s *Server) restoreIMBridgePollers() {
 | `src/channels/weixin/index.ts` | modify | Use bridge-server, remove inline HTTP server |
 | `src/channels/index.ts` | modify | Add telegram import |
 
+## JID Format & Compatibility
+
+### New JID Format
+
+All new messages use suffixed JIDs:
+- WeChat: `{fromUserID}@im.wechat`
+- Telegram: `{chatID}@tg`
+
+### Backwards Compatibility
+
+Existing nanoclaw data (chats, messages, registered_groups in SQLite) uses unsuffixed WeChat JIDs (e.g., `wxid_xxx`). This data is **not migrated**. Instead, nanoclaw's weixin channel `ownsJid` accepts both formats:
+
+```typescript
+ownsJid(jid: string): boolean {
+    // New format (with suffix)
+    if (jid.endsWith('@im.wechat')) return true;
+    // Legacy format (no suffix) — any JID not claimed by another channel
+    // is assumed to be weixin for backwards compatibility.
+    return false;
+}
+```
+
+The bridge-server's `/message` handler adds a fallback: if no channel's `ownsJid` matches, route to the weixin channel (legacy unsuffixed JIDs). This ensures existing registered groups and message history continue to work without migration.
+
+New messages from agentserver will use the suffixed format. Over time, as groups are re-registered via IPC, the suffixed JIDs will replace the old ones.
+
+## Telegram Group vs Private Chat
+
+`TelegramProvider.Poll` uses `u.Message.Chat.ID` as the user/group identifier:
+- Private chats: positive ID (e.g., `123456789@tg`)
+- Groups/supergroups: negative ID (e.g., `-1001234567890@tg`)
+
+The `ensureChatRegistered` call passes `is_group` based on the chat type:
+
+```go
+isGroup := u.Message.Chat.Type == "group" || u.Message.Chat.Type == "supergroup"
+```
+
+This is propagated via an optional field in `InboundMessage`:
+
+```go
+type InboundMessage struct {
+    FromUserID string
+    SenderName string
+    Text       string
+    IsGroup    bool
+    Metadata   map[string]string
+}
+```
+
+## Telegram Rate Limiting
+
+Telegram Bot API returns HTTP 429 with `Retry-After` header. `TelegramGetUpdates` and `TelegramSendMessage` detect this and return a typed error:
+
+```go
+type RateLimitError struct {
+    RetryAfter time.Duration
+}
+```
+
+`TelegramProvider.Poll` converts this to `PollResult.ShouldBackoff`:
+
+```go
+if rle, ok := err.(*RateLimitError); ok {
+    return &PollResult{ShouldBackoff: rle.RetryAfter}, nil
+}
+```
+
+## handleNanoclawIMSend: botID Resolution
+
+When nanoclaw sends a reply, the request body contains `to_user_id` (with JID suffix) and `text`. The handler resolves which bot to use:
+
+1. Find provider by JID suffix
+2. Optionally read `bot_id` from request body (may be empty)
+3. If `bot_id` is empty: query `ListIMBindings(sandboxID, provider.Name())`, use the first binding
+4. Look up credentials with resolved `(sandboxID, provider, botID)`
+
+This matches the existing WeChat behavior where `bot_id` is usually omitted.
+
+## Per-Sandbox Poller Restoration
+
+In addition to the global `restoreIMBridgePollers()` at startup, a per-sandbox variant is needed for sandbox resume (when PodIP changes):
+
+```go
+func (s *Server) restoreIMBridgePollersForSandbox(sandboxID string) {
+    sbx, ok := s.Sandboxes.Get(sandboxID)
+    if !ok || sbx.PodIP == "" { return }
+
+    for _, provider := range s.IMBridge.Providers() {
+        bindings, _ := s.DB.GetActiveBindings(provider.Name())
+        for _, b := range bindings {
+            if b.SandboxID != sandboxID { continue }
+            s.IMBridge.StartPoller(BridgeBinding{
+                Provider:    provider,
+                Credentials: Credentials{...},
+                Cursor:      b.Cursor,
+                PodIP:       sbx.PodIP,
+                BridgeSecret: sbx.NanoclawBridgeSecret,
+            })
+        }
+    }
+}
+```
+
+Called from `handleResumeSandbox` after the pod is ready and PodIP is known.
+
+## Old Table Retention
+
+The migration does NOT drop `sandbox_weixin_bindings` or `weixin_context_tokens`. These tables are kept for rollback safety. A future migration (after the unified bridge is stable) will drop them.
+
 ## Migration Strategy
 
-1. **Deploy agentserver first** — new unified tables + routes. Old routes kept as aliases. Existing WeChat bindings migrated automatically.
-2. **Deploy nanoclaw second** — new image with telegram channel + bridge-server. Reads `NANOCLAW_BRIDGE_URL` (new) with fallback to `NANOCLAW_WEIXIN_BRIDGE_URL` (old).
+1. **Deploy agentserver first** — new unified tables + routes. Old routes kept as aliases. Existing WeChat bindings migrated to `sandbox_im_bindings` automatically. Old tables retained.
+2. **Deploy nanoclaw second** — new image with telegram channel + bridge-server. Reads `NANOCLAW_BRIDGE_URL` (new) with fallback to `NANOCLAW_WEIXIN_BRIDGE_URL` (old). Weixin channel accepts both suffixed and unsuffixed JIDs.
 3. **After all pods updated** — remove legacy route aliases and `NANOCLAW_WEIXIN_BRIDGE_URL` env var from `BuildNanoclawConfig`.
+4. **After stable** — drop old `sandbox_weixin_bindings` and `weixin_context_tokens` tables.
