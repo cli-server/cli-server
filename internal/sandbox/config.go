@@ -23,7 +23,7 @@ type Config struct {
 	OpenclawWeixinEnabled    bool
 	NanoclawImage            string
 	NanoclawRuntimeClassName string
-	NanoclawWeixinEnabled    bool
+	NanoclawIMBridgeEnabled  bool
 	NanoclawBridgeBaseURL    string // agentserver internal URL for NanoClaw pods to call back (e.g. "http://agentserver:8080")
 }
 
@@ -43,7 +43,7 @@ func DefaultConfig() Config {
 		OpenclawWeixinEnabled:    os.Getenv("OPENCLAW_WEIXIN_ENABLED") == "true",
 		NanoclawImage:            os.Getenv("NANOCLAW_IMAGE"),
 		NanoclawRuntimeClassName: os.Getenv("NANOCLAW_RUNTIME_CLASS"),
-		NanoclawWeixinEnabled:    os.Getenv("NANOCLAW_WEIXIN_ENABLED") == "true",
+		NanoclawIMBridgeEnabled:  os.Getenv("NANOCLAW_IM_BRIDGE_ENABLED") == "true" || os.Getenv("NANOCLAW_WEIXIN_ENABLED") == "true",
 		NanoclawBridgeBaseURL:    os.Getenv("NANOCLAW_BRIDGE_BASE_URL"),
 	}
 }
@@ -244,6 +244,8 @@ func BuildNanoclawConfig(proxyBaseURL, proxyToken, assistantName string, weixinB
 	lines = append(lines, "ASSISTANT_NAME="+assistantName)
 	lines = append(lines, "NANOCLAW_NO_CONTAINER=true")
 	if weixinBridgeURL != "" {
+		lines = append(lines, "NANOCLAW_BRIDGE_URL="+weixinBridgeURL)
+		// Backwards compat (remove after all pods updated)
 		lines = append(lines, "NANOCLAW_WEIXIN_BRIDGE_URL="+weixinBridgeURL)
 	}
 	if bridgeSecret != "" {

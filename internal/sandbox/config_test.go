@@ -19,16 +19,22 @@ func TestBuildNanoclawConfig_Basic(t *testing.T) {
 	if !strings.Contains(result, "NANOCLAW_NO_CONTAINER=true") {
 		t.Errorf("missing NANOCLAW_NO_CONTAINER, got: %s", result)
 	}
+	if strings.Contains(result, "NANOCLAW_BRIDGE_URL") {
+		t.Errorf("should not contain NANOCLAW_BRIDGE_URL when IM bridge disabled")
+	}
 	if strings.Contains(result, "NANOCLAW_WEIXIN_BRIDGE_URL") {
-		t.Errorf("should not contain NANOCLAW_WEIXIN_BRIDGE_URL when weixin disabled")
+		t.Errorf("should not contain NANOCLAW_WEIXIN_BRIDGE_URL when IM bridge disabled")
 	}
 }
 
 func TestBuildNanoclawConfig_WithWeixin(t *testing.T) {
 	result := BuildNanoclawConfig("https://proxy.example.com", "tok-123", "Andy",
 		"https://bridge.example.com/weixin", "secret-abc", "", "")
+	if !strings.Contains(result, "NANOCLAW_BRIDGE_URL=https://bridge.example.com/weixin") {
+		t.Errorf("missing NANOCLAW_BRIDGE_URL, got: %s", result)
+	}
 	if !strings.Contains(result, "NANOCLAW_WEIXIN_BRIDGE_URL=https://bridge.example.com/weixin") {
-		t.Errorf("missing NANOCLAW_WEIXIN_BRIDGE_URL, got: %s", result)
+		t.Errorf("missing NANOCLAW_WEIXIN_BRIDGE_URL (backwards compat), got: %s", result)
 	}
 	if !strings.Contains(result, "NANOCLAW_BRIDGE_SECRET=secret-abc") {
 		t.Errorf("missing NANOCLAW_BRIDGE_SECRET, got: %s", result)

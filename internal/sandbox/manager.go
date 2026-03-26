@@ -373,10 +373,10 @@ exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 		containerPort = 3002 // Health/bridge endpoint
 		weixinBridgeURL := ""
 		bridgeSecret := ""
-		if m.cfg.NanoclawWeixinEnabled && opts.NanoclawBridgeSecret != "" {
+		if m.cfg.NanoclawIMBridgeEnabled && opts.NanoclawBridgeSecret != "" {
 			bridgeSecret = opts.NanoclawBridgeSecret
 			if m.cfg.NanoclawBridgeBaseURL != "" && opts.SandboxID != "" {
-				weixinBridgeURL = m.cfg.NanoclawBridgeBaseURL + "/api/internal/nanoclaw/" + opts.SandboxID + "/weixin/send"
+				weixinBridgeURL = m.cfg.NanoclawBridgeBaseURL + "/api/internal/nanoclaw/" + opts.SandboxID + "/im/send"
 			}
 		}
 		nanoclawCfg := BuildNanoclawConfig(
