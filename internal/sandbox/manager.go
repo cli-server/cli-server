@@ -323,10 +323,15 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 	if opts.BYOKBaseURL != "" {
 		containerEnv = append(containerEnv,
 			corev1.EnvVar{Name: "ANTHROPIC_API_KEY", Value: opts.BYOKAPIKey},
+			corev1.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: opts.BYOKBaseURL},
 		)
 	} else if opts.ProxyToken != "" && proxyBaseURL != "" {
+		// NanoClaw's agent-runner inherits process.env (not .env file values).
+		// ANTHROPIC_BASE_URL must be a real env var so Claude Code can find the proxy.
+		// Strip /v1 because the Anthropic SDK appends it automatically.
 		containerEnv = append(containerEnv,
 			corev1.EnvVar{Name: "ANTHROPIC_API_KEY", Value: opts.ProxyToken},
+			corev1.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: strings.TrimSuffix(proxyBaseURL, "/v1")},
 		)
 	}
 
