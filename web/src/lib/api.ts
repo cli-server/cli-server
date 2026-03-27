@@ -34,6 +34,12 @@ export interface TelegramConfigureResult {
   bot_name: string
 }
 
+export interface MatrixConfigureResult {
+  connected: boolean
+  bot_id: string
+  user_id: string
+}
+
 export interface Sandbox {
   id: string
   workspace_id: string
@@ -403,6 +409,24 @@ export async function telegramConfigure(sandboxId: string, botToken: string): Pr
 export async function telegramDisconnect(sandboxId: string): Promise<void> {
   const res = await fetch(`/api/sandboxes/${sandboxId}/im/telegram`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to disconnect Telegram')
+}
+
+export async function matrixConfigure(sandboxId: string, homeserverUrl: string, accessToken: string): Promise<MatrixConfigureResult> {
+  const res = await fetch(`/api/sandboxes/${sandboxId}/im/matrix/configure`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ homeserver_url: homeserverUrl, access_token: accessToken }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Failed to configure Matrix bot')
+  }
+  return res.json()
+}
+
+export async function matrixDisconnect(sandboxId: string): Promise<void> {
+  const res = await fetch(`/api/sandboxes/${sandboxId}/im/matrix`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to disconnect Matrix')
 }
 
 export async function listIMBindings(sandboxId: string): Promise<{ bindings: IMBinding[] }> {

@@ -40,6 +40,7 @@ import {
 import { ConfirmModal } from './Modals'
 import { WeixinLoginModal } from './WeixinLoginModal'
 import { TelegramConfigModal } from './TelegramConfigModal'
+import { MatrixConfigModal } from './MatrixConfigModal'
 
 type Tab = 'overview' | 'traces'
 
@@ -131,6 +132,7 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
   const [editName, setEditName] = useState(sandbox.name)
   const [showWeixinLogin, setShowWeixinLogin] = useState(false)
   const [showTelegramConfig, setShowTelegramConfig] = useState(false)
+  const [showMatrixConfig, setShowMatrixConfig] = useState(false)
   const [imBindings, setImBindings] = useState<IMBinding[]>(sandbox.im_bindings || sandbox.weixin_bindings?.map(b => ({ ...b, provider: 'weixin' })) || [])
 
   const refreshIMBindings = useCallback(() => {
@@ -253,13 +255,22 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
                   WeChat
                 </button>
                 {isNanoClaw && (
-                  <button
-                    onClick={() => setShowTelegramConfig(true)}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-colors"
-                  >
-                    <Bot size={13} />
-                    Telegram
-                  </button>
+                  <>
+                    <button
+                      onClick={() => setShowTelegramConfig(true)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-colors"
+                    >
+                      <Bot size={13} />
+                      Telegram
+                    </button>
+                    <button
+                      onClick={() => setShowMatrixConfig(true)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-purple-500/30 bg-purple-500/10 px-3 py-1.5 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-colors"
+                    >
+                      <Hash size={13} />
+                      Matrix
+                    </button>
+                  </>
                 )}
               </>
             )}
@@ -349,6 +360,13 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
         <TelegramConfigModal
           sandboxId={sandbox.id}
           onClose={() => setShowTelegramConfig(false)}
+          onConnected={() => refreshIMBindings()}
+        />
+      )}
+      {showMatrixConfig && (
+        <MatrixConfigModal
+          sandboxId={sandbox.id}
+          onClose={() => setShowMatrixConfig(false)}
           onConnected={() => refreshIMBindings()}
         />
       )}
@@ -483,9 +501,11 @@ function OverviewTab({ sandbox, imBindings, usageData, totals }: {
                   <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${
                     b.provider === 'telegram'
                       ? 'bg-blue-500/10 text-blue-400'
-                      : 'bg-green-500/10 text-green-400'
+                      : b.provider === 'matrix'
+                        ? 'bg-purple-500/10 text-purple-400'
+                        : 'bg-green-500/10 text-green-400'
                   }`}>
-                    {b.provider === 'telegram' ? 'Telegram' : 'WeChat'}
+                    {b.provider === 'telegram' ? 'Telegram' : b.provider === 'matrix' ? 'Matrix' : 'WeChat'}
                   </span>
                   <div className="flex flex-col gap-0.5">
                     <span className="text-xs font-mono text-[var(--foreground)]">{b.bot_id}</span>
