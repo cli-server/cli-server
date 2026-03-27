@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"hash/fnv"
 	"log"
 	"os"
@@ -379,8 +380,13 @@ exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 				imBridgeURL = m.cfg.NanoclawBridgeBaseURL + "/api/internal/nanoclaw/" + opts.SandboxID + "/im/send"
 			}
 		}
+		// NanoClaw uses the Anthropic SDK (via Claude Code) which appends
+		// /v1/messages to ANTHROPIC_BASE_URL. The proxyBaseURL from opencode
+		// config already includes /v1 (opencode appends /messages directly).
+		// Use the raw LLM proxy URL without path for NanoClaw.
+		nanoclawProxyURL := strings.TrimSuffix(proxyBaseURL, "/v1")
 		nanoclawCfg := BuildNanoclawConfig(
-			proxyBaseURL, opts.ProxyToken, "Andy",
+			nanoclawProxyURL, opts.ProxyToken, "Andy",
 			imBridgeURL, bridgeSecret,
 			opts.BYOKBaseURL, opts.BYOKAPIKey,
 		)
