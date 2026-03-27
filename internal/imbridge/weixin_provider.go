@@ -39,7 +39,12 @@ func (p *WeixinProvider) Poll(ctx context.Context, creds *Credentials, cursor st
 		if m.FromUserID == "" {
 			continue
 		}
+
+		// Extract text, falling back to media descriptions for non-text messages.
 		text := weixin.ExtractText(m)
+		if text == "" {
+			text = describeWeixinMedia(m.ItemList)
+		}
 		if text == "" {
 			continue
 		}
@@ -58,6 +63,31 @@ func (p *WeixinProvider) Poll(ctx context.Context, creds *Credentials, cursor st
 	}
 
 	return &PollResult{Messages: msgs, NewCursor: resp.GetUpdatesBuf}, nil
+}
+
+// describeWeixinMedia returns a text description for non-text message items.
+// Uses speech-to-text for voice messages and file names for file attachments,
+// matching openclaw-weixin's inbound processing.
+func describeWeixinMedia(items []weixin.MessageItem) string {
+	for _, item := range items {
+		switch item.Type {
+		case 2: // IMAGE
+			return "[User sent an image]"
+		case 3: // VOICE
+			if item.VoiceItem != nil && item.VoiceItem.Text != "" {
+				return "[Voice message] " + item.VoiceItem.Text
+			}
+			return "[User sent a voice message]"
+		case 4: // FILE
+			if item.FileItem != nil && item.FileItem.FileName != "" {
+				return "[User sent a file: " + item.FileItem.FileName + "]"
+			}
+			return "[User sent a file]"
+		case 5: // VIDEO
+			return "[User sent a video]"
+		}
+	}
+	return ""
 }
 
 func (p *WeixinProvider) Send(ctx context.Context, creds *Credentials, toUserID, text string, meta map[string]string) error {

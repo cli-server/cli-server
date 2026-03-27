@@ -63,11 +63,23 @@ type MessageItem struct {
 	Type      int        `json:"type,omitempty"` // 1=TEXT, 2=IMAGE, 3=VOICE, 4=FILE, 5=VIDEO
 	TextItem  *TextItem  `json:"text_item,omitempty"`
 	ImageItem *ImageItem `json:"image_item,omitempty"`
+	VoiceItem *VoiceItem `json:"voice_item,omitempty"`
+	FileItem  *FileItem  `json:"file_item,omitempty"`
 }
 
 // TextItem holds the text content of a TEXT message item.
 type TextItem struct {
 	Text string `json:"text,omitempty"`
+}
+
+// VoiceItem holds voice message data. Text is the speech-to-text transcription.
+type VoiceItem struct {
+	Text string `json:"text,omitempty"` // speech-to-text content
+}
+
+// FileItem holds file attachment metadata.
+type FileItem struct {
+	FileName string `json:"file_name,omitempty"`
 }
 
 // ImageItem holds the image data for an IMAGE message item.
