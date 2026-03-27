@@ -39,10 +39,31 @@ type TelegramUpdate struct {
 
 // TelegramMessage represents a Telegram message.
 type TelegramMessage struct {
-	MessageID int64         `json:"message_id"`
-	From      *TelegramUser `json:"from"`
-	Chat      TelegramChat  `json:"chat"`
-	Text      string        `json:"text"`
+	MessageID int64            `json:"message_id"`
+	From      *TelegramUser    `json:"from"`
+	Chat      TelegramChat     `json:"chat"`
+	Text      string           `json:"text"`
+	Caption   string           `json:"caption"`
+	Photo     []TelegramPhoto  `json:"photo"`
+	Document  *TelegramDocument `json:"document"`
+}
+
+// TelegramPhoto represents a photo size in a Telegram message.
+type TelegramPhoto struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	FileSize     int    `json:"file_size"`
+}
+
+// TelegramDocument represents a document/file in a Telegram message.
+type TelegramDocument struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	FileName     string `json:"file_name"`
+	MimeType     string `json:"mime_type"`
+	FileSize     int    `json:"file_size"`
 }
 
 // TelegramUser represents a Telegram user.

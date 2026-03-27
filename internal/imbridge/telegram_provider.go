@@ -44,11 +44,34 @@ func (p *TelegramProvider) Poll(ctx context.Context, creds *Credentials, cursor 
 	var msgs []InboundMessage
 	var maxID int64
 	for _, u := range updates {
-		if u.Message == nil || u.Message.Text == "" {
+		if u.Message == nil {
 			continue
 		}
 		if u.UpdateID > maxID {
 			maxID = u.UpdateID
+		}
+
+		// Extract text: prefer Text, fall back to Caption (for photos/documents).
+		text := u.Message.Text
+		if text == "" {
+			text = u.Message.Caption
+		}
+
+		// Describe media if present (so the agent knows what was sent).
+		if len(u.Message.Photo) > 0 && text == "" {
+			text = "[User sent a photo]"
+		} else if len(u.Message.Photo) > 0 {
+			text = "[Photo] " + text
+		}
+		if u.Message.Document != nil && text == "" {
+			text = fmt.Sprintf("[User sent a file: %s]", u.Message.Document.FileName)
+		} else if u.Message.Document != nil {
+			text = fmt.Sprintf("[File: %s] %s", u.Message.Document.FileName, text)
+		}
+
+		// Skip messages with no content at all.
+		if text == "" {
+			continue
 		}
 
 		senderName := ""
@@ -64,7 +87,7 @@ func (p *TelegramProvider) Poll(ctx context.Context, creds *Credentials, cursor 
 		msgs = append(msgs, InboundMessage{
 			FromUserID: fmt.Sprintf("%d", u.Message.Chat.ID),
 			SenderName: senderName,
-			Text:       u.Message.Text,
+			Text:       text,
 			IsGroup:    isGroup,
 		})
 	}
