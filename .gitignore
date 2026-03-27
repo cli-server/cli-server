@@ -7,3 +7,4 @@ agentserver/dist/
 *.tgz
 AuthKey_*.p8
 .worktrees/
+.claude/worktrees/
