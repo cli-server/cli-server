@@ -65,6 +65,20 @@ type MessageItem struct {
 	ImageItem *ImageItem `json:"image_item,omitempty"`
 	VoiceItem *VoiceItem `json:"voice_item,omitempty"`
 	FileItem  *FileItem  `json:"file_item,omitempty"`
+	VideoItem *VideoItem `json:"video_item,omitempty"`
+	RefMsg    *RefMessage `json:"ref_msg,omitempty"`
+}
+
+// VideoItem holds video metadata.
+type VideoItem struct {
+	Media     *CDNMedia `json:"media,omitempty"`
+	VideoSize int       `json:"video_size,omitempty"`
+}
+
+// RefMessage holds a quoted/referenced message.
+type RefMessage struct {
+	MessageItem *MessageItem `json:"message_item,omitempty"`
+	Title       string       `json:"title,omitempty"`
 }
 
 // TextItem holds the text content of a TEXT message item.
@@ -72,21 +86,31 @@ type TextItem struct {
 	Text string `json:"text,omitempty"`
 }
 
-// VoiceItem holds voice message data. Text is the speech-to-text transcription.
+// VoiceItem holds voice message data.
 type VoiceItem struct {
-	Text string `json:"text,omitempty"` // speech-to-text content
+	Media      *CDNMedia `json:"media,omitempty"`
+	EncodeType int       `json:"encode_type,omitempty"`
+	SampleRate int       `json:"sample_rate,omitempty"`
+	PlayTime   int       `json:"playtime,omitempty"`
+	Text       string    `json:"text,omitempty"` // speech-to-text content
 }
 
 // FileItem holds file attachment metadata.
 type FileItem struct {
-	FileName string `json:"file_name,omitempty"`
+	Media    *CDNMedia `json:"media,omitempty"`
+	FileName string    `json:"file_name,omitempty"`
+	Len      string    `json:"len,omitempty"`
 }
 
 // ImageItem holds the image data for an IMAGE message item.
 type ImageItem struct {
-	Media   *CDNMedia `json:"media,omitempty"`
-	AESKey  string    `json:"aeskey,omitempty"` // raw AES-128 key as hex string; preferred over media.aes_key for inbound
-	MidSize int       `json:"mid_size,omitempty"` // ciphertext size
+	Media      *CDNMedia `json:"media,omitempty"`
+	ThumbMedia *CDNMedia `json:"thumb_media,omitempty"`
+	AESKey     string    `json:"aeskey,omitempty"` // raw AES-128 key as hex string; preferred over media.aes_key for inbound
+	URL        string    `json:"url,omitempty"`
+	MidSize    int       `json:"mid_size,omitempty"`
+	ThumbSize  int       `json:"thumb_size,omitempty"`
+	HdSize     int       `json:"hd_size,omitempty"`
 }
 
 // CDNMedia references a file uploaded to iLink CDN.
@@ -606,6 +630,8 @@ func DownloadFromCDN(ctx context.Context, cdnBaseURL, encryptQueryParam string) 
 	if cdnBaseURL == "" {
 		cdnBaseURL = DefaultCDNBaseURL
 	}
+	// Try both URL formats: first as a direct query string parameter,
+	// then with the param name. CDN API may expect either format.
 	dlURL := fmt.Sprintf("%s/download?encrypted_query_param=%s",
 		cdnBaseURL, url.QueryEscape(encryptQueryParam))
 

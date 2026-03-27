@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -42,6 +43,12 @@ func (p *WeixinProvider) Poll(ctx context.Context, creds *Credentials, cursor st
 			continue
 		}
 
+		// Log full message for debugging media issues.
+		if hasMedia(m.ItemList) {
+			msgJSON, _ := json.Marshal(m)
+			log.Printf("imbridge: weixin inbound media message: %s", string(msgJSON))
+		}
+
 		// Extract text, falling back to media descriptions for non-text messages.
 		text := weixin.ExtractText(m)
 		if text == "" {
@@ -75,6 +82,15 @@ func (p *WeixinProvider) Poll(ctx context.Context, creds *Credentials, cursor st
 	return &PollResult{Messages: msgs, NewCursor: resp.GetUpdatesBuf}, nil
 }
 
+func hasMedia(items []weixin.MessageItem) bool {
+	for _, item := range items {
+		if item.Type >= 2 && item.Type <= 5 {
+			return true
+		}
+	}
+	return false
+}
+
 // downloadWeixinMedia attempts to download the first media item from iLink CDN.
 // Returns (data, mediaType) or (nil, "") on failure or no media.
 // Matches openclaw-weixin's downloadMediaFromItem AES key resolution:
@@ -101,11 +117,8 @@ func downloadWeixinMedia(creds *Credentials, items []weixin.MessageItem) ([]byte
 				aesKeyB64 = media.AESKey
 			}
 
-			log.Printf("imbridge: weixin image media: encrypt_query_param=%s aeskey=%s media.aes_key=%s resolved_b64=%s",
-				media.EncryptQueryParam[:min(40, len(media.EncryptQueryParam))],
-				item.ImageItem.AESKey[:min(20, len(item.ImageItem.AESKey))],
-				media.AESKey[:min(20, len(media.AESKey))],
-				aesKeyB64[:min(20, len(aesKeyB64))])
+			itemJSON, _ := json.Marshal(item)
+			log.Printf("imbridge: weixin image item: %s", string(itemJSON))
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			var data []byte
