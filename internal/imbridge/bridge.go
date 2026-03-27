@@ -3,6 +3,7 @@ package imbridge
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -303,6 +304,10 @@ func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, m
 		"content":     msg.Text,
 		"timestamp":   time.Now().UTC().Format(time.RFC3339),
 		"provider":    binding.Provider.Name(),
+	}
+	if len(msg.MediaData) > 0 {
+		payload["media_data"] = base64.StdEncoding.EncodeToString(msg.MediaData)
+		payload["media_type"] = msg.MediaType
 	}
 
 	body, err := json.Marshal(payload)

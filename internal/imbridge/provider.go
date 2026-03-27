@@ -55,4 +55,6 @@ type InboundMessage struct {
 	Text       string
 	IsGroup    bool              // true for group/supergroup chats
 	Metadata   map[string]string // provider-specific state (e.g., weixin context_token)
+	MediaData  []byte            // optional: downloaded media (image/file) binary data
+	MediaType  string            // optional: "image", "voice", "file", "video"
 }

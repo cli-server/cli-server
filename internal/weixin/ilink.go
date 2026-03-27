@@ -600,6 +600,90 @@ func AESECBPaddedSize(plaintextSize int) int {
 	return (plaintextSize/16 + 1) * 16
 }
 
+// DownloadFromCDN downloads a file from the iLink CDN using encrypt_query_param.
+func DownloadFromCDN(ctx context.Context, cdnBaseURL, encryptQueryParam string) ([]byte, error) {
+	if cdnBaseURL == "" {
+		cdnBaseURL = DefaultCDNBaseURL
+	}
+	dlURL := fmt.Sprintf("%s/download?encrypted_query_param=%s",
+		cdnBaseURL, url.QueryEscape(encryptQueryParam))
+
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", dlURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cdn download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("cdn download: status %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+// DecryptAESECB decrypts AES-128-ECB encrypted data with PKCS7 padding.
+func DecryptAESECB(ciphertext, key []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("aes.NewCipher: %w", err)
+	}
+	blockSize := block.BlockSize()
+	if len(ciphertext)%blockSize != 0 {
+		return nil, fmt.Errorf("ciphertext size %d is not a multiple of block size %d", len(ciphertext), blockSize)
+	}
+
+	plaintext := make([]byte, len(ciphertext))
+	for i := 0; i < len(ciphertext); i += blockSize {
+		block.Decrypt(plaintext[i:i+blockSize], ciphertext[i:i+blockSize])
+	}
+
+	// Remove PKCS7 padding
+	if len(plaintext) == 0 {
+		return plaintext, nil
+	}
+	padding := int(plaintext[len(plaintext)-1])
+	if padding > blockSize || padding == 0 {
+		return nil, fmt.Errorf("invalid PKCS7 padding: %d", padding)
+	}
+	return plaintext[:len(plaintext)-padding], nil
+}
+
+// DownloadAndDecryptMedia downloads and decrypts a media file from iLink CDN.
+// aesKeyBase64 is the base64-encoded AES key from the CDNMedia.aes_key field.
+// Also supports hex-encoded keys wrapped in base64 (32 hex chars).
+func DownloadAndDecryptMedia(ctx context.Context, cdnBaseURL, encryptQueryParam, aesKeyBase64 string) ([]byte, error) {
+	// Parse AES key (supports two formats, matching openclaw-weixin's parseAesKey)
+	decoded, err := base64.StdEncoding.DecodeString(aesKeyBase64)
+	if err != nil {
+		return nil, fmt.Errorf("decode aes key: %w", err)
+	}
+	var aesKey []byte
+	if len(decoded) == 16 {
+		aesKey = decoded
+	} else if len(decoded) == 32 {
+		// hex-encoded: base64 → hex string → raw bytes
+		aesKey, err = hex.DecodeString(string(decoded))
+		if err != nil {
+			return nil, fmt.Errorf("decode hex aes key: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("aes key must be 16 raw bytes or 32-char hex, got %d bytes", len(decoded))
+	}
+
+	encrypted, err := DownloadFromCDN(ctx, cdnBaseURL, encryptQueryParam)
+	if err != nil {
+		return nil, err
+	}
+
+	return DecryptAESECB(encrypted, aesKey)
+}
+
 // ExtractText extracts the text content from a WeixinMessage.
 func ExtractText(msg WeixinMessage) string {
 	for _, item := range msg.ItemList {

@@ -54,15 +54,50 @@ func (p *WeixinProvider) Poll(ctx context.Context, creds *Credentials, cursor st
 			meta["context_token"] = m.ContextToken
 		}
 
-		msgs = append(msgs, InboundMessage{
+		msg := InboundMessage{
 			FromUserID: m.FromUserID,
 			SenderName: m.FromUserID,
 			Text:       text,
 			Metadata:   meta,
-		})
+		}
+
+		// Download image from CDN if present (best-effort, don't block on failure).
+		if imageData, mediaType := downloadWeixinMedia(creds, m.ItemList); imageData != nil {
+			msg.MediaData = imageData
+			msg.MediaType = mediaType
+		}
+
+		msgs = append(msgs, msg)
 	}
 
 	return &PollResult{Messages: msgs, NewCursor: resp.GetUpdatesBuf}, nil
+}
+
+// downloadWeixinMedia attempts to download the first media item from iLink CDN.
+// Returns (data, mediaType) or (nil, "") on failure or no media.
+func downloadWeixinMedia(creds *Credentials, items []weixin.MessageItem) ([]byte, string) {
+	for _, item := range items {
+		if item.Type == 2 && item.ImageItem != nil && item.ImageItem.Media != nil {
+			// IMAGE: download and decrypt from CDN
+			media := item.ImageItem.Media
+			if media.EncryptQueryParam == "" {
+				continue
+			}
+			aesKey := media.AESKey
+			if aesKey == "" {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			data, err := weixin.DownloadAndDecryptMedia(ctx, "", media.EncryptQueryParam, aesKey)
+			cancel()
+			if err != nil {
+				log.Printf("imbridge: weixin image download failed: %v", err)
+				continue
+			}
+			return data, "image"
+		}
+	}
+	return nil, ""
 }
 
 // describeWeixinMedia returns a text description for non-text message items.
