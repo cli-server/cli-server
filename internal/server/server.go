@@ -105,6 +105,7 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 	s.IMBridge = imbridge.NewBridge(database, sandboxStore, execCmd, []imbridge.Provider{
 		&imbridge.WeixinProvider{},
 		&imbridge.TelegramProvider{},
+		&imbridge.MatrixProvider{},
 	})
 	s.restoreIMBridgePollers()
 	if s.OIDC != nil {
@@ -243,6 +244,8 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/sandboxes/{id}/im/weixin/qr-wait", s.handleIMWeixinQRWait)
 		r.Post("/api/sandboxes/{id}/im/telegram/configure", s.handleIMTelegramConfigure)
 		r.Delete("/api/sandboxes/{id}/im/telegram", s.handleIMTelegramDisconnect)
+		r.Post("/api/sandboxes/{id}/im/matrix/configure", s.handleIMMatrixConfigure)
+		r.Delete("/api/sandboxes/{id}/im/matrix", s.handleIMMatrixDisconnect)
 		r.Get("/api/sandboxes/{id}/im/bindings", s.handleListIMBindings)
 		// Legacy WeChat routes
 		r.Post("/api/sandboxes/{id}/weixin/qr-start", s.handleIMWeixinQRStart)
@@ -2219,6 +2222,14 @@ func (s *Server) handleNanoclawIMSend(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "failed to send photo: "+err.Error(), http.StatusBadGateway)
 				return
 			}
+		case "matrix":
+			// Matrix: upload to content repository → send m.image event
+			roomID := strings.TrimSuffix(userID, "@matrix")
+			if err := imbridge.MatrixSendImage(r.Context(), baseURL, botToken, roomID, mediaData, reqMeta.Text); err != nil {
+				log.Printf("nanoclaw im send image: failed sandbox=%s to=%s: %v", sandboxID, userID, err)
+				http.Error(w, "failed to send image: "+err.Error(), http.StatusBadGateway)
+				return
+			}
 		default:
 			http.Error(w, "image sending not supported for provider: "+provider.Name(), http.StatusBadRequest)
 			return
@@ -2333,6 +2344,110 @@ func (s *Server) handleIMTelegramDisconnect(w http.ResponseWriter, r *http.Reque
 		}
 		if err := s.DB.DeleteIMBinding(id, "telegram", b.BotID); err != nil {
 			log.Printf("telegram disconnect: delete binding: %v", err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "disconnected"})
+}
+
+// handleIMMatrixConfigure configures a Matrix bot for a nanoclaw sandbox.
+func (s *Server) handleIMMatrixConfigure(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sbx, ok := s.Sandboxes.Get(id)
+	if !ok {
+		http.Error(w, "sandbox not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
+		return
+	}
+	if sbx.Type != "nanoclaw" {
+		http.Error(w, "matrix binding is only available for nanoclaw sandboxes", http.StatusBadRequest)
+		return
+	}
+	if sbx.Status != "running" {
+		http.Error(w, "sandbox is not running", http.StatusConflict)
+		return
+	}
+
+	var req struct {
+		HomeserverURL string `json:"homeserver_url"`
+		AccessToken   string `json:"access_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.HomeserverURL == "" {
+		http.Error(w, "homeserver_url is required", http.StatusBadRequest)
+		return
+	}
+	if req.AccessToken == "" {
+		http.Error(w, "access_token is required", http.StatusBadRequest)
+		return
+	}
+
+	userID, err := imbridge.MatrixWhoami(r.Context(), req.HomeserverURL, req.AccessToken)
+	if err != nil {
+		log.Printf("matrix configure: whoami failed: %v", err)
+		http.Error(w, "invalid credentials: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	botID := userID
+	if err := s.DB.CreateIMBinding(id, "matrix", botID, ""); err != nil {
+		log.Printf("matrix configure: create binding: %v", err)
+		http.Error(w, "failed to save binding", http.StatusInternalServerError)
+		return
+	}
+	if err := s.DB.SaveIMCredentials(id, "matrix", botID, req.AccessToken, req.HomeserverURL); err != nil {
+		log.Printf("matrix configure: save credentials: %v", err)
+		http.Error(w, "failed to save credentials", http.StatusInternalServerError)
+		return
+	}
+
+	if sbx.PodIP != "" && s.IMBridge != nil {
+		s.IMBridge.StartPoller(imbridge.BridgeBinding{
+			Provider:     &imbridge.MatrixProvider{},
+			Credentials:  imbridge.Credentials{SandboxID: id, BotID: botID, BotToken: req.AccessToken, BaseURL: req.HomeserverURL},
+			Cursor:       "",
+			BridgeSecret: sbx.NanoclawBridgeSecret,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"connected": true,
+		"bot_id":    botID,
+		"user_id":   userID,
+	})
+}
+
+// handleIMMatrixDisconnect disconnects a Matrix bot from a sandbox.
+func (s *Server) handleIMMatrixDisconnect(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sbx, ok := s.Sandboxes.Get(id)
+	if !ok {
+		http.Error(w, "sandbox not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
+		return
+	}
+
+	bindings, err := s.DB.ListIMBindings(id, "matrix")
+	if err != nil || len(bindings) == 0 {
+		http.Error(w, "no matrix binding found", http.StatusNotFound)
+		return
+	}
+
+	for _, b := range bindings {
+		if s.IMBridge != nil {
+			s.IMBridge.StopPoller(id, "matrix", b.BotID)
+		}
+		if err := s.DB.DeleteIMBinding(id, "matrix", b.BotID); err != nil {
+			log.Printf("matrix disconnect: delete binding: %v", err)
 		}
 	}
 
