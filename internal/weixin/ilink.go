@@ -85,6 +85,7 @@ type FileItem struct {
 // ImageItem holds the image data for an IMAGE message item.
 type ImageItem struct {
 	Media   *CDNMedia `json:"media,omitempty"`
+	AESKey  string    `json:"aeskey,omitempty"` // raw AES-128 key as hex string; preferred over media.aes_key for inbound
 	MidSize int       `json:"mid_size,omitempty"` // ciphertext size
 }
 

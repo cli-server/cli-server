@@ -2,6 +2,8 @@ package imbridge
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"time"
@@ -75,20 +77,39 @@ func (p *WeixinProvider) Poll(ctx context.Context, creds *Credentials, cursor st
 
 // downloadWeixinMedia attempts to download the first media item from iLink CDN.
 // Returns (data, mediaType) or (nil, "") on failure or no media.
+// Matches openclaw-weixin's downloadMediaFromItem AES key resolution:
+// prefers image_item.aeskey (hex) over image_item.media.aes_key (base64).
 func downloadWeixinMedia(creds *Credentials, items []weixin.MessageItem) ([]byte, string) {
 	for _, item := range items {
 		if item.Type == 2 && item.ImageItem != nil && item.ImageItem.Media != nil {
-			// IMAGE: download and decrypt from CDN
 			media := item.ImageItem.Media
 			if media.EncryptQueryParam == "" {
 				continue
 			}
-			aesKey := media.AESKey
-			if aesKey == "" {
-				continue
+
+			// Resolve AES key: prefer image_item.aeskey (hex) → convert to base64.
+			// Fallback to media.aes_key (already base64).
+			var aesKeyB64 string
+			if item.ImageItem.AESKey != "" {
+				// hex → raw bytes → base64 (matching openclaw-weixin)
+				rawKey, err := hex.DecodeString(item.ImageItem.AESKey)
+				if err == nil {
+					aesKeyB64 = base64.StdEncoding.EncodeToString(rawKey)
+				}
 			}
+			if aesKeyB64 == "" {
+				aesKeyB64 = media.AESKey
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			data, err := weixin.DownloadAndDecryptMedia(ctx, "", media.EncryptQueryParam, aesKey)
+			var data []byte
+			var err error
+			if aesKeyB64 != "" {
+				data, err = weixin.DownloadAndDecryptMedia(ctx, "", media.EncryptQueryParam, aesKeyB64)
+			} else {
+				// No AES key — download plain (unencrypted)
+				data, err = weixin.DownloadFromCDN(ctx, "", media.EncryptQueryParam)
+			}
 			cancel()
 			if err != nil {
 				log.Printf("imbridge: weixin image download failed: %v", err)
