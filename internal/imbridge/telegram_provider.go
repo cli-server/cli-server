@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -30,6 +31,12 @@ func (p *TelegramProvider) Poll(ctx context.Context, creds *Credentials, cursor 
 		// Convert rate limit errors to backoff
 		if rle, ok := err.(*RateLimitError); ok {
 			return &PollResult{ShouldBackoff: rle.RetryAfter}, nil
+		}
+		// 401/403 = invalid or revoked token. Stop polling permanently.
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "API error 401") || strings.Contains(errMsg, "API error 403") {
+			log.Printf("imbridge: telegram auth failed, stopping poller: %v", err)
+			return &PollResult{ShouldBackoff: 24 * time.Hour}, nil
 		}
 		return nil, err
 	}
