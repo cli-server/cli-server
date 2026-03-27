@@ -101,6 +101,12 @@ func downloadWeixinMedia(creds *Credentials, items []weixin.MessageItem) ([]byte
 				aesKeyB64 = media.AESKey
 			}
 
+			log.Printf("imbridge: weixin image media: encrypt_query_param=%s aeskey=%s media.aes_key=%s resolved_b64=%s",
+				media.EncryptQueryParam[:min(40, len(media.EncryptQueryParam))],
+				item.ImageItem.AESKey[:min(20, len(item.ImageItem.AESKey))],
+				media.AESKey[:min(20, len(media.AESKey))],
+				aesKeyB64[:min(20, len(aesKeyB64))])
+
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			var data []byte
 			var err error
