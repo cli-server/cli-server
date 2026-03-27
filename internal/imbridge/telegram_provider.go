@@ -96,6 +96,8 @@ func (p *TelegramProvider) StartTyping(ctx context.Context, creds *Credentials, 
 		// Send initial typing action immediately.
 		if err := TelegramSendChatAction(ctx, baseURL, creds.BotToken, chatID, "typing"); err != nil {
 			log.Printf("imbridge: telegram sendChatAction failed for %s: %v", userID, err)
+		} else {
+			log.Printf("imbridge: telegram typing started for %s (chatID=%d)", userID, chatID)
 		}
 
 		ticker := time.NewTicker(5 * time.Second)
