@@ -319,6 +319,15 @@ func SendTextMessage(ctx context.Context, apiBaseURL, botToken, toUserID, text, 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("ilink sendmessage: status %d", resp.StatusCode)
 	}
+
+	// Check response body for API-level errors (iLink returns HTTP 200 with ret != 0 on failure).
+	var result struct {
+		Ret    int    `json:"ret"`
+		ErrMsg string `json:"errmsg"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil && result.Ret != 0 {
+		return fmt.Errorf("ilink sendmessage: ret=%d errmsg=%s", result.Ret, result.ErrMsg)
+	}
 	return nil
 }
 
