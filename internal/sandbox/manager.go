@@ -360,11 +360,29 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 			cfgAPIKey = opts.BYOKAPIKey
 			cfgModels = opts.BYOKModels
 		}
-		openclawCfg := BuildOpenclawConfig(cfgBaseURL, cfgAPIKey, opts.OpenclawToken, m.cfg.OpenclawWeixinEnabled, cfgModels)
-		containerCmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && cat > ~/.openclaw/openclaw.json << 'CFGEOF'
-` + openclawCfg + `
-CFGEOF
-exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
+		openclawCfg := BuildOpenclawConfig(cfgBaseURL, cfgAPIKey, opts.OpenclawToken, cfgModels)
+		// Merge our gateway/models config into the image's existing openclaw.json
+		// (which contains plugin install metadata) instead of overwriting it.
+		containerCmd = []string{"sh", "-c", `mkdir -p ~/.openclaw && node -e "
+const fs = require('fs');
+const path = require('os').homedir() + '/.openclaw/openclaw.json';
+let existing = {};
+try { existing = JSON.parse(fs.readFileSync(path, 'utf8')); } catch {}
+const inject = JSON.parse(process.env.__OPENCLAW_INJECT_CFG);
+// Deep-merge: inject keys override existing, but preserve plugins/channels.
+Object.assign(existing, inject);
+if (inject.gateway) {
+  existing.gateway = existing.gateway || {};
+  Object.assign(existing.gateway, inject.gateway);
+  if (inject.gateway.controlUi) {
+    existing.gateway.controlUi = existing.gateway.controlUi || {};
+    Object.assign(existing.gateway.controlUi, inject.gateway.controlUi);
+  }
+}
+if (inject.models) existing.models = inject.models;
+fs.writeFileSync(path, JSON.stringify(existing, null, 2));
+" && exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
+		containerEnv = append(containerEnv, corev1.EnvVar{Name: "__OPENCLAW_INJECT_CFG", Value: openclawCfg})
 		// Ensure ~ resolves to the PVC mount so credentials and conversation
 		// data persist across pause/resume.
 		containerEnv = append(containerEnv, corev1.EnvVar{Name: "HOME", Value: "/home/agent"})
@@ -444,11 +462,17 @@ exec node openclaw.mjs gateway --allow-unconfigured --bind lan`}
 		})
 	}
 
-	initScript := `
+	// Determine the home directory to seed from: openclaw uses /home/node,
+	// all other images use /home/agent.
+	seedHome := "/home/agent"
+	if opts.SandboxType == "openclaw" {
+		seedHome = "/home/node"
+	}
+	initScript := fmt.Sprintf(`
 set -e
 if [ ! -f /mnt/session-data/.initialized ]; then
-  echo "Seeding session PVC from /home/agent..."
-  cp -a /home/agent/. /mnt/session-data/ 2>/dev/null || true
+  echo "Seeding session PVC from %s..."
+  cp -a %s/. /mnt/session-data/ 2>/dev/null || true
   touch /mnt/session-data/.initialized
 fi
 # Ensure projects directory exists (workspace PVC mount point)
@@ -457,7 +481,7 @@ mkdir -p /mnt/session-data/projects
 mkdir -p /mnt/session-data/nanoclaw/store /mnt/session-data/nanoclaw/data
 # chown after mkdir so all directories are owned by UID 1000
 chown -R 1000:1000 /mnt/session-data
-`
+`, seedHome, seedHome)
 	// Add chown for each workspace volume.
 	for i := range opts.WorkspaceVolumes {
 		initScript += fmt.Sprintf("mkdir -p /mnt/ws-vol-%d\nchown -R 1000:1000 /mnt/ws-vol-%d\n", i, i)

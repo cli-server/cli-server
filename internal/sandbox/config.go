@@ -128,7 +128,7 @@ func ExtractProxyBaseURL(configJSON string) string {
 // gateway.auth.token so that the gateway and Control UI share the same secret;
 // without this, OpenClaw v2026.3.12+ auto-generates a random token on startup
 // that won't match the token our proxy injects.
-func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string, weixinEnabled bool, customModels []process.LLMModel) string {
+func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string, customModels []process.LLMModel) string {
 	type modelDef struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
@@ -142,13 +142,6 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string, weixinEn
 	type gatewayAuth struct {
 		Token string `json:"token,omitempty"`
 	}
-	type weixinChannel struct {
-		Enabled bool   `json:"enabled,omitempty"`
-		BaseURL string `json:"baseUrl,omitempty"`
-	}
-	type pluginsConfig struct {
-		Allow []string `json:"allow,omitempty"`
-	}
 	type config struct {
 		Gateway struct {
 			Auth           *gatewayAuth `json:"auth,omitempty"`
@@ -160,10 +153,6 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string, weixinEn
 				DisableDeviceAuth   bool `json:"dangerouslyDisableDeviceAuth,omitempty"`
 			} `json:"controlUi"`
 		} `json:"gateway"`
-		Plugins  *pluginsConfig `json:"plugins,omitempty"`
-		Channels *struct {
-			Weixin weixinChannel `json:"weixin,omitempty"`
-		} `json:"channels,omitempty"`
 		Models *struct {
 			Providers map[string]provider `json:"providers"`
 		} `json:"models,omitempty"`
@@ -180,18 +169,6 @@ func BuildOpenclawConfig(proxyBaseURL, proxyToken, gatewayToken string, weixinEn
 	c.Gateway.ControlUI.AllowInsecureAuth = true
 	c.Gateway.ControlUI.AllowOriginFallback = true
 	c.Gateway.ControlUI.DisableDeviceAuth = true
-
-	if weixinEnabled {
-		c.Plugins = &pluginsConfig{Allow: []string{"weixin"}}
-		c.Channels = &struct {
-			Weixin weixinChannel `json:"weixin,omitempty"`
-		}{
-			Weixin: weixinChannel{
-				Enabled: true,
-				BaseURL: "https://ilinkai.weixin.qq.com",
-			},
-		}
-	}
 
 	if proxyBaseURL != "" && proxyToken != "" {
 		models := []modelDef{
