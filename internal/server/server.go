@@ -1765,7 +1765,7 @@ func (s *Server) restoreIMBridgePollersForSandbox(sandboxID string) {
 
 // restoreOpenclawWeixinCredentials re-injects WeChat credential files into a
 // resumed openclaw pod from saved DB state. Called after the pod is ready
-// during resume so the openclaw-weixin plugin can reconnect to iLink.
+// during resume so the weixin channel can reconnect to iLink.
 func (s *Server) restoreOpenclawWeixinCredentials(sandboxID string) {
 	commander, ok := s.ProcessManager.(execCommander)
 	if !ok {
@@ -1824,19 +1824,19 @@ func (s *Server) restoreOpenclawWeixinCredentials(sandboxID string) {
 		// Write the individual account file. On the last iteration, also write
 		// the combined accounts.json index and poke the config to trigger reload.
 		script := fmt.Sprintf(
-			`mkdir -p ~/.openclaw/openclaw-weixin/accounts && `+
-				`echo %s | base64 -d > ~/.openclaw/openclaw-weixin/accounts/%s.json`,
+			`mkdir -p ~/.openclaw/weixin/accounts && `+
+				`echo %s | base64 -d > ~/.openclaw/weixin/accounts/%s.json`,
 			b64Cred, b.BotID,
 		)
 		if i == len(bindings)-1 {
 			script += fmt.Sprintf(
-				` && echo %s | base64 -d > ~/.openclaw/openclaw-weixin/accounts.json`+
+				` && echo %s | base64 -d > ~/.openclaw/weixin/accounts.json`+
 					` && node -e "`+
 					`const fs=require('fs'),p=require('os').homedir()+'/.openclaw/openclaw.json';`+
 					`const c=JSON.parse(fs.readFileSync(p,'utf8'));`+
 					`c.channels=c.channels||{};`+
-					`c.channels['openclaw-weixin']=c.channels['openclaw-weixin']||{};`+
-					`c.channels['openclaw-weixin']._accountsUpdatedAt=Date.now();`+
+					`c.channels['weixin']=c.channels['weixin']||{};`+
+					`c.channels['weixin']._accountsUpdatedAt=Date.now();`+
 					`fs.writeFileSync(p,JSON.stringify(c,null,2))"`,
 				b64Index,
 			)
@@ -2043,15 +2043,15 @@ func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, re
 	// config file so the gateway's chokidar watcher triggers a channel reload.
 	// (Node.js terminates on SIGHUP, so we cannot use kill -HUP 1.)
 	script := fmt.Sprintf(
-		`mkdir -p ~/.openclaw/openclaw-weixin/accounts && `+
-			`echo %s | base64 -d > ~/.openclaw/openclaw-weixin/accounts/%s.json && `+
-			`echo %s | base64 -d > ~/.openclaw/openclaw-weixin/accounts.json && `+
+		`mkdir -p ~/.openclaw/weixin/accounts && `+
+			`echo %s | base64 -d > ~/.openclaw/weixin/accounts/%s.json && `+
+			`echo %s | base64 -d > ~/.openclaw/weixin/accounts.json && `+
 			`node -e "`+
 			`const fs=require('fs'),p=require('os').homedir()+'/.openclaw/openclaw.json';`+
 			`const c=JSON.parse(fs.readFileSync(p,'utf8'));`+
 			`c.channels=c.channels||{};`+
-			`c.channels['openclaw-weixin']=c.channels['openclaw-weixin']||{};`+
-			`c.channels['openclaw-weixin']._accountsUpdatedAt=Date.now();`+
+			`c.channels['weixin']=c.channels['weixin']||{};`+
+			`c.channels['weixin']._accountsUpdatedAt=Date.now();`+
 			`fs.writeFileSync(p,JSON.stringify(c,null,2))"`,
 		b64Cred, accountID, b64Index,
 	)
