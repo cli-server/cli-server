@@ -1,4 +1,4 @@
-ARG NANOCLAW_VERSION=agentserver-k8s-mode
+ARG NANOCLAW_VERSION=v1.2.42
 FROM node:20-slim AS builder
 
 WORKDIR /app
