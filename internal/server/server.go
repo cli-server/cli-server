@@ -1551,11 +1551,9 @@ func (s *Server) handleResumeSandbox(w http.ResponseWriter, r *http.Request) {
 			s.restoreIMBridgePollersForSandbox(id)
 		}
 
-		// Re-inject WeChat credentials for openclaw sandboxes after resume.
-		// The pod filesystem may have lost credential files; re-create from DB.
-		if ok && sbxNow.Type == "openclaw" {
-			s.restoreOpenclawWeixinCredentials(id)
-		}
+		// WeChat credentials for openclaw sandboxes persist on PVC across
+		// pause/resume, and the config merge preserves plugin metadata.
+		// No re-injection needed.
 	}()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1763,93 +1761,6 @@ func (s *Server) restoreIMBridgePollersForSandbox(sandboxID string) {
 	}
 }
 
-// restoreOpenclawWeixinCredentials re-injects WeChat credential files into a
-// resumed openclaw pod from saved DB state. Called after the pod is ready
-// during resume so the openclaw-weixin plugin can reconnect to iLink.
-func (s *Server) restoreOpenclawWeixinCredentials(sandboxID string) {
-	commander, ok := s.ProcessManager.(execCommander)
-	if !ok {
-		return
-	}
-
-	allBindings, err := s.DB.GetActiveBindingsForSandbox(sandboxID)
-	if err != nil {
-		log.Printf("openclaw weixin restore for %s: failed to query bindings: %v", sandboxID, err)
-		return
-	}
-	// Filter to weixin bindings only — openclaw only supports weixin.
-	var bindings []*db.IMBinding
-	for _, b := range allBindings {
-		if b.Provider == "weixin" {
-			bindings = append(bindings, b)
-		}
-	}
-	if len(bindings) == 0 {
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Build the combined account index.
-	allBotIDs := make([]string, 0, len(bindings))
-	for _, b := range bindings {
-		allBotIDs = append(allBotIDs, b.BotID)
-	}
-	indexJSON, err := json.Marshal(allBotIDs)
-	if err != nil {
-		log.Printf("openclaw weixin restore for %s: marshal index: %v", sandboxID, err)
-		return
-	}
-	b64Index := base64Encode(indexJSON)
-
-	// Write each account credential file, then the combined index, then poke the config.
-	for i, b := range bindings {
-		baseURL := b.BaseURL
-		if baseURL == "" {
-			baseURL = weixin.DefaultAPIBaseURL
-		}
-
-		credJSON, err := json.Marshal(map[string]string{
-			"token":   b.BotToken,
-			"baseUrl": baseURL,
-			"savedAt": time.Now().UTC().Format(time.RFC3339),
-		})
-		if err != nil {
-			log.Printf("openclaw weixin restore for %s: marshal credentials for %s: %v", sandboxID, b.BotID, err)
-			continue
-		}
-		b64Cred := base64Encode(credJSON)
-
-		// Write the individual account file. On the last iteration, also write
-		// the combined accounts.json index and poke the config to trigger reload.
-		script := fmt.Sprintf(
-			`mkdir -p ~/.openclaw/openclaw-weixin/accounts && `+
-				`echo %s | base64 -d > ~/.openclaw/openclaw-weixin/accounts/%s.json`,
-			b64Cred, b.BotID,
-		)
-		if i == len(bindings)-1 {
-			script += fmt.Sprintf(
-				` && echo %s | base64 -d > ~/.openclaw/openclaw-weixin/accounts.json`+
-					` && node -e "`+
-					`const fs=require('fs'),p=require('os').homedir()+'/.openclaw/openclaw.json';`+
-					`const c=JSON.parse(fs.readFileSync(p,'utf8'));`+
-					`c.channels=c.channels||{};`+
-					`c.channels['openclaw-weixin']=c.channels['openclaw-weixin']||{};`+
-					`c.channels['openclaw-weixin']._accountsUpdatedAt=Date.now();`+
-					`fs.writeFileSync(p,JSON.stringify(c,null,2))"`,
-				b64Index,
-			)
-		}
-
-		if _, err := commander.ExecSimple(ctx, sandboxID, []string{"sh", "-c", script}); err != nil {
-			log.Printf("openclaw weixin restore for %s bot %s: exec failed: %v", sandboxID, b.BotID, err)
-		} else {
-			log.Printf("openclaw weixin restore for %s: restored bot %s", sandboxID, b.BotID)
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // WeChat channel QR login
 // ---------------------------------------------------------------------------
@@ -2039,20 +1950,11 @@ func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, re
 	b64Cred := base64Encode(credJSON)
 	b64Index := base64Encode(indexJSON)
 
-	// Decode base64 inside the pod to write safe JSON files, then poke the
-	// config file so the gateway's chokidar watcher triggers a channel reload.
-	// (Node.js terminates on SIGHUP, so we cannot use kill -HUP 1.)
+	// Write credential files to the PVC so they survive restart.
 	script := fmt.Sprintf(
 		`mkdir -p ~/.openclaw/openclaw-weixin/accounts && `+
 			`echo %s | base64 -d > ~/.openclaw/openclaw-weixin/accounts/%s.json && `+
-			`echo %s | base64 -d > ~/.openclaw/openclaw-weixin/accounts.json && `+
-			`node -e "`+
-			`const fs=require('fs'),p=require('os').homedir()+'/.openclaw/openclaw.json';`+
-			`const c=JSON.parse(fs.readFileSync(p,'utf8'));`+
-			`c.channels=c.channels||{};`+
-			`c.channels['openclaw-weixin']=c.channels['openclaw-weixin']||{};`+
-			`c.channels['openclaw-weixin']._accountsUpdatedAt=Date.now();`+
-			`fs.writeFileSync(p,JSON.stringify(c,null,2))"`,
+			`echo %s | base64 -d > ~/.openclaw/openclaw-weixin/accounts.json`,
 		b64Cred, accountID, b64Index,
 	)
 
@@ -2069,6 +1971,26 @@ func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, re
 	if dbErr := s.DB.SaveIMCredentials(sandboxID, "weixin", accountID, result.Token, baseURL); dbErr != nil {
 		log.Printf("weixin: failed to save bot credentials for openclaw: %v", dbErr)
 	}
+
+	// Restart the sandbox so openclaw picks up the new credentials on boot.
+	// This avoids poking the config file which triggers openclaw's
+	// self-restart mechanism and kills the container.
+	log.Printf("weixin: restarting openclaw sandbox %s to load new credentials", sandboxID)
+	if err := s.ProcessManager.Pause(sandboxID); err != nil {
+		log.Printf("weixin: pause sandbox %s failed: %v", sandboxID, err)
+		return nil // credentials are saved, restart can be done manually
+	}
+	if rc, ok := s.ProcessManager.(interface {
+		ResumeContainerWithIP(string) (string, error)
+	}); ok {
+		podIP, err := rc.ResumeContainerWithIP(sandboxID)
+		if err != nil {
+			log.Printf("weixin: resume sandbox %s failed: %v", sandboxID, err)
+		} else if podIP != "" {
+			_ = s.DB.UpdateSandboxPodIP(sandboxID, podIP)
+		}
+	}
+
 	return nil
 }
 
