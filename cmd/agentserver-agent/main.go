@@ -21,6 +21,10 @@ var (
 	autoStart     bool
 	opencodeBin   string
 	opencodePort  int
+
+	// Claude Code specific flags.
+	claudeBin     string
+	claudeWorkDir string
 )
 
 var rootCmd = &cobra.Command{
@@ -161,6 +165,26 @@ var removeCmd = &cobra.Command{
 	},
 }
 
+var claudecodeCmd = &cobra.Command{
+	Use:   "claudecode",
+	Short: "Connect local Claude Code terminal to agentserver",
+	Long: `Register a local Claude Code instance with agentserver and expose its terminal
+via WebSocket tunnel. Users can access the terminal through the web browser at
+claude-{id}.{domain}.
+
+On first run, provide --server and --code to register with the server.
+On subsequent runs, saved credentials are used automatically.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		agent.RunClaudeCode(agent.ClaudeCodeOptions{
+			Server:    server,
+			Code:      code,
+			Name:      name,
+			ClaudeBin: claudeBin,
+			WorkDir:   claudeWorkDir,
+		})
+	},
+}
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the agent version",
@@ -170,7 +194,7 @@ var versionCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(connectCmd, listCmd, removeCmd, versionCmd)
+	rootCmd.AddCommand(connectCmd, claudecodeCmd, listCmd, removeCmd, versionCmd)
 
 	connectCmd.Flags().StringVar(&server, "server", "", "Agent server URL (e.g., https://cli.example.com)")
 	connectCmd.Flags().StringVar(&code, "code", "", "One-time registration code from Web UI")
@@ -181,6 +205,12 @@ func init() {
 	connectCmd.Flags().BoolVar(&autoStart, "auto-start", true, "Automatically start opencode serve")
 	connectCmd.Flags().StringVar(&opencodeBin, "opencode-bin", "opencode", "Path to the opencode binary")
 	connectCmd.Flags().IntVar(&opencodePort, "opencode-port", 4096, "Port to start opencode on")
+
+	claudecodeCmd.Flags().StringVar(&server, "server", "", "Agent server URL (e.g., https://cli.example.com)")
+	claudecodeCmd.Flags().StringVar(&code, "code", "", "One-time registration code from Web UI")
+	claudecodeCmd.Flags().StringVar(&name, "name", "", "Name for this agent (default: hostname)")
+	claudecodeCmd.Flags().StringVar(&claudeBin, "claude-bin", "claude", "Path to the claude binary")
+	claudecodeCmd.Flags().StringVar(&claudeWorkDir, "work-dir", "", "Working directory for Claude Code (default: current directory)")
 
 	removeCmd.Flags().String("workspace", "", "Workspace ID of the agent to remove")
 	removeCmd.Flags().String("dir", "", "Directory of the agent to remove (default: current directory)")

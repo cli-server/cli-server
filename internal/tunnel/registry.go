@@ -3,12 +3,12 @@ package tunnel
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
+	"io"
 	"log"
+	"net"
 	"sync"
-	"time"
 
+	"github.com/hashicorp/yamux"
 	"nhooyr.io/websocket"
 )
 
@@ -25,11 +25,11 @@ func NewRegistry() *Registry {
 	}
 }
 
-// Register adds a tunnel for the given sandbox.
-func (r *Registry) Register(sandboxID string, conn *websocket.Conn) *Tunnel {
-	t := newTunnel(sandboxID, conn)
+// Register accepts a WebSocket connection, wraps it in WSConn + yamux,
+// and registers the resulting Tunnel for the given sandbox.
+func (r *Registry) Register(ctx context.Context, sandboxID string, ws *websocket.Conn) *Tunnel {
+	t := newTunnel(ctx, sandboxID, ws)
 	r.mu.Lock()
-	// Close any existing tunnel for this sandbox.
 	if old, ok := r.tunnels[sandboxID]; ok {
 		old.Close()
 	}
@@ -38,8 +38,8 @@ func (r *Registry) Register(sandboxID string, conn *websocket.Conn) *Tunnel {
 	return t
 }
 
-// Unregister removes the tunnel for the given sandbox (only if it matches the provided tunnel).
-// Returns true if the tunnel was actually removed (i.e. it was still the active one).
+// Unregister removes the tunnel only if it matches the provided instance.
+// Returns true if the tunnel was actually removed.
 func (r *Registry) Unregister(sandboxID string, t *Tunnel) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -50,7 +50,7 @@ func (r *Registry) Unregister(sandboxID string, t *Tunnel) bool {
 	return false
 }
 
-// Get returns the active tunnel for a sandbox, if any.
+// Get returns the active tunnel for a sandbox.
 func (r *Registry) Get(sandboxID string) (*Tunnel, bool) {
 	r.mu.RLock()
 	t, ok := r.tunnels[sandboxID]
@@ -58,184 +58,163 @@ func (r *Registry) Get(sandboxID string) (*Tunnel, bool) {
 	return t, ok
 }
 
-// StreamMessage holds a decoded stream frame header and its binary payload.
-type StreamMessage struct {
-	Header  StreamHeader
-	Payload []byte
-}
-
-// streamWaiter receives StreamMessages for a pending request.
-type streamWaiter struct {
-	ch chan *StreamMessage
-}
-
-// Tunnel represents an active WebSocket tunnel to a local agent.
+// Tunnel represents an active multiplexed tunnel to a local agent.
+// It wraps a WebSocket connection with yamux for stream multiplexing.
 type Tunnel struct {
-	SandboxID   string
-	Conn        *websocket.Conn
+	SandboxID string
+	mux       *yamux.Session
+	wsConn    *WSConn
+	done      chan struct{}
+	closeOnce sync.Once
+
+	// OnAgentInfo is called when the agent sends a control message with agent info.
 	OnAgentInfo func(data json.RawMessage)
-	pending     map[string]*streamWaiter
-	mu          sync.Mutex
-	done        chan struct{}
-	closeOnce   sync.Once
 }
 
-func newTunnel(sandboxID string, conn *websocket.Conn) *Tunnel {
+func newTunnel(ctx context.Context, sandboxID string, ws *websocket.Conn) *Tunnel {
+	conn := NewWSConn(ctx, ws)
+	session, err := ServerMux(conn)
+	if err != nil {
+		log.Printf("tunnel %s: failed to create yamux session: %v", sandboxID, err)
+		conn.Close()
+		return &Tunnel{
+			SandboxID: sandboxID,
+			done:      make(chan struct{}),
+		}
+	}
 	t := &Tunnel{
 		SandboxID: sandboxID,
-		Conn:      conn,
-		pending:   make(map[string]*streamWaiter),
+		mux:       session,
+		wsConn:    conn,
 		done:      make(chan struct{}),
 	}
-	go t.readLoop()
+	go t.acceptLoop()
 	return t
 }
 
-// Close shuts down the tunnel.
+// acceptLoop accepts streams opened by the agent (control messages).
+func (t *Tunnel) acceptLoop() {
+	defer t.Close()
+	for {
+		stream, err := t.mux.Accept()
+		if err != nil {
+			return
+		}
+		go t.handleAgentStream(stream)
+	}
+}
+
+// handleAgentStream processes a stream opened by the agent.
+func (t *Tunnel) handleAgentStream(stream net.Conn) {
+	defer stream.Close()
+	streamType, _, err := ReadStreamHeader(stream)
+	if err != nil {
+		log.Printf("tunnel %s: read agent stream header: %v", t.SandboxID, err)
+		return
+	}
+	switch streamType {
+	case StreamTypeControl:
+		data, err := io.ReadAll(stream)
+		if err != nil {
+			log.Printf("tunnel %s: read control data: %v", t.SandboxID, err)
+			return
+		}
+		if t.OnAgentInfo != nil {
+			t.OnAgentInfo(json.RawMessage(data))
+		}
+	default:
+		log.Printf("tunnel %s: unexpected agent stream type: %d", t.SandboxID, streamType)
+	}
+}
+
+// OpenHTTPStream opens a new yamux stream for proxying an HTTP request.
+// The caller must close the returned body reader when done.
+//
+// Protocol:
+//  1. Server writes: stream header (StreamTypeHTTP + HTTPStreamMeta with BodyLen)
+//  2. Server writes: request body bytes (exactly BodyLen bytes)
+//  3. Agent reads BodyLen bytes, processes request, then writes response.
+//  4. Agent writes: stream header (StreamTypeHTTP + HTTPResponseMeta)
+//  5. Agent writes: response body until stream close.
+func (t *Tunnel) OpenHTTPStream(ctx context.Context, meta HTTPStreamMeta, reqBody []byte) (HTTPResponseMeta, io.ReadCloser, error) {
+	if t.mux == nil {
+		return HTTPResponseMeta{}, nil, yamux.ErrSessionShutdown
+	}
+
+	stream, err := t.mux.Open()
+	if err != nil {
+		return HTTPResponseMeta{}, nil, err
+	}
+
+	// Set body length in metadata so agent knows when request body ends.
+	meta.BodyLen = len(reqBody)
+
+	// Write stream header with HTTP metadata.
+	metaJSON, err := MarshalStreamMeta(meta)
+	if err != nil {
+		stream.Close()
+		return HTTPResponseMeta{}, nil, err
+	}
+	if err := WriteStreamHeader(stream, StreamTypeHTTP, metaJSON); err != nil {
+		stream.Close()
+		return HTTPResponseMeta{}, nil, err
+	}
+
+	// Write request body (agent reads exactly BodyLen bytes).
+	if len(reqBody) > 0 {
+		if _, err := stream.Write(reqBody); err != nil {
+			stream.Close()
+			return HTTPResponseMeta{}, nil, err
+		}
+	}
+
+	// Read response header from agent.
+	_, respMetaJSON, err := ReadStreamHeader(stream)
+	if err != nil {
+		stream.Close()
+		return HTTPResponseMeta{}, nil, err
+	}
+	var respMeta HTTPResponseMeta
+	if err := UnmarshalStreamMeta(respMetaJSON, &respMeta); err != nil {
+		stream.Close()
+		return HTTPResponseMeta{}, nil, err
+	}
+
+	// Return the stream as the response body reader. Caller must close it.
+	return respMeta, stream, nil
+}
+
+// OpenTerminalStream opens a new yamux stream for bidirectional terminal I/O.
+// The returned net.Conn carries raw terminal data in both directions.
+func (t *Tunnel) OpenTerminalStream() (net.Conn, error) {
+	if t.mux == nil {
+		return nil, yamux.ErrSessionShutdown
+	}
+	stream, err := t.mux.Open()
+	if err != nil {
+		return nil, err
+	}
+	if err := WriteStreamHeader(stream, StreamTypeTerminal, nil); err != nil {
+		stream.Close()
+		return nil, err
+	}
+	return stream, nil
+}
+
+// Close shuts down the tunnel and underlying connections.
 func (t *Tunnel) Close() {
 	t.closeOnce.Do(func() {
 		close(t.done)
-		t.Conn.Close(websocket.StatusNormalClosure, "closing")
-		// Drain all pending waiters.
-		t.mu.Lock()
-		for id, w := range t.pending {
-			close(w.ch)
-			delete(t.pending, id)
+		if t.mux != nil {
+			t.mux.Close()
 		}
-		t.mu.Unlock()
+		if t.wsConn != nil {
+			t.wsConn.Close()
+		}
 	})
 }
 
 // Done returns a channel that is closed when the tunnel shuts down.
 func (t *Tunnel) Done() <-chan struct{} {
 	return t.done
-}
-
-// SendRequest sends a request frame through the tunnel and returns a channel
-// for receiving streamed response messages.
-func (t *Tunnel) SendRequest(ctx context.Context, header *RequestHeader, body []byte) (<-chan *StreamMessage, error) {
-	ch := make(chan *StreamMessage, 64)
-	w := &streamWaiter{ch: ch}
-	t.mu.Lock()
-	t.pending[header.ID] = w
-	t.mu.Unlock()
-
-	msg, err := EncodeFrame(header, body)
-	if err != nil {
-		t.mu.Lock()
-		delete(t.pending, header.ID)
-		t.mu.Unlock()
-		return nil, fmt.Errorf("encode request frame: %w", err)
-	}
-	if err := t.Conn.Write(ctx, websocket.MessageBinary, msg); err != nil {
-		t.mu.Lock()
-		delete(t.pending, header.ID)
-		t.mu.Unlock()
-		return nil, fmt.Errorf("write request frame: %w", err)
-	}
-
-	return ch, nil
-}
-
-// CleanupRequest removes a pending waiter after the request is done.
-func (t *Tunnel) CleanupRequest(requestID string) {
-	t.mu.Lock()
-	delete(t.pending, requestID)
-	t.mu.Unlock()
-}
-
-// readLoop reads binary frames from the WebSocket and dispatches them to pending waiters.
-func (t *Tunnel) readLoop() {
-	defer t.Close()
-	for {
-		msgType, data, err := t.Conn.Read(context.Background())
-		if err != nil {
-			select {
-			case <-t.done:
-				return
-			default:
-			}
-			if !errors.Is(err, context.Canceled) {
-				log.Printf("tunnel %s: read error: %v", t.SandboxID, err)
-			}
-			return
-		}
-
-		if msgType == websocket.MessageText {
-			t.handleTextMessage(data)
-			continue
-		}
-
-		headerJSON, payload, err := DecodeFrameHeader(data)
-		if err != nil {
-			log.Printf("tunnel %s: failed to decode frame: %v", t.SandboxID, err)
-			continue
-		}
-
-		var incoming IncomingHeader
-		if err := json.Unmarshal(headerJSON, &incoming); err != nil {
-			log.Printf("tunnel %s: failed to unmarshal header: %v", t.SandboxID, err)
-			continue
-		}
-
-		// Reply to application-level pings with a pong.
-		if incoming.Type == FrameTypePing {
-			pongHeader := struct {
-				Type string `json:"type"`
-			}{Type: FrameTypePong}
-			if msg, err := EncodeFrame(pongHeader, nil); err == nil {
-				writeCtx, writeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				t.Conn.Write(writeCtx, websocket.MessageBinary, msg)
-				writeCancel()
-			}
-			continue
-		}
-
-		t.mu.Lock()
-		w, ok := t.pending[incoming.ID]
-		t.mu.Unlock()
-		if !ok {
-			log.Printf("tunnel %s: no pending waiter for request %s", t.SandboxID, incoming.ID)
-			continue
-		}
-
-		if incoming.Type == FrameTypeStream {
-			var sh StreamHeader
-			if err := json.Unmarshal(headerJSON, &sh); err != nil {
-				log.Printf("tunnel %s: failed to unmarshal stream header: %v", t.SandboxID, err)
-				continue
-			}
-			msg := &StreamMessage{Header: sh, Payload: payload}
-			select {
-			case w.ch <- msg:
-			default:
-			}
-			if sh.Done {
-				close(w.ch)
-			}
-		}
-	}
-}
-
-// textMessage is the envelope for JSON text messages sent over the tunnel.
-type textMessage struct {
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data"`
-}
-
-// handleTextMessage processes a JSON text message from the agent.
-func (t *Tunnel) handleTextMessage(data []byte) {
-	var msg textMessage
-	if err := json.Unmarshal(data, &msg); err != nil {
-		log.Printf("tunnel %s: failed to unmarshal text message: %v", t.SandboxID, err)
-		return
-	}
-	switch msg.Type {
-	case FrameTypeAgentInfo:
-		if t.OnAgentInfo != nil {
-			t.OnAgentInfo(msg.Data)
-		}
-	default:
-		log.Printf("tunnel %s: unknown text message type: %s", t.SandboxID, msg.Type)
-	}
 }

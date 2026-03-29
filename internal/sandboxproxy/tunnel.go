@@ -11,7 +11,6 @@ import (
 	"encoding/base64"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/agentserver/agentserver/internal/db"
 	"github.com/agentserver/agentserver/internal/sbxstore"
 	"github.com/agentserver/agentserver/internal/tunnel"
@@ -20,6 +19,7 @@ import (
 
 // handleTunnel upgrades the connection to a WebSocket and serves as the
 // server-side endpoint for local agent tunnels.
+// The connection is wrapped as net.Conn + yamux for stream multiplexing.
 func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	sandboxID := chi.URLParam(r, "sandboxId")
 	token := r.URL.Query().Get("token")
@@ -41,7 +41,7 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Accept WebSocket upgrade.
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
@@ -49,8 +49,8 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Register tunnel.
-	t := s.TunnelRegistry.Register(sandboxID, conn)
+	// Register tunnel with WSConn + yamux.
+	t := s.TunnelRegistry.Register(r.Context(), sandboxID, ws)
 
 	// Set up agent info callback.
 	t.OnAgentInfo = func(data json.RawMessage) {
@@ -71,18 +71,14 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	s.Sandboxes.UpdateStatus(sandboxID, sbxstore.StatusRunning)
 	s.DB.UpdateSandboxHeartbeat(sandboxID)
 
-	// Start heartbeat ticker.
-	// Sends both WebSocket control pings (for protocol-level liveness detection)
-	// and application-level ping data frames (visible to proxies as real traffic).
+	// Start heartbeat ticker (for DB heartbeat updates).
+	// yamux handles its own keep-alive at the transport level.
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
 	go func() {
 		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
-		pingHeader := struct {
-			Type string `json:"type"`
-		}{Type: tunnel.FrameTypePing}
 		for {
 			select {
 			case <-ctx.Done():
@@ -90,25 +86,12 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 			case <-t.Done():
 				return
 			case <-ticker.C:
-				// Application-level ping (proxy-visible downstream traffic).
-				msg, _ := tunnel.EncodeFrame(pingHeader, nil)
-				if err := conn.Write(ctx, websocket.MessageBinary, msg); err != nil {
-					log.Printf("tunnel %s: ping write failed: %v", sandboxID, err)
-					cancel()
-					return
-				}
-				// WebSocket control ping (protocol-level liveness).
-				if err := conn.Ping(ctx); err != nil {
-					log.Printf("tunnel %s: control ping failed: %v", sandboxID, err)
-					cancel()
-					return
-				}
 				s.DB.UpdateSandboxHeartbeat(sandboxID)
 			}
 		}
 	}()
 
-	// Wait for tunnel to close.
+	// Wait for tunnel to close (yamux session ends).
 	select {
 	case <-ctx.Done():
 	case <-t.Done():
@@ -124,8 +107,7 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	log.Printf("tunnel disconnected: sandbox %s (was_active=%v)", sandboxID, wasActive)
 }
 
-// proxyViaTunnel forwards an HTTP request through a WebSocket tunnel to the local agent.
-// All responses are received as chunked binary StreamFrames.
+// proxyViaTunnel forwards an HTTP request through the yamux tunnel to the local agent.
 func (s *Server) proxyViaTunnel(w http.ResponseWriter, r *http.Request, sbx *sbxstore.Sandbox, t *tunnel.Tunnel) {
 	// Read request body.
 	var body []byte
@@ -152,9 +134,7 @@ func (s *Server) proxyViaTunnel(w http.ResponseWriter, r *http.Request, sbx *sbx
 		headers["Authorization"] = "Basic " + cred
 	}
 
-	reqHeader := &tunnel.RequestHeader{
-		Type:    tunnel.FrameTypeRequest,
-		ID:      uuid.New().String(),
+	meta := tunnel.HTTPStreamMeta{
 		Method:  r.Method,
 		Path:    r.URL.RequestURI(),
 		Headers: headers,
@@ -166,47 +146,35 @@ func (s *Server) proxyViaTunnel(w http.ResponseWriter, r *http.Request, sbx *sbx
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
-	streamCh, err := t.SendRequest(ctx, reqHeader, body)
+	respMeta, respBody, err := t.OpenHTTPStream(ctx, meta, body)
 	if err != nil {
 		log.Printf("tunnel proxy error for %s: %v", t.SandboxID, err)
 		http.Error(w, "tunnel proxy error", http.StatusBadGateway)
 		return
 	}
-	defer t.CleanupRequest(reqHeader.ID)
+	defer respBody.Close()
 
+	// Write response headers.
+	for k, v := range respMeta.Headers {
+		w.Header().Set(k, v)
+	}
+	if respMeta.Status > 0 {
+		w.WriteHeader(respMeta.Status)
+	}
+
+	// Stream response body with flushing for SSE support.
 	flusher, _ := w.(http.Flusher)
-
-	headersSent := false
+	buf := make([]byte, 16*1024)
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg, ok := <-streamCh:
-			if !ok {
-				return
+		n, readErr := respBody.Read(buf)
+		if n > 0 {
+			w.Write(buf[:n])
+			if flusher != nil {
+				flusher.Flush()
 			}
-
-			// Send headers on first frame.
-			if !headersSent {
-				for k, v := range msg.Header.Headers {
-					w.Header().Set(k, v)
-				}
-				if msg.Header.Status > 0 {
-					w.WriteHeader(msg.Header.Status)
-				}
-				headersSent = true
-			}
-
-			if msg.Header.Done {
-				return
-			}
-
-			if len(msg.Payload) > 0 {
-				w.Write(msg.Payload)
-				if flusher != nil {
-					flusher.Flush()
-				}
-			}
+		}
+		if readErr != nil {
+			break
 		}
 	}
 }

@@ -17,7 +17,8 @@ type RegistryEntry struct {
 	TunnelToken  string `json:"tunnel_token"`
 	WorkspaceID  string `json:"workspace_id"`
 	Name         string `json:"name"`
-	OpencodePort int    `json:"opencode_port"`
+	Type         string `json:"type,omitempty"`         // "opencode" or "claudecode"
+	OpencodePort int    `json:"opencode_port,omitempty"`
 }
 
 // Registry holds all agent registrations on this machine.

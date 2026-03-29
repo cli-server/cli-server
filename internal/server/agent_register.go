@@ -50,6 +50,7 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Code string `json:"code"`
 		Name string `json:"name"`
+		Type string `json:"type"` // "opencode" (default) or "claudecode"
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -61,6 +62,14 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" {
 		req.Name = "Local Agent"
+	}
+	sandboxType := req.Type
+	if sandboxType == "" {
+		sandboxType = "opencode"
+	}
+	if sandboxType != "opencode" && sandboxType != "claudecode" {
+		http.Error(w, "invalid type: must be opencode or claudecode", http.StatusBadRequest)
+		return
 	}
 
 	// Atomically consume the registration code.
@@ -77,14 +86,17 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 
 	sandboxID := uuid.New().String()
 	tunnelToken := generatePassword()
-	opencodePassword := generatePassword()
 	proxyToken := generatePassword()
+	var opencodePassword string
+	if sandboxType == "opencode" {
+		opencodePassword = generatePassword()
+	}
 
 	// Generate a short ID for subdomain routing (retry on collision).
 	sid := shortid.Generate()
 	var createErr error
 	for attempts := 0; attempts < 3; attempts++ {
-		createErr = s.DB.CreateLocalSandbox(sandboxID, arc.WorkspaceID, req.Name, "opencode", opencodePassword, proxyToken, tunnelToken, sid)
+		createErr = s.DB.CreateLocalSandbox(sandboxID, arc.WorkspaceID, req.Name, sandboxType, opencodePassword, proxyToken, tunnelToken, sid)
 		if createErr == nil {
 			break
 		}

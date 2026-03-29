@@ -105,10 +105,13 @@ func matrixMsgsToInbound(matrixMsgs []MatrixMessage) []InboundMessage {
 	var msgs []InboundMessage
 	for _, m := range matrixMsgs {
 		msgs = append(msgs, InboundMessage{
-			FromUserID: m.RoomID + "@matrix",
-			SenderName: m.SenderID,
-			Text:       m.Text,
-			IsGroup:    true,
+			FromUserID:    m.RoomID + "@matrix",
+			SenderName:    m.SenderID,
+			Text:          m.Text,
+			IsGroup:       true,
+			MediaData:     m.MediaData,
+			MediaType:     m.MediaType,
+			MediaFilename: m.MediaFilename,
 			Metadata: map[string]string{
 				"room_id":  m.RoomID,
 				"event_id": m.EventID,

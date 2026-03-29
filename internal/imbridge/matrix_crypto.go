@@ -144,13 +144,28 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 				continue
 			}
 
-			messages = append(messages, MatrixMessage{
+			msg := MatrixMessage{
 				RoomID:    string(roomID),
 				EventID:   string(evt.ID),
 				SenderID:  string(evt.Sender),
 				Text:      msgContent.Body,
 				Timestamp: evt.Timestamp,
-			})
+			}
+
+			// Download media for image/file/video/audio messages.
+			switch msgContent.MsgType {
+			case event.MsgImage, event.MsgFile, event.MsgVideo, event.MsgAudio:
+				if data, mtype, fname := cc.downloadMedia(ctx, msgContent); data != nil {
+					msg.MediaData = data
+					msg.MediaType = mtype
+					msg.MediaFilename = fname
+				}
+				if msg.Text == "" || msg.Text == msg.MediaFilename {
+					msg.Text = "[" + string(msgContent.MsgType) + "]"
+				}
+			}
+
+			messages = append(messages, msg)
 		}
 	}
 
@@ -215,6 +230,60 @@ func (cc *MatrixCryptoClient) SendTyping(ctx context.Context, roomID string, typ
 		return fmt.Errorf("matrix: send typing: %w", err)
 	}
 	return nil
+}
+
+// downloadMedia downloads media from a Matrix message (handles both E2EE and plaintext).
+func (cc *MatrixCryptoClient) downloadMedia(ctx context.Context, content *event.MessageEventContent) (data []byte, mediaType, filename string) {
+	switch content.MsgType {
+	case event.MsgImage:
+		mediaType = "image"
+	case event.MsgFile:
+		mediaType = "file"
+	case event.MsgVideo:
+		mediaType = "video"
+	case event.MsgAudio:
+		mediaType = "audio"
+	default:
+		return
+	}
+	filename = content.Body
+
+	// E2EE: encrypted file (has File field with encryption info).
+	if content.File != nil {
+		mxc, err := content.File.URL.Parse()
+		if err != nil {
+			log.Printf("matrix: invalid encrypted file URL: %v", err)
+			return nil, "", ""
+		}
+		ciphertext, err := cc.client.DownloadBytes(ctx, mxc)
+		if err != nil {
+			log.Printf("matrix: download encrypted media failed: %v", err)
+			return nil, "", ""
+		}
+		plaintext, err := content.File.Decrypt(ciphertext)
+		if err != nil {
+			log.Printf("matrix: decrypt media failed: %v", err)
+			return nil, "", ""
+		}
+		return plaintext, mediaType, filename
+	}
+
+	// Plaintext: direct mxc:// URL.
+	if content.URL != "" {
+		mxc, err := content.URL.Parse()
+		if err != nil {
+			log.Printf("matrix: invalid media URL: %v", err)
+			return nil, "", ""
+		}
+		downloaded, err := cc.client.DownloadBytes(ctx, mxc)
+		if err != nil {
+			log.Printf("matrix: download media failed: %v", err)
+			return nil, "", ""
+		}
+		return downloaded, mediaType, filename
+	}
+
+	return nil, "", ""
 }
 
 // MatrixCryptoManager manages long-lived E2EE Matrix clients per device.

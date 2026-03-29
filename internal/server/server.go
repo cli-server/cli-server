@@ -43,7 +43,8 @@ type Server struct {
 	StaticFS         fs.FS
 	BaseDomains              []string // e.g. ["agentserver.dev", "agent.cs.ac.cn"] (first is primary)
 	OpencodeSubdomainPrefix  string   // e.g. "code" — subdomain: code-{id}.{baseDomain}
-	OpenclawSubdomainPrefix  string // e.g. "claw" — subdomain: claw-{id}.{baseDomain}
+	OpenclawSubdomainPrefix    string // e.g. "claw" — subdomain: claw-{id}.{baseDomain}
+	ClaudeCodeSubdomainPrefix  string // e.g. "claude" — subdomain: claude-{id}.{baseDomain}
 	PasswordAuthEnabled      bool   // when false, /api/auth/login and /api/auth/register are not registered
 	LLMProxyURL              string // base URL for the llmproxy service (e.g. "http://agentserver-llmproxy:8081")
 
@@ -81,21 +82,26 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 	if openclawPrefix == "" {
 		openclawPrefix = "claw"
 	}
+	claudecodePrefix := os.Getenv("CLAUDECODE_SUBDOMAIN_PREFIX")
+	if claudecodePrefix == "" {
+		claudecodePrefix = "claude"
+	}
 
 	s := &Server{
-		Auth:                    a,
-		OIDC:                    oidcMgr,
-		DB:                      database,
-		Sandboxes:               sandboxStore,
-		ProcessManager:          processManager,
-		DriveManager:            driveManager,
-		NamespaceManager:        nsMgr,
-		TunnelRegistry:          tunnelReg,
-		StaticFS:                staticFS,
-		BaseDomains:             baseDomains,
-		OpencodeSubdomainPrefix: opcodePrefix,
-		OpenclawSubdomainPrefix: openclawPrefix,
-		PasswordAuthEnabled:     passwordAuthEnabled,
+		Auth:                      a,
+		OIDC:                      oidcMgr,
+		DB:                        database,
+		Sandboxes:                 sandboxStore,
+		ProcessManager:            processManager,
+		DriveManager:              driveManager,
+		NamespaceManager:          nsMgr,
+		TunnelRegistry:            tunnelReg,
+		StaticFS:                  staticFS,
+		BaseDomains:               baseDomains,
+		OpencodeSubdomainPrefix:   opcodePrefix,
+		OpenclawSubdomainPrefix:   openclawPrefix,
+		ClaudeCodeSubdomainPrefix: claudecodePrefix,
+		PasswordAuthEnabled:       passwordAuthEnabled,
 	}
 	// Pass ExecCommander if the process manager supports it (K8s backend does).
 	var execCmd imbridge.ExecCommander
@@ -481,6 +487,7 @@ type sandboxResponse struct {
 	Status          string  `json:"status"`
 	OpencodeURL     string  `json:"opencode_url,omitempty"`
 	OpenclawURL     string  `json:"openclaw_url,omitempty"`
+	ClaudeCodeURL   string  `json:"claudecode_url,omitempty"`
 	CreatedAt       string  `json:"created_at"`
 	LastActivityAt  *string `json:"last_activity_at"`
 	PausedAt        *string `json:"paused_at"`
@@ -546,6 +553,8 @@ func (s *Server) toSandboxResponse(r *http.Request, sbx *sbxstore.Sandbox, authT
 			resp.OpenclawURL = "https://" + s.OpenclawSubdomainPrefix + "-" + subID + "." + domain + "/auth?token=" + authToken
 		case "nanoclaw":
 			// NanoClaw has no Web UI — no URL to generate
+		case "claudecode":
+			resp.ClaudeCodeURL = "https://" + s.ClaudeCodeSubdomainPrefix + "-" + subID + "." + domain + "/auth?token=" + authToken
 		default: // "opencode"
 			resp.OpencodeURL = "https://" + s.OpencodeSubdomainPrefix + "-" + subID + "." + domain + "/auth?token=" + authToken
 		}
@@ -1189,8 +1198,12 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	if sandboxType == "" {
 		sandboxType = "opencode"
 	}
-	if sandboxType != "opencode" && sandboxType != "openclaw" && sandboxType != "nanoclaw" {
-		http.Error(w, "invalid sandbox type: must be opencode, openclaw, or nanoclaw", http.StatusBadRequest)
+	if sandboxType != "opencode" && sandboxType != "openclaw" && sandboxType != "nanoclaw" && sandboxType != "claudecode" {
+		http.Error(w, "invalid sandbox type: must be opencode, openclaw, nanoclaw, or claudecode", http.StatusBadRequest)
+		return
+	}
+	if sandboxType == "claudecode" {
+		http.Error(w, "claudecode sandboxes must be created via local agent registration (agentserver-agent claudecode --code ...)", http.StatusBadRequest)
 		return
 	}
 

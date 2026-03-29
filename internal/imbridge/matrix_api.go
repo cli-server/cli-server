@@ -14,11 +14,14 @@ import (
 
 // MatrixMessage represents a message received from a Matrix room.
 type MatrixMessage struct {
-	RoomID    string
-	EventID   string
-	SenderID  string
-	Text      string
-	Timestamp int64
+	RoomID        string
+	EventID       string
+	SenderID      string
+	Text          string
+	Timestamp     int64
+	MediaData     []byte
+	MediaType     string
+	MediaFilename string
 }
 
 // newMatrixClient creates a short-lived mautrix client for a single API call.

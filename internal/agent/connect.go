@@ -60,7 +60,7 @@ func RunConnect(opts ConnectOptions) {
 		}
 
 		log.Printf("Registering with server %s...", opts.Server)
-		entry, err = Register(opts.Server, opts.Code, opts.Name)
+		entry, err = Register(opts.Server, opts.Code, opts.Name, "opencode")
 		if err != nil {
 			log.Fatalf("Registration failed: %v", err)
 		}
