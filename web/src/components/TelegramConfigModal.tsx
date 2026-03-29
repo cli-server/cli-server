@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { X, Bot, Loader2, CheckCircle2 } from 'lucide-react'
-import { telegramConfigure } from '../lib/api'
+import { telegramConfigure, workspaceTelegramConfigure } from '../lib/api'
 
 interface TelegramConfigModalProps {
-  sandboxId: string
+  sandboxId?: string
+  workspaceId?: string
   onClose: () => void
   onConnected: () => void
 }
 
-export function TelegramConfigModal({ sandboxId, onClose, onConnected }: TelegramConfigModalProps) {
+export function TelegramConfigModal({ sandboxId, workspaceId, onClose, onConnected }: TelegramConfigModalProps) {
   const [botToken, setBotToken] = useState('')
   const [status, setStatus] = useState<'idle' | 'loading' | 'connected' | 'error'>('idle')
   const [error, setError] = useState('')
@@ -21,8 +22,10 @@ export function TelegramConfigModal({ sandboxId, onClose, onConnected }: Telegra
     setStatus('loading')
     setError('')
     try {
-      const result = await telegramConfigure(sandboxId, botToken.trim())
-      setBotName(result.bot_name || result.bot_id)
+      const result = workspaceId
+        ? await workspaceTelegramConfigure(workspaceId, botToken.trim())
+        : await telegramConfigure(sandboxId!, botToken.trim())
+      setBotName((result as any).bot_name || result.bot_id)
       setStatus('connected')
       onConnected()
     } catch (err) {

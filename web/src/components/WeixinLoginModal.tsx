@@ -1,17 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { X, Loader2, CheckCircle2, AlertCircle, SmartphoneNfc } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
-import { weixinQRStart, weixinQRWait } from '../lib/api'
+import { weixinQRStart, weixinQRWait, workspaceWeixinQRStart, workspaceWeixinQRWait } from '../lib/api'
 
 interface WeixinLoginModalProps {
-  sandboxId: string
+  sandboxId?: string
+  workspaceId?: string
   onClose: () => void
   onConnected?: () => void
 }
 
 type Phase = 'loading' | 'qr' | 'scanned' | 'connected' | 'error'
 
-export function WeixinLoginModal({ sandboxId, onClose, onConnected }: WeixinLoginModalProps) {
+export function WeixinLoginModal({ sandboxId, workspaceId, onClose, onConnected }: WeixinLoginModalProps) {
   const [phase, setPhase] = useState<Phase>('loading')
   const [qrUrl, setQrUrl] = useState('')
   const [message, setMessage] = useState('')
@@ -22,7 +23,9 @@ export function WeixinLoginModal({ sandboxId, onClose, onConnected }: WeixinLogi
     setPhase('loading')
     setError('')
     try {
-      const res = await weixinQRStart(sandboxId)
+      const res = workspaceId
+        ? await workspaceWeixinQRStart(workspaceId)
+        : await weixinQRStart(sandboxId!)
       if (cancelledRef.current) return
       setQrUrl(res.qrcode_url)
       setMessage(res.message)
@@ -32,7 +35,7 @@ export function WeixinLoginModal({ sandboxId, onClose, onConnected }: WeixinLogi
       setError(String(err))
       setPhase('error')
     }
-  }, [sandboxId])
+  }, [sandboxId, workspaceId])
 
   // Start QR generation on mount
   useEffect(() => {
@@ -50,7 +53,9 @@ export function WeixinLoginModal({ sandboxId, onClose, onConnected }: WeixinLogi
     const poll = async () => {
       while (active) {
         try {
-          const res = await weixinQRWait(sandboxId)
+          const res = workspaceId
+            ? await workspaceWeixinQRWait(workspaceId)
+            : await weixinQRWait(sandboxId!)
           if (!active) return
 
           if (res.connected) {
@@ -79,7 +84,7 @@ export function WeixinLoginModal({ sandboxId, onClose, onConnected }: WeixinLogi
 
     poll()
     return () => { active = false }
-  }, [isPolling, sandboxId])
+  }, [isPolling, sandboxId, workspaceId])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>

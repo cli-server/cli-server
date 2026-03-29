@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { X, Loader2, CheckCircle2, Hash } from 'lucide-react'
-import { matrixConfigure } from '../lib/api'
+import { matrixConfigure, workspaceMatrixConfigure } from '../lib/api'
 
 interface MatrixConfigModalProps {
-  sandboxId: string
+  sandboxId?: string
+  workspaceId?: string
   onClose: () => void
   onConnected: () => void
 }
 
-export function MatrixConfigModal({ sandboxId, onClose, onConnected }: MatrixConfigModalProps) {
+export function MatrixConfigModal({ sandboxId, workspaceId, onClose, onConnected }: MatrixConfigModalProps) {
   const [homeserverUrl, setHomeserverUrl] = useState('')
   const [accessToken, setAccessToken] = useState('')
   const [recoveryKey, setRecoveryKey] = useState('')
@@ -23,8 +24,10 @@ export function MatrixConfigModal({ sandboxId, onClose, onConnected }: MatrixCon
     setStatus('loading')
     setError('')
     try {
-      const result = await matrixConfigure(sandboxId, homeserverUrl.trim(), accessToken.trim(), recoveryKey.trim())
-      setUserId(result.user_id || result.bot_id)
+      const result = workspaceId
+        ? await workspaceMatrixConfigure(workspaceId, homeserverUrl.trim(), accessToken.trim(), recoveryKey.trim())
+        : await matrixConfigure(sandboxId!, homeserverUrl.trim(), accessToken.trim(), recoveryKey.trim())
+      setUserId((result as any).user_id || result.bot_id)
       setStatus('connected')
       onConnected()
     } catch (err) {

@@ -255,7 +255,19 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/workspaces/{wid}/traces", s.handleWorkspaceTraces)
 		r.Get("/api/workspaces/{wid}/traces/{traceId}", s.handleWorkspaceTraceDetail)
 
-		// IM Bridge routes (unified)
+		// Workspace IM channel management
+		r.Get("/api/workspaces/{id}/im/channels", s.handleListWorkspaceIMChannels)
+		r.Delete("/api/workspaces/{id}/im/channels/{channelId}", s.handleDeleteWorkspaceIMChannel)
+		r.Post("/api/workspaces/{id}/im/weixin/qr-start", s.handleWorkspaceWeixinQRStart)
+		r.Post("/api/workspaces/{id}/im/weixin/qr-wait", s.handleWorkspaceWeixinQRWait)
+		r.Post("/api/workspaces/{id}/im/telegram/configure", s.handleWorkspaceTelegramConfigure)
+		r.Post("/api/workspaces/{id}/im/matrix/configure", s.handleWorkspaceMatrixConfigure)
+
+		// Sandbox IM channel binding
+		r.Post("/api/sandboxes/{id}/im/bind", s.handleBindSandboxToChannel)
+		r.Delete("/api/sandboxes/{id}/im/bind", s.handleUnbindSandboxFromChannel)
+
+		// Legacy sandbox-level IM routes (still used for backward compat)
 		r.Post("/api/sandboxes/{id}/im/weixin/qr-start", s.handleIMWeixinQRStart)
 		r.Post("/api/sandboxes/{id}/im/weixin/qr-wait", s.handleIMWeixinQRWait)
 		r.Post("/api/sandboxes/{id}/im/telegram/configure", s.handleIMTelegramConfigure)
@@ -263,7 +275,6 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/sandboxes/{id}/im/matrix/configure", s.handleIMMatrixConfigure)
 		r.Delete("/api/sandboxes/{id}/im/matrix", s.handleIMMatrixDisconnect)
 		r.Get("/api/sandboxes/{id}/im/bindings", s.handleListIMBindings)
-		// Legacy WeChat routes
 		r.Post("/api/sandboxes/{id}/weixin/qr-start", s.handleIMWeixinQRStart)
 		r.Post("/api/sandboxes/{id}/weixin/qr-wait", s.handleIMWeixinQRWait)
 
@@ -2483,4 +2494,357 @@ func (s *Server) handleListIMBindings(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"bindings": resp})
+}
+
+// ---------------------------------------------------------------------------
+// Workspace-level IM channel management
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleListWorkspaceIMChannels(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "id")
+	if _, ok := s.requireWorkspaceMember(w, r, wsID); !ok {
+		return
+	}
+
+	channels, err := s.DB.ListIMChannels(wsID)
+	if err != nil {
+		http.Error(w, "failed to list channels", http.StatusInternalServerError)
+		return
+	}
+
+	type channelResp struct {
+		ID       string `json:"id"`
+		Provider string `json:"provider"`
+		BotID    string `json:"bot_id"`
+		UserID   string `json:"user_id,omitempty"`
+		BoundAt  string `json:"bound_at"`
+	}
+	resp := make([]channelResp, 0, len(channels))
+	for _, ch := range channels {
+		resp = append(resp, channelResp{
+			ID:       ch.ID,
+			Provider: ch.Provider,
+			BotID:    ch.BotID,
+			UserID:   ch.UserID,
+			BoundAt:  ch.BoundAt.Format(time.RFC3339),
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"channels": resp})
+}
+
+func (s *Server) handleDeleteWorkspaceIMChannel(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "id")
+	channelID := chi.URLParam(r, "channelId")
+	if _, ok := s.requireWorkspaceMember(w, r, wsID); !ok {
+		return
+	}
+
+	// Verify channel belongs to this workspace.
+	ch, err := s.DB.GetIMChannel(channelID)
+	if err != nil || ch.WorkspaceID != wsID {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	}
+
+	// Stop poller and disconnect provider.
+	if s.IMBridge != nil {
+		s.IMBridge.StopPoller(channelID)
+		provider := s.IMBridge.GetProvider(ch.Provider)
+		if dp, ok := provider.(imbridge.DisconnectProvider); ok {
+			dp.Disconnect("", ch.BotID)
+		}
+	}
+	if err := s.DB.DeleteIMChannel(channelID); err != nil {
+		log.Printf("delete im channel: %v", err)
+		http.Error(w, "failed to delete channel", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleWorkspaceWeixinQRStart(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "id")
+	if _, ok := s.requireWorkspaceMember(w, r, wsID); !ok {
+		return
+	}
+
+	wp := s.IMBridge.GetProvider("weixin").(*imbridge.WeixinProvider)
+	session, err := wp.StartQRLogin(r.Context())
+	if err != nil {
+		log.Printf("weixin qr-start: %v", err)
+		http.Error(w, "failed to start weixin login", http.StatusBadGateway)
+		return
+	}
+	wp.SetSession(wsID, session)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"qrcode_url": session.QRCodeURL,
+		"message":    "Scan the QR code with WeChat",
+	})
+}
+
+func (s *Server) handleWorkspaceWeixinQRWait(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "id")
+	if _, ok := s.requireWorkspaceMember(w, r, wsID); !ok {
+		return
+	}
+
+	wp := s.IMBridge.GetProvider("weixin").(*imbridge.WeixinProvider)
+	session := wp.GetSession(wsID)
+	if session == nil {
+		http.Error(w, "no active weixin login session", http.StatusBadRequest)
+		return
+	}
+
+	result, err := wp.PollQRLogin(r.Context(), session.QRCode)
+	if err != nil {
+		log.Printf("weixin qr-wait: poll error: %v", err)
+		http.Error(w, "poll failed", http.StatusBadGateway)
+		return
+	}
+
+	switch result.Status {
+	case "confirmed":
+		wp.TakeSession(wsID)
+
+		accountID := normalizeAccountID(result.BotID)
+		if accountID == "" {
+			http.Error(w, "empty bot ID", http.StatusInternalServerError)
+			return
+		}
+		baseURL := result.BaseURL
+		if baseURL == "" {
+			baseURL = wp.DefaultBaseURL()
+		}
+
+		channelID, err := s.DB.CreateIMChannel(wsID, "weixin", accountID, result.UserID)
+		if err != nil {
+			http.Error(w, "failed to save channel", http.StatusInternalServerError)
+			return
+		}
+		if err := s.DB.SaveIMChannelCredentials(channelID, result.Token, baseURL); err != nil {
+			http.Error(w, "failed to save credentials", http.StatusInternalServerError)
+			return
+		}
+
+		// Start poller for this channel.
+		if s.IMBridge != nil {
+			provider := s.IMBridge.GetProvider("weixin")
+			s.IMBridge.StartPoller(imbridge.BridgeBinding{
+				Provider:    provider,
+				Credentials: imbridge.Credentials{ChannelID: channelID, BotID: accountID, BotToken: result.Token, BaseURL: baseURL},
+				ChannelID:   channelID,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"connected": true,
+			"status":    "confirmed",
+			"bot_id":    accountID,
+		})
+
+	case "expired":
+		newSession, err := wp.StartQRLogin(r.Context())
+		if err != nil {
+			wp.ClearSession(wsID)
+			http.Error(w, "QR code expired and refresh failed", http.StatusBadGateway)
+			return
+		}
+		wp.SetSession(wsID, newSession)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"connected":  false,
+			"status":     "expired",
+			"qrcode_url": newSession.QRCodeURL,
+		})
+
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"connected": false,
+			"status":    result.Status,
+		})
+	}
+}
+
+func (s *Server) handleWorkspaceTelegramConfigure(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "id")
+	if _, ok := s.requireWorkspaceMember(w, r, wsID); !ok {
+		return
+	}
+
+	var req struct {
+		BotToken string `json:"bot_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.BotToken == "" {
+		http.Error(w, "bot_token is required", http.StatusBadRequest)
+		return
+	}
+
+	provider := s.IMBridge.GetProvider("telegram")
+	cp, ok := provider.(imbridge.ConfigurableProvider)
+	if !ok {
+		http.Error(w, "telegram provider does not support configuration", http.StatusInternalServerError)
+		return
+	}
+	botID, err := cp.ValidateCredentials(r.Context(), "", req.BotToken)
+	if err != nil {
+		http.Error(w, "invalid bot token: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	type defaulter interface{ DefaultBaseURL() string }
+	baseURL := ""
+	if d, ok := provider.(defaulter); ok {
+		baseURL = d.DefaultBaseURL()
+	}
+
+	channelID, err := s.DB.CreateIMChannel(wsID, "telegram", botID, "")
+	if err != nil {
+		http.Error(w, "failed to save channel", http.StatusInternalServerError)
+		return
+	}
+	if err := s.DB.SaveIMChannelCredentials(channelID, req.BotToken, baseURL); err != nil {
+		http.Error(w, "failed to save credentials", http.StatusInternalServerError)
+		return
+	}
+
+	if s.IMBridge != nil {
+		s.IMBridge.StartPoller(imbridge.BridgeBinding{
+			Provider:    provider,
+			Credentials: imbridge.Credentials{ChannelID: channelID, BotID: botID, BotToken: req.BotToken, BaseURL: baseURL},
+			ChannelID:   channelID,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"connected": true, "bot_id": botID})
+}
+
+func (s *Server) handleWorkspaceMatrixConfigure(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "id")
+	if _, ok := s.requireWorkspaceMember(w, r, wsID); !ok {
+		return
+	}
+
+	var req struct {
+		HomeserverURL string `json:"homeserver_url"`
+		AccessToken   string `json:"access_token"`
+		RecoveryKey   string `json:"recovery_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.HomeserverURL == "" || req.AccessToken == "" {
+		http.Error(w, "homeserver_url and access_token are required", http.StatusBadRequest)
+		return
+	}
+
+	provider := s.IMBridge.GetProvider("matrix")
+	cp, ok := provider.(imbridge.ConfigurableProvider)
+	if !ok {
+		http.Error(w, "matrix provider does not support configuration", http.StatusInternalServerError)
+		return
+	}
+	botID, err := cp.ValidateCredentials(r.Context(), req.HomeserverURL, req.AccessToken)
+	if err != nil {
+		http.Error(w, "invalid credentials: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	channelID, err := s.DB.CreateIMChannel(wsID, "matrix", botID, "")
+	if err != nil {
+		http.Error(w, "failed to save channel", http.StatusInternalServerError)
+		return
+	}
+	if err := s.DB.SaveIMChannelCredentials(channelID, req.AccessToken, req.HomeserverURL); err != nil {
+		http.Error(w, "failed to save credentials", http.StatusInternalServerError)
+		return
+	}
+
+	// Initialize E2EE if supported.
+	type e2eeConfigurer interface {
+		ConfigureE2EE(ctx context.Context, creds *imbridge.Credentials, recoveryKey string) error
+	}
+	if ec, ok := provider.(e2eeConfigurer); ok && req.RecoveryKey != "" {
+		creds := imbridge.Credentials{ChannelID: channelID, BotID: botID, BotToken: req.AccessToken, BaseURL: req.HomeserverURL}
+		if err := ec.ConfigureE2EE(r.Context(), &creds, req.RecoveryKey); err != nil {
+			log.Printf("matrix configure: E2EE init failed: %v", err)
+		}
+	}
+
+	if s.IMBridge != nil {
+		s.IMBridge.StartPoller(imbridge.BridgeBinding{
+			Provider:    provider,
+			Credentials: imbridge.Credentials{ChannelID: channelID, BotID: botID, BotToken: req.AccessToken, BaseURL: req.HomeserverURL},
+			ChannelID:   channelID,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"connected": true, "bot_id": botID})
+}
+
+// ---------------------------------------------------------------------------
+// Sandbox IM channel binding
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleBindSandboxToChannel(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sbx, ok := s.Sandboxes.Get(id)
+	if !ok {
+		http.Error(w, "sandbox not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
+		return
+	}
+
+	var req struct {
+		ChannelID string `json:"channel_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ChannelID == "" {
+		http.Error(w, "channel_id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify channel belongs to the same workspace.
+	ch, err := s.DB.GetIMChannel(req.ChannelID)
+	if err != nil || ch.WorkspaceID != sbx.WorkspaceID {
+		http.Error(w, "channel not found in this workspace", http.StatusNotFound)
+		return
+	}
+
+	if err := s.DB.BindSandboxToChannel(id, req.ChannelID); err != nil {
+		http.Error(w, "failed to bind channel", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "bound"})
+}
+
+func (s *Server) handleUnbindSandboxFromChannel(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sbx, ok := s.Sandboxes.Get(id)
+	if !ok {
+		http.Error(w, "sandbox not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := s.requireWorkspaceMember(w, r, sbx.WorkspaceID); !ok {
+		return
+	}
+
+	if err := s.DB.UnbindSandboxFromChannel(id); err != nil {
+		http.Error(w, "failed to unbind channel", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "unbound"})
 }

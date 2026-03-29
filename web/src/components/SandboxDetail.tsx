@@ -22,12 +22,17 @@ import {
   Server,
   FolderOpen,
   Bot,
+  Link2,
+  Link2Off,
 } from 'lucide-react'
 import {
   getSandboxUsage,
   getSandboxTraces,
   getTraceDetail,
   renameSandbox,
+  listWorkspaceIMChannels,
+  bindSandboxToChannel,
+  unbindSandboxFromChannel,
   type Sandbox,
   type AgentInfo,
   type UsageSummary,
@@ -35,12 +40,10 @@ import {
   type TokenUsageItem,
   type TraceDetailResponse,
   type IMBinding,
+  type IMChannel,
   listIMBindings,
 } from '../lib/api'
 import { ConfirmModal } from './Modals'
-import { WeixinLoginModal } from './WeixinLoginModal'
-import { TelegramConfigModal } from './TelegramConfigModal'
-import { MatrixConfigModal } from './MatrixConfigModal'
 
 type Tab = 'overview' | 'traces'
 
@@ -130,16 +133,22 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
   const [confirmPause, setConfirmPause] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(sandbox.name)
-  const [showWeixinLogin, setShowWeixinLogin] = useState(false)
-  const [showTelegramConfig, setShowTelegramConfig] = useState(false)
-  const [showMatrixConfig, setShowMatrixConfig] = useState(false)
   const [imBindings, setImBindings] = useState<IMBinding[]>(sandbox.im_bindings || sandbox.weixin_bindings?.map(b => ({ ...b, provider: 'weixin' })) || [])
+  const [workspaceChannels, setWorkspaceChannels] = useState<IMChannel[]>([])
+  const [selectedChannelId, setSelectedChannelId] = useState('')
+  const [bindingLoading, setBindingLoading] = useState(false)
 
   const refreshIMBindings = useCallback(() => {
     listIMBindings(sandbox.id)
       .then((r) => setImBindings(r.bindings || []))
       .catch(() => {})
   }, [sandbox.id])
+
+  const loadWorkspaceChannels = useCallback(() => {
+    listWorkspaceIMChannels(sandbox.workspace_id)
+      .then((r) => setWorkspaceChannels(r.channels || []))
+      .catch(() => {})
+  }, [sandbox.workspace_id])
 
   // Fetch data on sandbox change.
   useEffect(() => {
@@ -155,8 +164,9 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
     }).catch(() => {})
     if (sandbox.type === 'openclaw' || sandbox.type === 'nanoclaw') {
       refreshIMBindings()
+      loadWorkspaceChannels()
     }
-  }, [sandbox.id, refreshIMBindings])
+  }, [sandbox.id, refreshIMBindings, loadWorkspaceChannels])
 
   // Fetch traces on page change.
   useEffect(() => {
@@ -245,35 +255,6 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
                 {isOpenClaw ? 'Open' : 'Open'}
               </a>
             )}
-            {(isOpenClaw || isNanoClaw) && isRunning && (
-              <>
-                <button
-                  onClick={() => setShowWeixinLogin(true)}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/10 px-3 py-1.5 text-xs font-medium text-green-400 hover:bg-green-500/20 transition-colors"
-                >
-                  <MessageSquare size={13} />
-                  WeChat
-                </button>
-                {isNanoClaw && (
-                  <>
-                    <button
-                      onClick={() => setShowTelegramConfig(true)}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-colors"
-                    >
-                      <Bot size={13} />
-                      Telegram
-                    </button>
-                    <button
-                      onClick={() => setShowMatrixConfig(true)}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-purple-500/30 bg-purple-500/10 px-3 py-1.5 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-colors"
-                    >
-                      <Hash size={13} />
-                      Matrix
-                    </button>
-                  </>
-                )}
-              </>
-            )}
             {!sandbox.is_local && isRunning && (
               <button
                 onClick={() => setConfirmPause(true)}
@@ -329,7 +310,34 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
-        {tab === 'overview' && <OverviewTab sandbox={sandbox} imBindings={imBindings} usageData={usageData} totals={{ totalRequests, totalInput, totalOutput, totalCacheRead, totalCacheWrite }} />}
+        {tab === 'overview' && (
+          <OverviewTab
+            sandbox={sandbox}
+            imBindings={imBindings}
+            usageData={usageData}
+            totals={{ totalRequests, totalInput, totalOutput, totalCacheRead, totalCacheWrite }}
+            workspaceChannels={workspaceChannels}
+            selectedChannelId={selectedChannelId}
+            setSelectedChannelId={setSelectedChannelId}
+            bindingLoading={bindingLoading}
+            onBind={async (channelId: string) => {
+              setBindingLoading(true)
+              try {
+                await bindSandboxToChannel(sandbox.id, channelId)
+                refreshIMBindings()
+              } catch { /* ignore */ }
+              setBindingLoading(false)
+            }}
+            onUnbind={async () => {
+              setBindingLoading(true)
+              try {
+                await unbindSandboxFromChannel(sandbox.id)
+                refreshIMBindings()
+              } catch { /* ignore */ }
+              setBindingLoading(false)
+            }}
+          />
+        )}
         {tab === 'traces' && <TracesTab traces={traces} tracesTotal={tracesTotal} tracesPage={tracesPage} totalPages={totalPages} onPageChange={setTracesPage} fetchDetail={(traceId) => getTraceDetail(sandbox.id, traceId)} />}
       </div>
 
@@ -351,23 +359,6 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
           confirmLabel="Pause"
           onConfirm={() => { setConfirmPause(false); onPause(sandbox.id) }}
           onCancel={() => setConfirmPause(false)}
-        />
-      )}
-      {showWeixinLogin && (
-        <WeixinLoginModal sandboxId={sandbox.id} onClose={() => setShowWeixinLogin(false)} onConnected={refreshIMBindings} />
-      )}
-      {showTelegramConfig && (
-        <TelegramConfigModal
-          sandboxId={sandbox.id}
-          onClose={() => setShowTelegramConfig(false)}
-          onConnected={() => refreshIMBindings()}
-        />
-      )}
-      {showMatrixConfig && (
-        <MatrixConfigModal
-          sandboxId={sandbox.id}
-          onClose={() => setShowMatrixConfig(false)}
-          onConnected={() => refreshIMBindings()}
         />
       )}
     </div>
@@ -424,11 +415,17 @@ function AgentInfoSection({ info }: { info: AgentInfo }) {
   )
 }
 
-function OverviewTab({ sandbox, imBindings, usageData, totals }: {
+function OverviewTab({ sandbox, imBindings, usageData, totals, workspaceChannels, selectedChannelId, setSelectedChannelId, bindingLoading, onBind, onUnbind }: {
   sandbox: Sandbox
   imBindings: IMBinding[]
   usageData: UsageSummary[] | null
   totals: { totalRequests: number; totalInput: number; totalOutput: number; totalCacheRead: number; totalCacheWrite: number }
+  workspaceChannels: IMChannel[]
+  selectedChannelId: string
+  setSelectedChannelId: (id: string) => void
+  bindingLoading: boolean
+  onBind: (channelId: string) => void
+  onUnbind: () => void
 }) {
   const isOffline = sandbox.status === 'offline'
   const isRunning = sandbox.status === 'running'
@@ -487,38 +484,73 @@ function OverviewTab({ sandbox, imBindings, usageData, totals }: {
         <AgentInfoSection info={sandbox.agent_info} />
       )}
 
-      {/* IM Connections */}
-      {(isOpenClaw || isNanoClaw) && imBindings.length > 0 && (
+      {/* IM Channel */}
+      {(isOpenClaw || isNanoClaw) && (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--card)]">
           <div className="flex items-center gap-2 border-b border-[var(--border)] px-5 py-3">
             <MessageSquare size={14} className="text-green-400" />
-            <span className="text-sm font-medium text-[var(--foreground)]">IM Connections</span>
+            <span className="text-sm font-medium text-[var(--foreground)]">IM Channel</span>
           </div>
-          <div className="divide-y divide-[var(--border)]">
-            {imBindings.map((b, i) => (
-              <div key={i} className="flex items-center justify-between px-5 py-3">
-                <div className="flex items-center gap-3">
-                  <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                    b.provider === 'telegram'
-                      ? 'bg-blue-500/10 text-blue-400'
-                      : b.provider === 'matrix'
-                        ? 'bg-purple-500/10 text-purple-400'
-                        : 'bg-green-500/10 text-green-400'
-                  }`}>
-                    {b.provider === 'telegram' ? 'Telegram' : b.provider === 'matrix' ? 'Matrix' : 'WeChat'}
-                  </span>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs font-mono text-[var(--foreground)]">{b.bot_id}</span>
-                    {b.user_id && (
-                      <span className="text-[11px] text-[var(--muted-foreground)]">user: {b.user_id}</span>
-                    )}
+          <div className="px-5 py-4">
+            {imBindings.length > 0 ? (
+              <div className="flex flex-col gap-3">
+                {imBindings.map((b, i) => (
+                  <div key={i} className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Link2 size={14} className="text-green-400" />
+                      <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                        b.provider === 'telegram'
+                          ? 'bg-blue-500/10 text-blue-400'
+                          : b.provider === 'matrix'
+                            ? 'bg-purple-500/10 text-purple-400'
+                            : 'bg-green-500/10 text-green-400'
+                      }`}>
+                        {b.provider === 'telegram' ? 'Telegram' : b.provider === 'matrix' ? 'Matrix' : 'WeChat'}
+                      </span>
+                      <span className="text-xs font-mono text-[var(--foreground)]">{b.bot_id}</span>
+                    </div>
+                    <button
+                      onClick={() => onUnbind()}
+                      disabled={bindingLoading}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-red-500/30 bg-transparent px-3 py-1 text-xs font-medium text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                    >
+                      <Link2Off size={12} />
+                      Unbind
+                    </button>
                   </div>
-                </div>
-                <span className="text-xs text-[var(--muted-foreground)]">
-                  {new Date(b.bound_at).toLocaleString()}
-                </span>
+                ))}
               </div>
-            ))}
+            ) : (
+              <div className="flex flex-col gap-3">
+                <p className="text-sm text-[var(--muted-foreground)]">No channel bound. Select a workspace channel to bind.</p>
+                {workspaceChannels.length > 0 ? (
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedChannelId}
+                      onChange={(e) => setSelectedChannelId(e.target.value)}
+                      className="flex-1 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-sm text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
+                    >
+                      <option value="">Select a channel...</option>
+                      {workspaceChannels.map((ch) => (
+                        <option key={ch.id} value={ch.id}>
+                          {ch.provider === 'telegram' ? 'Telegram' : ch.provider === 'matrix' ? 'Matrix' : 'WeChat'} - {ch.bot_id}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => { if (selectedChannelId) onBind(selectedChannelId) }}
+                      disabled={!selectedChannelId || bindingLoading}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-[var(--primary-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
+                    >
+                      <Link2 size={12} />
+                      Bind
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-[var(--muted-foreground)]">No channels available. Configure IM channels in workspace settings.</p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

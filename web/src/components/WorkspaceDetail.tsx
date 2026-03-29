@@ -13,6 +13,8 @@ import {
   Plus,
   Minus,
   Key,
+  Bot,
+  Hash,
 } from 'lucide-react'
 import {
   listMembers,
@@ -28,6 +30,8 @@ import {
   getModelserverStatus,
   disconnectModelserver,
   renameWorkspace,
+  listWorkspaceIMChannels,
+  deleteWorkspaceIMChannel,
   type Workspace,
   type WorkspaceMember,
   type WorkspaceSandboxDefaults,
@@ -36,9 +40,13 @@ import {
   type LLMModel,
   type TraceItem,
   type ModelserverStatus,
+  type IMChannel,
 } from '../lib/api'
 import { ConfirmModal } from './Modals'
 import { TracesTab, TRACES_PER_PAGE } from './SandboxDetail'
+import { WeixinLoginModal } from './WeixinLoginModal'
+import { TelegramConfigModal } from './TelegramConfigModal'
+import { MatrixConfigModal } from './MatrixConfigModal'
 
 type Tab = 'overview' | 'members' | 'traces' | 'settings'
 
@@ -408,11 +416,23 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [msStatus, setMsStatus] = useState<ModelserverStatus | null>(null)
 
+  // IM Channels state
+  const [imChannels, setImChannels] = useState<IMChannel[]>([])
+  const [showWeixinLogin, setShowWeixinLogin] = useState(false)
+  const [showTelegramConfig, setShowTelegramConfig] = useState(false)
+  const [showMatrixConfig, setShowMatrixConfig] = useState(false)
+  const [confirmDeleteChannel, setConfirmDeleteChannel] = useState<IMChannel | null>(null)
+
+  const loadChannels = useCallback(() => {
+    listWorkspaceIMChannels(workspaceId).then(r => setImChannels(r.channels || [])).catch(() => {})
+  }, [workspaceId])
+
   const load = useCallback(() => {
     getWorkspaceLLMConfig(workspaceId).then(setConfig).catch(() => {})
   }, [workspaceId])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { loadChannels() }, [loadChannels])
 
   useEffect(() => {
     getModelserverStatus(workspaceId).then(setMsStatus).catch(() => setMsStatus({ connected: false }))
@@ -663,6 +683,113 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
           destructive
           onConfirm={handleDelete}
           onCancel={() => setConfirmDelete(false)}
+        />
+      )}
+
+      {/* IM Channels */}
+      <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--card)]">
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
+          <div className="flex items-center gap-2">
+            <MessageSquare size={14} className="text-green-400" />
+            <span className="text-sm font-medium text-[var(--foreground)]">IM Channels</span>
+          </div>
+        </div>
+        <div className="px-5 py-4">
+          {imChannels.length > 0 ? (
+            <div className="flex flex-col gap-2 mb-4">
+              {imChannels.map((ch) => (
+                <div key={ch.id} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2">
+                  <div className="flex items-center gap-3">
+                    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                      ch.provider === 'telegram'
+                        ? 'bg-blue-500/10 text-blue-400'
+                        : ch.provider === 'matrix'
+                          ? 'bg-purple-500/10 text-purple-400'
+                          : 'bg-green-500/10 text-green-400'
+                    }`}>
+                      {ch.provider === 'telegram' ? 'Telegram' : ch.provider === 'matrix' ? 'Matrix' : 'WeChat'}
+                    </span>
+                    <span className="text-xs font-mono text-[var(--foreground)]">{ch.bot_id}</span>
+                    <span className="text-[11px] text-[var(--muted-foreground)]">
+                      {new Date(ch.bound_at).toLocaleString()}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setConfirmDeleteChannel(ch)}
+                    className="rounded p-1 text-[var(--muted-foreground)] hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                    title="Delete channel"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-[var(--muted-foreground)] mb-4">No IM channels configured.</p>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowWeixinLogin(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/10 px-3 py-1.5 text-xs font-medium text-green-400 hover:bg-green-500/20 transition-colors"
+            >
+              <MessageSquare size={13} />
+              WeChat
+            </button>
+            <button
+              onClick={() => setShowTelegramConfig(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-500/20 transition-colors"
+            >
+              <Bot size={13} />
+              Telegram
+            </button>
+            <button
+              onClick={() => setShowMatrixConfig(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-purple-500/30 bg-purple-500/10 px-3 py-1.5 text-xs font-medium text-purple-400 hover:bg-purple-500/20 transition-colors"
+            >
+              <Hash size={13} />
+              Matrix
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* IM Channel modals */}
+      {confirmDeleteChannel && (
+        <ConfirmModal
+          title="Delete IM Channel"
+          message={`Delete the ${confirmDeleteChannel.provider} channel "${confirmDeleteChannel.bot_id}"? Any sandbox bound to this channel will be unbound.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={async () => {
+            const ch = confirmDeleteChannel
+            setConfirmDeleteChannel(null)
+            try {
+              await deleteWorkspaceIMChannel(workspaceId, ch.id)
+              loadChannels()
+            } catch { /* ignore */ }
+          }}
+          onCancel={() => setConfirmDeleteChannel(null)}
+        />
+      )}
+      {showWeixinLogin && (
+        <WeixinLoginModal
+          workspaceId={workspaceId}
+          onClose={() => setShowWeixinLogin(false)}
+          onConnected={() => { loadChannels() }}
+        />
+      )}
+      {showTelegramConfig && (
+        <TelegramConfigModal
+          workspaceId={workspaceId}
+          onClose={() => setShowTelegramConfig(false)}
+          onConnected={() => { loadChannels() }}
+        />
+      )}
+      {showMatrixConfig && (
+        <MatrixConfigModal
+          workspaceId={workspaceId}
+          onClose={() => setShowMatrixConfig(false)}
+          onConnected={() => { loadChannels() }}
         />
       )}
     </div>

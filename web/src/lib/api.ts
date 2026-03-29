@@ -435,6 +435,90 @@ export async function listIMBindings(sandboxId: string): Promise<{ bindings: IMB
   return res.json()
 }
 
+// Workspace IM Channel types and API
+
+export interface IMChannel {
+  id: string
+  workspace_id: string
+  provider: string
+  bot_id: string
+  user_id: string
+  bound_at: string
+}
+
+export async function listWorkspaceIMChannels(workspaceId: string): Promise<{ channels: IMChannel[] }> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/im/channels`)
+  if (!res.ok) throw new Error('Failed to list IM channels')
+  return res.json()
+}
+
+export async function deleteWorkspaceIMChannel(workspaceId: string, channelId: string): Promise<void> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/im/channels/${channelId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete IM channel')
+}
+
+// Workspace-level WeChat QR login
+export async function workspaceWeixinQRStart(workspaceId: string): Promise<{ qrcode_url: string; message: string }> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/im/weixin/qr-start`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to start WeChat login')
+  return res.json()
+}
+
+export async function workspaceWeixinQRWait(workspaceId: string): Promise<any> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/im/weixin/qr-wait`, { method: 'POST' })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Failed to poll WeChat status')
+  }
+  return res.json()
+}
+
+// Workspace-level Telegram configure
+export async function workspaceTelegramConfigure(workspaceId: string, botToken: string): Promise<{ connected: boolean; bot_id: string }> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/im/telegram/configure`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bot_token: botToken }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Failed to configure Telegram')
+  }
+  return res.json()
+}
+
+// Workspace-level Matrix configure
+export async function workspaceMatrixConfigure(workspaceId: string, homeserverUrl: string, accessToken: string, recoveryKey?: string): Promise<{ connected: boolean; bot_id: string }> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/im/matrix/configure`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ homeserver_url: homeserverUrl, access_token: accessToken, recovery_key: recoveryKey || '' }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Failed to configure Matrix')
+  }
+  return res.json()
+}
+
+// Sandbox channel binding
+export async function bindSandboxToChannel(sandboxId: string, channelId: string): Promise<void> {
+  const res = await fetch(`/api/sandboxes/${sandboxId}/im/bind`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel_id: channelId }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Failed to bind channel')
+  }
+}
+
+export async function unbindSandboxFromChannel(sandboxId: string): Promise<void> {
+  const res = await fetch(`/api/sandboxes/${sandboxId}/im/bind`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to unbind channel')
+}
+
 // Usage & Traces API
 
 export interface UsageSummary {
