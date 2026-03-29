@@ -21,7 +21,6 @@ import {
   HardDrive,
   Server,
   FolderOpen,
-  Bot,
   Link2,
   Link2Off,
 } from 'lucide-react'
