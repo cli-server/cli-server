@@ -178,6 +178,50 @@ func TelegramSendMessage(ctx context.Context, baseURL, botToken string, chatID i
 	return err
 }
 
+// TelegramGetFile retrieves the file path for a file_id, then downloads the file content.
+func TelegramGetFile(ctx context.Context, baseURL, botToken, fileID string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	if baseURL == "" {
+		baseURL = TelegramDefaultBaseURL
+	}
+
+	// Step 1: getFile to get the file_path.
+	type fileResult struct {
+		FilePath string `json:"file_path"`
+		FileSize int    `json:"file_size"`
+	}
+	body := map[string]interface{}{"file_id": fileID}
+	result, err := telegramRequest[fileResult](ctx, baseURL, botToken, "getFile", body)
+	if err != nil {
+		return nil, fmt.Errorf("telegram getFile: %w", err)
+	}
+	if result.FilePath == "" {
+		return nil, fmt.Errorf("telegram getFile: empty file_path")
+	}
+
+	// Step 2: Download the file.
+	fileURL := fmt.Sprintf("%s/file/bot%s/%s", baseURL, botToken, result.FilePath)
+	req, err := http.NewRequestWithContext(ctx, "GET", fileURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("telegram download file: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("telegram download file: status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("telegram download file: %w", err)
+	}
+	return data, nil
+}
+
 // TelegramSendPhoto sends a photo to a chat via multipart upload.
 func TelegramSendPhoto(ctx context.Context, baseURL, botToken string, chatID int64, photoData []byte, caption string) error {
 	if baseURL == "" {

@@ -84,12 +84,34 @@ func (p *TelegramProvider) Poll(ctx context.Context, creds *Credentials, cursor 
 
 		isGroup := u.Message.Chat.Type == "group" || u.Message.Chat.Type == "supergroup"
 
-		msgs = append(msgs, InboundMessage{
+		msg := InboundMessage{
 			FromUserID: fmt.Sprintf("%d", u.Message.Chat.ID),
 			SenderName: senderName,
 			Text:       text,
 			IsGroup:    isGroup,
-		})
+		}
+
+		// Download photo (pick largest size) or document.
+		if len(u.Message.Photo) > 0 {
+			// Telegram sends multiple photo sizes; pick the largest (last).
+			best := u.Message.Photo[len(u.Message.Photo)-1]
+			if data, err := TelegramGetFile(ctx, baseURL, creds.BotToken, best.FileID); err == nil {
+				msg.MediaData = data
+				msg.MediaType = "image"
+			} else {
+				log.Printf("imbridge: telegram photo download failed: %v", err)
+			}
+		} else if u.Message.Document != nil {
+			if data, err := TelegramGetFile(ctx, baseURL, creds.BotToken, u.Message.Document.FileID); err == nil {
+				msg.MediaData = data
+				msg.MediaType = "file"
+				msg.MediaFilename = u.Message.Document.FileName
+			} else {
+				log.Printf("imbridge: telegram document download failed: %v", err)
+			}
+		}
+
+		msgs = append(msgs, msg)
 	}
 
 	newCursor := cursor
