@@ -590,23 +590,20 @@ func (s *Server) attachIMBindings(resp *sandboxResponse) {
 	if resp.Type != "openclaw" && resp.Type != "nanoclaw" {
 		return
 	}
-	channels, err := s.DB.ListIMChannels(resp.WorkspaceID)
+	// Return only the channel bound to THIS sandbox.
+	ch, err := s.DB.GetIMChannelForSandbox(resp.ID)
 	if err != nil {
-		log.Printf("list im channels for workspace of sandbox %s: %v", resp.ID, err)
 		return
 	}
-	for _, ch := range channels {
-		entry := imBindingResponse{
-			Provider: ch.Provider,
-			BotID:    ch.BotID,
-			UserID:   ch.UserID,
-			BoundAt:  ch.BoundAt.Format(time.RFC3339),
-		}
-		resp.IMBindings = append(resp.IMBindings, entry)
-		// Backwards compat: only weixin bindings go into weixin_bindings.
-		if ch.Provider == "weixin" {
-			resp.WeixinBindings = append(resp.WeixinBindings, entry)
-		}
+	entry := imBindingResponse{
+		Provider: ch.Provider,
+		BotID:    ch.BotID,
+		UserID:   ch.UserID,
+		BoundAt:  ch.BoundAt.Format(time.RFC3339),
+	}
+	resp.IMBindings = append(resp.IMBindings, entry)
+	if ch.Provider == "weixin" {
+		resp.WeixinBindings = append(resp.WeixinBindings, entry)
 	}
 }
 
@@ -1496,12 +1493,9 @@ func (s *Server) handlePauseSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Unbind sandbox from its IM channel so the poller skips forwarding while paused.
-	if sbx.Type == "nanoclaw" {
-		if err := s.DB.UnbindSandboxFromChannel(id); err != nil {
-			log.Printf("failed to unbind sandbox %s from IM channel during pause: %v", id, err)
-		}
-	}
+	// Note: we do NOT unbind the sandbox from its IM channel on pause.
+	// The poller skips forwarding when the sandbox is not running (checks status='running' and pod_ip != '').
+	// The binding is preserved so messages resume flowing when the sandbox is resumed.
 
 	// Pause asynchronously.
 	go func() {
@@ -1871,7 +1865,11 @@ func (s *Server) handleIMWeixinQRWait(w http.ResponseWriter, r *http.Request) {
 
 	switch result.Status {
 	case "confirmed":
-		wp.TakeSession(id) // atomic get+delete to prevent duplicate saves
+		if wp.TakeSession(id) == nil {
+			// Another concurrent request already handled this confirmation.
+			http.Error(w, "login already processed", http.StatusConflict)
+			return
+		}
 		if err := s.saveWeixinCredentials(r.Context(), id, result, wp); err != nil {
 			log.Printf("weixin qr-wait: save credentials: %v", err)
 			http.Error(w, "login succeeded but failed to save credentials", http.StatusInternalServerError)
@@ -2144,6 +2142,10 @@ func (s *Server) handleNanoclawIMSend(w http.ResponseWriter, r *http.Request) {
 	if provider == nil {
 		provider = s.IMBridge.GetProvider(channel.Provider)
 	}
+	if provider == nil {
+		http.Error(w, "unknown IM provider", http.StatusBadRequest)
+		return
+	}
 	userID := reqMeta.ToUserID
 
 	meta, _ := s.DB.GetAllChannelMeta(channel.ID, userID)
@@ -2283,31 +2285,18 @@ func (s *Server) handleIMTelegramDisconnect(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	channels, err := s.DB.ListIMChannels(sbx.WorkspaceID)
-	if err != nil {
-		log.Printf("telegram disconnect: list channels: %v", err)
-		http.Error(w, "failed to list channels", http.StatusInternalServerError)
+	// Only disconnect the channel bound to THIS sandbox, not all workspace channels.
+	ch, err := s.DB.GetIMChannelForSandbox(id)
+	if err != nil || ch.Provider != "telegram" {
+		http.Error(w, "no telegram binding found for this sandbox", http.StatusNotFound)
 		return
 	}
-
-	found := false
-	for _, ch := range channels {
-		if ch.Provider != "telegram" {
-			continue
-		}
-		found = true
-		if s.IMBridge != nil {
-			s.IMBridge.StopPoller(ch.ID)
-		}
-		// Unbind any sandbox from this channel before deleting.
-		_ = s.DB.UnbindSandboxFromChannel(id)
-		if err := s.DB.DeleteIMChannel(ch.ID); err != nil {
-			log.Printf("telegram disconnect: delete channel %s: %v", ch.ID, err)
-		}
+	if s.IMBridge != nil {
+		s.IMBridge.StopPoller(ch.ID)
 	}
-	if !found {
-		http.Error(w, "no telegram binding found", http.StatusNotFound)
-		return
+	_ = s.DB.UnbindSandboxFromChannel(id)
+	if err := s.DB.DeleteIMChannel(ch.ID); err != nil {
+		log.Printf("telegram disconnect: delete channel %s: %v", ch.ID, err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2428,35 +2417,22 @@ func (s *Server) handleIMMatrixDisconnect(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	channels, err := s.DB.ListIMChannels(sbx.WorkspaceID)
-	if err != nil {
-		log.Printf("matrix disconnect: list channels: %v", err)
-		http.Error(w, "failed to list channels", http.StatusInternalServerError)
+	// Only disconnect the channel bound to THIS sandbox.
+	ch, err := s.DB.GetIMChannelForSandbox(id)
+	if err != nil || ch.Provider != "matrix" {
+		http.Error(w, "no matrix binding found for this sandbox", http.StatusNotFound)
 		return
 	}
-
-	provider := s.IMBridge.GetProvider("matrix")
-	found := false
-	for _, ch := range channels {
-		if ch.Provider != "matrix" {
-			continue
-		}
-		found = true
-		if s.IMBridge != nil {
-			s.IMBridge.StopPoller(ch.ID)
-		}
+	if s.IMBridge != nil {
+		s.IMBridge.StopPoller(ch.ID)
+		provider := s.IMBridge.GetProvider("matrix")
 		if dp, ok := provider.(imbridge.DisconnectProvider); ok {
 			dp.Disconnect(id, ch.BotID)
 		}
-		// Unbind any sandbox from this channel before deleting.
-		_ = s.DB.UnbindSandboxFromChannel(id)
-		if err := s.DB.DeleteIMChannel(ch.ID); err != nil {
-			log.Printf("matrix disconnect: delete channel %s: %v", ch.ID, err)
-		}
 	}
-	if !found {
-		http.Error(w, "no matrix binding found", http.StatusNotFound)
-		return
+	_ = s.DB.UnbindSandboxFromChannel(id)
+	if err := s.DB.DeleteIMChannel(ch.ID); err != nil {
+		log.Printf("matrix disconnect: delete channel %s: %v", ch.ID, err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2475,15 +2451,10 @@ func (s *Server) handleListIMBindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	channels, err := s.DB.ListIMChannels(sbx.WorkspaceID)
-	if err != nil {
-		log.Printf("list im channels: %v", err)
-		http.Error(w, "failed to list bindings", http.StatusInternalServerError)
-		return
-	}
-
-	resp := make([]imBindingResponse, 0, len(channels))
-	for _, ch := range channels {
+	// Return only the channel bound to THIS sandbox, not all workspace channels.
+	var resp []imBindingResponse
+	ch, err := s.DB.GetIMChannelForSandbox(id)
+	if err == nil {
 		resp = append(resp, imBindingResponse{
 			Provider: ch.Provider,
 			BotID:    ch.BotID,
@@ -2608,7 +2579,10 @@ func (s *Server) handleWorkspaceWeixinQRWait(w http.ResponseWriter, r *http.Requ
 
 	switch result.Status {
 	case "confirmed":
-		wp.TakeSession(wsID)
+		if wp.TakeSession(wsID) == nil {
+			http.Error(w, "login already processed", http.StatusConflict)
+			return
+		}
 
 		accountID := normalizeAccountID(result.BotID)
 		if accountID == "" {

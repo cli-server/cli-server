@@ -273,8 +273,9 @@ func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, m
 	// Resolve which sandbox is bound to this channel.
 	sandboxID, podIP, bridgeSecret, err := b.db.GetSandboxForChannel(binding.ChannelID)
 	if err != nil {
-		// No sandbox bound to this channel — skip forwarding silently.
-		return nil
+		// No running sandbox bound — return error so cursor does not advance.
+		// The message will be retried on the next poll cycle.
+		return fmt.Errorf("no running sandbox bound to channel %s", binding.ChannelID)
 	}
 	if podIP == "" {
 		return fmt.Errorf("sandbox %s has no PodIP (pod may be down or paused)", sandboxID)

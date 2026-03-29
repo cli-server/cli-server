@@ -226,12 +226,9 @@ var serveCmd = &cobra.Command{
 		idleWatcher := sbxstore.NewIdleWatcher(database, procMgr, sandboxStore, func() time.Duration {
 			return srv.GetEffectiveIdleTimeout()
 		})
-		idleWatcher.SetOnPrePause(func(sandboxID string) {
-			// Unbind sandbox from its IM channel so the poller skips forwarding while paused.
-			if err := database.UnbindSandboxFromChannel(sandboxID); err != nil {
-				log.Printf("idle watcher: failed to unbind sandbox %s from IM channel: %v", sandboxID, err)
-			}
-		})
+		// No OnPrePause callback needed — the poller skips forwarding
+		// when the sandbox is not running (checks status='running' and pod_ip != '').
+		// The channel binding is preserved so messages resume on unpause.
 		idleWatcher.Start()
 		log.Printf("Idle watcher started (effective timeout: %s)", srv.GetEffectiveIdleTimeout())
 
