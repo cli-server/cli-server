@@ -210,9 +210,9 @@ func (cc *MatrixCryptoClient) SendTyping(ctx context.Context, roomID string, typ
 	return nil
 }
 
-// MatrixCryptoManager manages long-lived E2EE Matrix clients per bot account.
+// MatrixCryptoManager manages long-lived E2EE Matrix clients per device.
 type MatrixCryptoManager struct {
-	clients     map[string]*MatrixCryptoClient // keyed by botID
+	clients     map[string]*MatrixCryptoClient // keyed by botID:deviceID
 	mu          sync.Mutex
 	cryptoDBURL string
 	encKey      []byte
@@ -232,11 +232,23 @@ func NewMatrixCryptoManager(mainDBURL string, encKey []byte) *MatrixCryptoManage
 }
 
 // GetOrCreate returns an existing crypto client or creates a new one.
-// Clients are keyed by botID (not sandboxID) so all sandboxes using the
-// same bot token share the same Olm account and device identity.
+// Clients are keyed by botID:deviceID so each access token (with its
+// unique device) gets its own Olm account. Sandboxes using the same
+// token share the same client.
 // If recoveryKey is non-empty, it's used to self-verify the device via SSSS cross-signing.
 func (m *MatrixCryptoManager) GetOrCreate(ctx context.Context, creds *Credentials, recoveryKey string) (*MatrixCryptoClient, error) {
-	key := creds.BotID
+	// Create a temporary client to get the device ID bound to this token.
+	client, err := mautrix.NewClient(creds.BaseURL, id.UserID(creds.BotID), creds.BotToken)
+	if err != nil {
+		return nil, fmt.Errorf("matrix crypto: create client: %w", err)
+	}
+	resp, err := client.Whoami(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("matrix crypto: whoami: %w", err)
+	}
+	client.DeviceID = resp.DeviceID
+
+	key := creds.BotID + ":" + string(resp.DeviceID)
 
 	m.mu.Lock()
 	if c, ok := m.clients[key]; ok {
@@ -244,19 +256,6 @@ func (m *MatrixCryptoManager) GetOrCreate(ctx context.Context, creds *Credential
 		return c, nil
 	}
 	m.mu.Unlock()
-
-	// Create long-lived mautrix client.
-	client, err := mautrix.NewClient(creds.BaseURL, id.UserID(creds.BotID), creds.BotToken)
-	if err != nil {
-		return nil, fmt.Errorf("matrix crypto: create client: %w", err)
-	}
-
-	// Get the device ID bound to this access token.
-	resp, err := client.Whoami(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("matrix crypto: whoami: %w", err)
-	}
-	client.DeviceID = resp.DeviceID
 
 	cc, err := m.initCryptoHelper(ctx, client, key)
 	if err != nil {
@@ -294,19 +293,24 @@ func (m *MatrixCryptoManager) GetOrCreate(ctx context.Context, creds *Credential
 	return cc, nil
 }
 
-// Remove closes and removes a crypto client for a bot.
+// Remove closes and removes all crypto clients for a bot (all devices).
 func (m *MatrixCryptoManager) Remove(sandboxID, botID string) {
-	key := botID
+	prefix := botID + ":"
 
 	m.mu.Lock()
-	cc, ok := m.clients[key]
-	if ok {
-		delete(m.clients, key)
+	var toClose []*MatrixCryptoClient
+	for key, cc := range m.clients {
+		if strings.HasPrefix(key, prefix) {
+			toClose = append(toClose, cc)
+			delete(m.clients, key)
+		}
 	}
 	m.mu.Unlock()
 
-	if ok && cc.cryptoHelper != nil {
-		cc.cryptoHelper.Close()
+	for _, cc := range toClose {
+		if cc.cryptoHelper != nil {
+			cc.cryptoHelper.Close()
+		}
 	}
 }
 
