@@ -184,6 +184,56 @@ func describeWeixinMedia(items []weixin.MessageItem) string {
 	return ""
 }
 
+// SendImage implements ImageSendProvider for WeChat.
+// Uploads the image to CDN and sends it, then sends the caption as a separate text message.
+func (p *WeixinProvider) SendImage(ctx context.Context, creds *Credentials, toUserID string, imageData []byte, caption string) error {
+	contextToken := ""
+	if err := weixin.UploadAndSendImage(ctx, creds.BaseURL, "", creds.BotToken, toUserID, imageData, contextToken); err != nil {
+		return err
+	}
+	if caption != "" {
+		return weixin.SendTextMessage(ctx, creds.BaseURL, creds.BotToken, toUserID, caption, contextToken)
+	}
+	return nil
+}
+
+// --- QR Login session management (delegates to weixin package) ---
+
+// StartQRLogin initiates a WeChat QR code login flow.
+func (p *WeixinProvider) StartQRLogin(ctx context.Context) (*weixin.Session, error) {
+	return weixin.StartLogin(ctx, weixin.DefaultAPIBaseURL)
+}
+
+// PollQRLogin polls for the QR code scan status.
+func (p *WeixinProvider) PollQRLogin(ctx context.Context, qrCode string) (*weixin.StatusResult, error) {
+	return weixin.PollLoginStatus(ctx, weixin.DefaultAPIBaseURL, qrCode)
+}
+
+// SetSession stores a QR login session for a sandbox.
+func (p *WeixinProvider) SetSession(sandboxID string, session *weixin.Session) {
+	weixin.SetSession(sandboxID, session)
+}
+
+// GetSession retrieves the current QR login session for a sandbox.
+func (p *WeixinProvider) GetSession(sandboxID string) *weixin.Session {
+	return weixin.GetSession(sandboxID)
+}
+
+// TakeSession atomically retrieves and removes the QR login session.
+func (p *WeixinProvider) TakeSession(sandboxID string) *weixin.Session {
+	return weixin.TakeSession(sandboxID)
+}
+
+// ClearSession removes the QR login session for a sandbox.
+func (p *WeixinProvider) ClearSession(sandboxID string) {
+	weixin.ClearSession(sandboxID)
+}
+
+// DefaultBaseURL returns the default iLink API base URL.
+func (p *WeixinProvider) DefaultBaseURL() string {
+	return weixin.DefaultAPIBaseURL
+}
+
 func (p *WeixinProvider) Send(ctx context.Context, creds *Credentials, toUserID, text string, meta map[string]string) error {
 	contextToken := ""
 	if meta != nil {

@@ -142,6 +142,41 @@ func (p *TelegramProvider) StartTyping(ctx context.Context, creds *Credentials, 
 	}()
 }
 
+// ValidateCredentials implements ConfigurableProvider for Telegram.
+// Calls the Telegram getMe API and returns the bot username as botID.
+func (p *TelegramProvider) ValidateCredentials(ctx context.Context, baseURL, token string) (string, error) {
+	if baseURL == "" {
+		baseURL = TelegramDefaultBaseURL
+	}
+	botInfo, err := TelegramGetMe(ctx, baseURL, token)
+	if err != nil {
+		return "", err
+	}
+	botID := botInfo.Username
+	if botID == "" {
+		botID = fmt.Sprintf("%d", botInfo.ID)
+	}
+	return botID, nil
+}
+
+// SendImage implements ImageSendProvider for Telegram.
+func (p *TelegramProvider) SendImage(ctx context.Context, creds *Credentials, toUserID string, imageData []byte, caption string) error {
+	chatID, err := strconv.ParseInt(toUserID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid telegram chat ID %q: %w", toUserID, err)
+	}
+	baseURL := creds.BaseURL
+	if baseURL == "" {
+		baseURL = TelegramDefaultBaseURL
+	}
+	return TelegramSendPhoto(ctx, baseURL, creds.BotToken, chatID, imageData, caption)
+}
+
+// DefaultBaseURL returns the default Telegram Bot API base URL.
+func (p *TelegramProvider) DefaultBaseURL() string {
+	return TelegramDefaultBaseURL
+}
+
 func (p *TelegramProvider) Send(ctx context.Context, creds *Credentials, toUserID, text string, meta map[string]string) error {
 	chatID, err := strconv.ParseInt(toUserID, 10, 64)
 	if err != nil {

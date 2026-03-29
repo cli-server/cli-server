@@ -3,6 +3,7 @@ package imbridge
 import (
 	"context"
 	"log"
+	"os"
 	"strings"
 	"time"
 )
@@ -14,13 +15,48 @@ const (
 	matrixTypingTotalTimeout = 5 * time.Minute
 )
 
-// MatrixProvider implements Provider, TypingProvider, ImageSendProvider, and E2EEProvider for Matrix.
+// MatrixProvider implements Provider, TypingProvider, ImageSendProvider,
+// ConfigurableProvider, and DisconnectProvider for the Matrix protocol.
 type MatrixProvider struct {
 	CryptoManager *MatrixCryptoManager
 }
 
 func (p *MatrixProvider) Name() string      { return "matrix" }
 func (p *MatrixProvider) JIDSuffix() string { return "@matrix" }
+
+// InitProvider implements InitializableProvider — sets up the E2EE crypto manager.
+func (p *MatrixProvider) InitProvider(dbURL string) error {
+	encKey := []byte(os.Getenv("MATRIX_ENCRYPTION_KEY"))
+	if len(encKey) == 0 {
+		encKey = []byte("agentserver-matrix-default-key-01")
+	}
+	p.CryptoManager = NewMatrixCryptoManager(dbURL, encKey)
+	return nil
+}
+
+// ValidateCredentials implements ConfigurableProvider.
+// Calls Matrix /whoami and initializes E2EE if CryptoManager is set.
+// The token parameter is the access token; baseURL is the homeserver URL.
+// options may contain "recovery_key" for E2EE self-verification.
+func (p *MatrixProvider) ValidateCredentials(ctx context.Context, baseURL, token string) (string, error) {
+	return MatrixWhoami(ctx, baseURL, token)
+}
+
+// ConfigureE2EE initializes E2EE with the given recovery key for self-verification.
+func (p *MatrixProvider) ConfigureE2EE(ctx context.Context, creds *Credentials, recoveryKey string) error {
+	if p.CryptoManager == nil {
+		return nil
+	}
+	_, err := p.CryptoManager.GetOrCreate(ctx, creds, recoveryKey)
+	return err
+}
+
+// Disconnect implements DisconnectProvider — closes the E2EE client when a binding is disconnected.
+func (p *MatrixProvider) Disconnect(sandboxID, botID string) {
+	if p.CryptoManager != nil {
+		p.CryptoManager.Remove(sandboxID, botID)
+	}
+}
 
 func (p *MatrixProvider) Poll(ctx context.Context, creds *Credentials, cursor string) (*PollResult, error) {
 	timeoutSec := matrixSyncTimeoutSec
@@ -44,21 +80,7 @@ func (p *MatrixProvider) Poll(ctx context.Context, creds *Credentials, cursor st
 		return &PollResult{NewCursor: nextBatch}, nil
 	}
 
-	var msgs []InboundMessage
-	for _, m := range matrixMsgs {
-		msgs = append(msgs, InboundMessage{
-			FromUserID: m.RoomID + "@matrix",
-			SenderName: m.SenderID,
-			Text:       m.Text,
-			IsGroup:    true,
-			Metadata: map[string]string{
-				"room_id":  m.RoomID,
-				"event_id": m.EventID,
-			},
-		})
-	}
-
-	return &PollResult{Messages: msgs, NewCursor: nextBatch}, nil
+	return &PollResult{Messages: matrixMsgsToInbound(matrixMsgs), NewCursor: nextBatch}, nil
 }
 
 func (p *MatrixProvider) pollWithCrypto(ctx context.Context, creds *Credentials, cursor string, timeoutSec int, isInitial bool) (*PollResult, error) {
@@ -76,6 +98,10 @@ func (p *MatrixProvider) pollWithCrypto(ctx context.Context, creds *Credentials,
 		return &PollResult{NewCursor: nextBatch}, nil
 	}
 
+	return &PollResult{Messages: matrixMsgsToInbound(matrixMsgs), NewCursor: nextBatch}, nil
+}
+
+func matrixMsgsToInbound(matrixMsgs []MatrixMessage) []InboundMessage {
 	var msgs []InboundMessage
 	for _, m := range matrixMsgs {
 		msgs = append(msgs, InboundMessage{
@@ -89,8 +115,7 @@ func (p *MatrixProvider) pollWithCrypto(ctx context.Context, creds *Credentials,
 			},
 		})
 	}
-
-	return &PollResult{Messages: msgs, NewCursor: nextBatch}, nil
+	return msgs
 }
 
 func (p *MatrixProvider) Send(ctx context.Context, creds *Credentials, toUserID, text string, meta map[string]string) error {
@@ -169,20 +194,4 @@ func (p *MatrixProvider) StartTyping(ctx context.Context, creds *Credentials, us
 			}
 		}
 	}()
-}
-
-// InitE2EE implements E2EEProvider — initializes E2EE and self-verifies with recovery key.
-func (p *MatrixProvider) InitE2EE(ctx context.Context, creds *Credentials, recoveryKey string) error {
-	if p.CryptoManager == nil {
-		return nil
-	}
-	_, err := p.CryptoManager.GetOrCreate(ctx, creds, recoveryKey)
-	return err
-}
-
-// CleanupE2EE implements E2EEProvider — closes the E2EE client when a binding is disconnected.
-func (p *MatrixProvider) CleanupE2EE(sandboxID, botID string) {
-	if p.CryptoManager != nil {
-		p.CryptoManager.Remove(sandboxID, botID)
-	}
 }

@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -114,22 +113,21 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 	return s
 }
 
-// InitMatrixE2EE initializes the Matrix E2EE crypto manager.
+// InitProviders initializes providers that implement InitializableProvider.
 // Must be called after DatabaseURL is set and before RestoreIMBridgePollers.
-func (s *Server) InitMatrixE2EE() {
+func (s *Server) InitProviders() {
 	if s.DatabaseURL == "" || s.IMBridge == nil {
 		return
 	}
-	mp, ok := s.IMBridge.GetProvider("matrix").(*imbridge.MatrixProvider)
-	if !ok {
-		return
+	for _, p := range s.IMBridge.Providers() {
+		if ip, ok := p.(imbridge.InitializableProvider); ok {
+			if err := ip.InitProvider(s.DatabaseURL); err != nil {
+				log.Printf("imbridge: failed to initialize provider %s: %v", p.Name(), err)
+			} else {
+				log.Printf("imbridge: provider %s initialized", p.Name())
+			}
+		}
 	}
-	encKey := []byte(os.Getenv("MATRIX_ENCRYPTION_KEY"))
-	if len(encKey) == 0 {
-		encKey = []byte("agentserver-matrix-default-key-01")
-	}
-	mp.CryptoManager = imbridge.NewMatrixCryptoManager(s.DatabaseURL, encKey)
-	log.Println("Matrix E2EE crypto manager initialized")
 }
 
 // createDefaultWorkspace creates a "Default workspace" for a newly registered user.
@@ -1802,13 +1800,14 @@ func (s *Server) handleIMWeixinQRStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := weixin.StartLogin(r.Context(), weixin.DefaultAPIBaseURL)
+	wp := s.IMBridge.GetProvider("weixin").(*imbridge.WeixinProvider)
+	session, err := wp.StartQRLogin(r.Context())
 	if err != nil {
 		log.Printf("weixin qr-start: %v", err)
 		http.Error(w, "failed to start weixin login", http.StatusBadGateway)
 		return
 	}
-	weixin.SetSession(id, session)
+	wp.SetSession(id, session)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -1841,13 +1840,14 @@ func (s *Server) handleIMWeixinQRWait(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := weixin.GetSession(id)
+	wp := s.IMBridge.GetProvider("weixin").(*imbridge.WeixinProvider)
+	session := wp.GetSession(id)
 	if session == nil {
 		http.Error(w, "no active weixin login session", http.StatusBadRequest)
 		return
 	}
 
-	result, err := weixin.PollLoginStatus(r.Context(), weixin.DefaultAPIBaseURL, session.QRCode)
+	result, err := wp.PollQRLogin(r.Context(), session.QRCode)
 	if err != nil {
 		log.Printf("weixin qr-wait: poll error: %v", err)
 		http.Error(w, "poll failed", http.StatusBadGateway)
@@ -1856,8 +1856,8 @@ func (s *Server) handleIMWeixinQRWait(w http.ResponseWriter, r *http.Request) {
 
 	switch result.Status {
 	case "confirmed":
-		weixin.TakeSession(id) // atomic get+delete to prevent duplicate saves
-		if err := s.saveWeixinCredentials(r.Context(), id, result); err != nil {
+		wp.TakeSession(id) // atomic get+delete to prevent duplicate saves
+		if err := s.saveWeixinCredentials(r.Context(), id, result, wp); err != nil {
 			log.Printf("weixin qr-wait: save credentials: %v", err)
 			http.Error(w, "login succeeded but failed to save credentials", http.StatusInternalServerError)
 			return
@@ -1873,13 +1873,13 @@ func (s *Server) handleIMWeixinQRWait(w http.ResponseWriter, r *http.Request) {
 
 	case "expired":
 		// Auto-refresh QR code.
-		newSession, err := weixin.StartLogin(r.Context(), weixin.DefaultAPIBaseURL)
+		newSession, err := wp.StartQRLogin(r.Context())
 		if err != nil {
-			weixin.ClearSession(id)
+			wp.ClearSession(id)
 			http.Error(w, "QR code expired and refresh failed", http.StatusBadGateway)
 			return
 		}
-		weixin.SetSession(id, newSession)
+		wp.SetSession(id, newSession)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"connected":  false,
@@ -1907,7 +1907,7 @@ func statusMessage(status string) string {
 	}
 }
 
-func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, result *weixin.StatusResult) error {
+func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, result *weixin.StatusResult, wp *imbridge.WeixinProvider) error {
 	accountID := normalizeAccountID(result.BotID)
 	if accountID == "" {
 		return fmt.Errorf("empty bot ID from ilink response")
@@ -1918,7 +1918,7 @@ func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, re
 	if ok && sbx.Type == "nanoclaw" {
 		baseURL := result.BaseURL
 		if baseURL == "" {
-			baseURL = weixin.DefaultAPIBaseURL
+			baseURL = wp.DefaultBaseURL()
 		}
 		// Save binding record first.
 		if dbErr := s.DB.CreateIMBinding(sandboxID, "weixin", accountID, result.UserID); dbErr != nil {
@@ -1931,7 +1931,7 @@ func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, re
 		// Start long-polling for this newly bound WeChat account.
 		if sbx.PodIP != "" && s.IMBridge != nil {
 			s.IMBridge.StartPoller(imbridge.BridgeBinding{
-				Provider:     &imbridge.WeixinProvider{},
+				Provider:     wp,
 				Credentials:  imbridge.Credentials{SandboxID: sandboxID, BotID: accountID, BotToken: result.Token, BaseURL: baseURL},
 				Cursor:       "",
 				BridgeSecret: sbx.NanoclawBridgeSecret,
@@ -1948,7 +1948,7 @@ func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, re
 
 	baseURL := result.BaseURL
 	if baseURL == "" {
-		baseURL = weixin.DefaultAPIBaseURL
+		baseURL = wp.DefaultBaseURL()
 	}
 
 	// Marshal credentials as JSON, then base64-encode to avoid any shell injection.
@@ -2110,7 +2110,7 @@ func (s *Server) handleNanoclawIMSend(w http.ResponseWriter, r *http.Request) {
 		provider = s.IMBridge.FindProviderByJID(reqMeta.ToUserID)
 	}
 	if provider == nil {
-		provider = &imbridge.WeixinProvider{}
+		provider = s.IMBridge.GetProvider("weixin")
 	}
 	userID := reqMeta.ToUserID
 
@@ -2137,56 +2137,21 @@ func (s *Server) handleNanoclawIMSend(w http.ResponseWriter, r *http.Request) {
 		s.IMBridge.StopTyping(sandboxID, userID)
 	}
 
+	creds := &imbridge.Credentials{SandboxID: sandboxID, BotID: botID, BotToken: botToken, BaseURL: baseURL}
+
 	// Send media or text.
 	if len(mediaData) > 0 {
-		switch provider.Name() {
-		case "weixin":
-			// WeChat: encrypt → CDN upload → sendmessage with image_item
-			contextToken := ""
-			if meta != nil {
-				contextToken = meta["context_token"]
-			}
-			if err := weixin.UploadAndSendImage(r.Context(), baseURL, "", botToken, userID, mediaData, contextToken); err != nil {
-				log.Printf("nanoclaw im send image: failed sandbox=%s to=%s: %v", sandboxID, userID, err)
-				http.Error(w, "failed to send image: "+err.Error(), http.StatusBadGateway)
-				return
-			}
-			// Send caption as separate text message if provided.
-			if reqMeta.Text != "" {
-				creds := &imbridge.Credentials{SandboxID: sandboxID, BotID: botID, BotToken: botToken, BaseURL: baseURL}
-				if err := provider.Send(r.Context(), creds, userID, reqMeta.Text, meta); err != nil {
-					log.Printf("nanoclaw im send caption: failed sandbox=%s to=%s: %v", sandboxID, userID, err)
-				}
-			}
-		case "telegram":
-			// Telegram: direct sendPhoto multipart upload
-			chatID, _ := strconv.ParseInt(userID, 10, 64)
-			tgBaseURL := baseURL
-			if tgBaseURL == "" {
-				tgBaseURL = imbridge.TelegramDefaultBaseURL
-			}
-			if err := imbridge.TelegramSendPhoto(r.Context(), tgBaseURL, botToken, chatID, mediaData, reqMeta.Text); err != nil {
-				log.Printf("nanoclaw im send photo: failed sandbox=%s to=%s: %v", sandboxID, userID, err)
-				http.Error(w, "failed to send photo: "+err.Error(), http.StatusBadGateway)
-				return
-			}
-		default:
-			// Generic image sending via ImageSendProvider interface.
-			isp, ok := provider.(imbridge.ImageSendProvider)
-			if !ok {
-				http.Error(w, "image sending not supported for provider: "+provider.Name(), http.StatusBadRequest)
-				return
-			}
-			creds := &imbridge.Credentials{SandboxID: sandboxID, BotID: botID, BotToken: botToken, BaseURL: baseURL}
-			if err := isp.SendImage(r.Context(), creds, userID, mediaData, reqMeta.Text); err != nil {
-				log.Printf("nanoclaw im send image: failed sandbox=%s to=%s: %v", sandboxID, userID, err)
-				http.Error(w, "failed to send image: "+err.Error(), http.StatusBadGateway)
-				return
-			}
+		isp, ok := provider.(imbridge.ImageSendProvider)
+		if !ok {
+			http.Error(w, "image sending not supported for provider: "+provider.Name(), http.StatusBadRequest)
+			return
+		}
+		if err := isp.SendImage(r.Context(), creds, userID, mediaData, reqMeta.Text); err != nil {
+			log.Printf("nanoclaw im send image: failed sandbox=%s to=%s: %v", sandboxID, userID, err)
+			http.Error(w, "failed to send image: "+err.Error(), http.StatusBadGateway)
+			return
 		}
 	} else {
-		// Text-only message.
-		creds := &imbridge.Credentials{SandboxID: sandboxID, BotID: botID, BotToken: botToken, BaseURL: baseURL}
 		if err := provider.Send(r.Context(), creds, userID, reqMeta.Text, meta); err != nil {
 			log.Printf("nanoclaw im send: failed sandbox=%s provider=%s to=%s: %v", sandboxID, provider.Name(), userID, err)
 			http.Error(w, "failed to send message", http.StatusBadGateway)
@@ -2230,16 +2195,24 @@ func (s *Server) handleIMTelegramConfigure(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	botInfo, err := imbridge.TelegramGetMe(r.Context(), imbridge.TelegramDefaultBaseURL, req.BotToken)
+	provider := s.IMBridge.GetProvider("telegram")
+	cp, ok := provider.(imbridge.ConfigurableProvider)
+	if !ok {
+		http.Error(w, "telegram provider does not support configuration", http.StatusInternalServerError)
+		return
+	}
+	botID, err := cp.ValidateCredentials(r.Context(), "", req.BotToken)
 	if err != nil {
-		log.Printf("telegram configure: getMe failed: %v", err)
+		log.Printf("telegram configure: validate failed: %v", err)
 		http.Error(w, "invalid bot token: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	botID := botInfo.Username
-	if botID == "" {
-		botID = fmt.Sprintf("%d", botInfo.ID)
+	// Use provider's default base URL for credential storage.
+	type defaulter interface{ DefaultBaseURL() string }
+	tgBaseURL := ""
+	if d, ok := provider.(defaulter); ok {
+		tgBaseURL = d.DefaultBaseURL()
 	}
 
 	if err := s.DB.CreateIMBinding(id, "telegram", botID, ""); err != nil {
@@ -2247,7 +2220,7 @@ func (s *Server) handleIMTelegramConfigure(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "failed to save binding", http.StatusInternalServerError)
 		return
 	}
-	if err := s.DB.SaveIMCredentials(id, "telegram", botID, req.BotToken, imbridge.TelegramDefaultBaseURL); err != nil {
+	if err := s.DB.SaveIMCredentials(id, "telegram", botID, req.BotToken, tgBaseURL); err != nil {
 		log.Printf("telegram configure: save credentials: %v", err)
 		http.Error(w, "failed to save credentials", http.StatusInternalServerError)
 		return
@@ -2255,8 +2228,8 @@ func (s *Server) handleIMTelegramConfigure(w http.ResponseWriter, r *http.Reques
 
 	if sbx.PodIP != "" && s.IMBridge != nil {
 		s.IMBridge.StartPoller(imbridge.BridgeBinding{
-			Provider:     &imbridge.TelegramProvider{},
-			Credentials:  imbridge.Credentials{SandboxID: id, BotID: botID, BotToken: req.BotToken, BaseURL: imbridge.TelegramDefaultBaseURL},
+			Provider:     provider,
+			Credentials:  imbridge.Credentials{SandboxID: id, BotID: botID, BotToken: req.BotToken, BaseURL: tgBaseURL},
 			Cursor:       "",
 			BridgeSecret: sbx.NanoclawBridgeSecret,
 		})
@@ -2266,7 +2239,6 @@ func (s *Server) handleIMTelegramConfigure(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"connected": true,
 		"bot_id":    botID,
-		"bot_name":  botInfo.FirstName,
 	})
 }
 
@@ -2339,14 +2311,19 @@ func (s *Server) handleIMMatrixConfigure(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	userID, err := imbridge.MatrixWhoami(r.Context(), req.HomeserverURL, req.AccessToken)
+	provider := s.IMBridge.GetProvider("matrix")
+	cp, ok := provider.(imbridge.ConfigurableProvider)
+	if !ok {
+		http.Error(w, "matrix provider does not support configuration", http.StatusInternalServerError)
+		return
+	}
+	botID, err := cp.ValidateCredentials(r.Context(), req.HomeserverURL, req.AccessToken)
 	if err != nil {
-		log.Printf("matrix configure: whoami failed: %v", err)
+		log.Printf("matrix configure: validate failed: %v", err)
 		http.Error(w, "invalid credentials: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	botID := userID
 	if err := s.DB.CreateIMBinding(id, "matrix", botID, ""); err != nil {
 		log.Printf("matrix configure: create binding: %v", err)
 		http.Error(w, "failed to save binding", http.StatusInternalServerError)
@@ -2358,11 +2335,13 @@ func (s *Server) handleIMMatrixConfigure(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Initialize E2EE if the provider supports it and recovery key is provided.
-	provider := s.IMBridge.GetProvider("matrix")
-	if e2ee, ok := provider.(imbridge.E2EEProvider); ok {
+	// Initialize E2EE if the provider supports it.
+	type e2eeConfigurer interface {
+		ConfigureE2EE(ctx context.Context, creds *imbridge.Credentials, recoveryKey string) error
+	}
+	if ec, ok := provider.(e2eeConfigurer); ok && req.RecoveryKey != "" {
 		creds := imbridge.Credentials{SandboxID: id, BotID: botID, BotToken: req.AccessToken, BaseURL: req.HomeserverURL}
-		if err := e2ee.InitE2EE(r.Context(), &creds, req.RecoveryKey); err != nil {
+		if err := ec.ConfigureE2EE(r.Context(), &creds, req.RecoveryKey); err != nil {
 			log.Printf("matrix configure: E2EE init failed: %v", err)
 		}
 	}
@@ -2380,7 +2359,6 @@ func (s *Server) handleIMMatrixConfigure(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"connected": true,
 		"bot_id":    botID,
-		"user_id":   userID,
 	})
 }
 
@@ -2407,8 +2385,8 @@ func (s *Server) handleIMMatrixDisconnect(w http.ResponseWriter, r *http.Request
 		if s.IMBridge != nil {
 			s.IMBridge.StopPoller(id, "matrix", b.BotID)
 		}
-		if e2ee, ok := provider.(imbridge.E2EEProvider); ok {
-			e2ee.CleanupE2EE(id, b.BotID)
+		if dp, ok := provider.(imbridge.DisconnectProvider); ok {
+			dp.Disconnect(id, b.BotID)
 		}
 		if err := s.DB.DeleteIMBinding(id, "matrix", b.BotID); err != nil {
 			log.Printf("matrix disconnect: delete binding: %v", err)

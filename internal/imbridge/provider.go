@@ -7,10 +7,10 @@ import (
 
 // Provider defines the contract for an IM platform integration.
 type Provider interface {
-	// Name returns the provider identifier: "weixin", "telegram".
+	// Name returns the provider identifier: "weixin", "telegram", "matrix".
 	Name() string
 
-	// JIDSuffix returns the suffix used to construct chat JIDs: "@im.wechat", "@tg".
+	// JIDSuffix returns the suffix used to construct chat JIDs: "@im.wechat", "@tg", "@matrix".
 	JIDSuffix() string
 
 	// Poll long-polls the IM API for new messages.
@@ -38,12 +38,7 @@ type PollResult struct {
 }
 
 // TypingProvider is an optional interface for providers that support typing indicators.
-// Providers that implement this will have typing indicators started when messages
-// are forwarded to NanoClaw and stopped when replies are received.
 type TypingProvider interface {
-	// StartTyping begins sending typing indicators for a user in a goroutine.
-	// Typing continues until ctx is cancelled or times out internally.
-	// sendError is called on timeout to notify the user.
 	StartTyping(ctx context.Context, creds *Credentials, userID string, meta map[string]string,
 		sendError func(text string))
 }
@@ -53,21 +48,29 @@ type ImageSendProvider interface {
 	SendImage(ctx context.Context, creds *Credentials, toUserID string, imageData []byte, caption string) error
 }
 
-// E2EEProvider is an optional interface for providers that support E2EE.
-type E2EEProvider interface {
-	// InitE2EE initializes E2EE for a binding. recoveryKey is used for self-verification.
-	InitE2EE(ctx context.Context, creds *Credentials, recoveryKey string) error
-	// CleanupE2EE closes E2EE resources for a binding.
-	CleanupE2EE(sandboxID, botID string)
+// ConfigurableProvider validates credentials during configure.
+// Returns the botID derived from the provider's validation response.
+type ConfigurableProvider interface {
+	ValidateCredentials(ctx context.Context, baseURL, token string) (botID string, err error)
+}
+
+// DisconnectProvider handles cleanup when a binding is explicitly disconnected.
+type DisconnectProvider interface {
+	Disconnect(sandboxID, botID string)
+}
+
+// InitializableProvider can be initialized with server-level configuration.
+type InitializableProvider interface {
+	InitProvider(dbURL string) error
 }
 
 // InboundMessage represents a single incoming message from the IM platform.
 type InboundMessage struct {
-	FromUserID string
-	SenderName string
-	Text       string
-	IsGroup    bool              // true for group/supergroup chats
-	Metadata   map[string]string // provider-specific state (e.g., weixin context_token)
+	FromUserID    string
+	SenderName    string
+	Text          string
+	IsGroup       bool              // true for group/supergroup chats
+	Metadata      map[string]string // provider-specific state (e.g., weixin context_token)
 	MediaData     []byte            // optional: downloaded media (image/file) binary data
 	MediaType     string            // optional: "image", "voice", "file", "video"
 	MediaFilename string            // optional: original filename for file attachments
