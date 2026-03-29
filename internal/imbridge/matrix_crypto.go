@@ -51,6 +51,28 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 		}
 	}
 
+	// Process room state events to keep the state store updated.
+	// This is essential for: knowing which rooms are encrypted (IsEncrypted),
+	// tracking room membership (for key sharing), and handling member changes.
+	for roomID, joinedRoom := range resp.Rooms.Join {
+		allStateEvents := joinedRoom.State.Events
+		for _, evt := range joinedRoom.Timeline.Events {
+			if evt.StateKey != nil {
+				allStateEvents = append(allStateEvents, evt)
+			}
+		}
+		for _, evt := range allStateEvents {
+			evt.RoomID = id.RoomID(roomID)
+			_ = evt.Content.ParseRaw(evt.Type)
+			if cc.client.StateStore != nil {
+				mautrix.UpdateStateStore(ctx, cc.client.StateStore, evt)
+			}
+			if evt.Type == event.StateMember {
+				mach.HandleMemberEvent(ctx, evt)
+			}
+		}
+	}
+
 	// On initial sync, skip message processing — only crypto state matters.
 	if initialSync {
 		return nil, resp.NextBatch, nil
@@ -287,6 +309,9 @@ func (m *MatrixCryptoManager) initCryptoHelper(ctx context.Context, client *maut
 		sqlDB.Close()
 		return nil, fmt.Errorf("matrix crypto: init: %w", err)
 	}
+
+	// Enable auto-encryption for outgoing messages.
+	client.Crypto = helper
 
 	return &MatrixCryptoClient{client: client, cryptoHelper: helper}, nil
 }

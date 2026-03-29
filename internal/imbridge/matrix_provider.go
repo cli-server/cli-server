@@ -158,18 +158,18 @@ func (p *MatrixProvider) StartTyping(ctx context.Context, creds *Credentials, us
 
 		roomID := strings.TrimSuffix(userID, "@matrix")
 
-		sendTyping := func(typing bool, timeout int) error {
+		sendTyping := func(c context.Context, typing bool, timeout int) error {
 			if p.CryptoManager != nil {
-				cc, err := p.CryptoManager.GetOrCreate(ctx, creds, "")
+				cc, err := p.CryptoManager.GetOrCreate(c, creds, "")
 				if err != nil {
 					return err
 				}
-				return cc.SendTyping(ctx, roomID, typing, timeout)
+				return cc.SendTyping(c, roomID, typing, timeout)
 			}
-			return MatrixSendTyping(ctx, creds.BaseURL, creds.BotToken, creds.BotID, roomID, typing, timeout)
+			return MatrixSendTyping(c, creds.BaseURL, creds.BotToken, creds.BotID, roomID, typing, timeout)
 		}
 
-		if err := sendTyping(true, matrixTypingTimeoutMs); err != nil {
+		if err := sendTyping(ctx, true, matrixTypingTimeoutMs); err != nil {
 			log.Printf("imbridge: matrix sendTyping failed for %s: %v", roomID, err)
 		}
 
@@ -179,8 +179,9 @@ func (p *MatrixProvider) StartTyping(ctx context.Context, creds *Credentials, us
 		for {
 			select {
 			case <-ctx.Done():
+				// Use a fresh context for the stop-typing call (the original ctx is cancelled).
 				bgCtx, bgCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				_ = MatrixSendTyping(bgCtx, creds.BaseURL, creds.BotToken, creds.BotID, roomID, false, 0)
+				_ = sendTyping(bgCtx, false, 0)
 				bgCancel()
 
 				if ctx.Err() == context.DeadlineExceeded {
@@ -188,7 +189,7 @@ func (p *MatrixProvider) StartTyping(ctx context.Context, creds *Credentials, us
 				}
 				return
 			case <-ticker.C:
-				if err := sendTyping(true, matrixTypingTimeoutMs); err != nil {
+				if err := sendTyping(ctx, true, matrixTypingTimeoutMs); err != nil {
 					log.Printf("imbridge: matrix typing keepalive failed for %s: %v", roomID, err)
 				}
 			}
