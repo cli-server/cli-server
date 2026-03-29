@@ -227,8 +227,9 @@ var serveCmd = &cobra.Command{
 			return srv.GetEffectiveIdleTimeout()
 		})
 		idleWatcher.SetOnPrePause(func(sandboxID string) {
-			if srv.IMBridge != nil {
-				srv.IMBridge.StopPollersForSandbox(sandboxID)
+			// Unbind sandbox from its IM channel so the poller skips forwarding while paused.
+			if err := database.UnbindSandboxFromChannel(sandboxID); err != nil {
+				log.Printf("idle watcher: failed to unbind sandbox %s from IM channel: %v", sandboxID, err)
 			}
 		})
 		idleWatcher.Start()

@@ -22,9 +22,11 @@ const (
 
 // BridgeDB is the DB interface needed by the bridge.
 type BridgeDB interface {
-	UpdateCursor(sandboxID, provider, botID, cursor string) error
-	UpsertProviderMeta(sandboxID, provider, botID, userID, key, value string) error
-	GetProviderMeta(sandboxID, provider, botID, userID, key string) (string, error)
+	UpdateIMChannelCursor(channelID, cursor string) error
+	UpsertChannelMeta(channelID, userID, key, value string) error
+	GetChannelMeta(channelID, userID, key string) (string, error)
+	GetAllChannelMeta(channelID, userID string) (map[string]string, error)
+	GetSandboxForChannel(channelID string) (sandboxID, podIP, bridgeSecret string, err error)
 }
 
 // SandboxResolver looks up the current state of a sandbox.
@@ -37,14 +39,13 @@ type ExecCommander interface {
 	ExecSimple(ctx context.Context, sandboxID string, command []string) (string, error)
 }
 
-// BridgeBinding holds the info needed to run a poller for one IM binding.
-// PodIP is not included here — the bridge dynamically resolves it via
-// SandboxResolver.GetPodIP() to handle pod restarts.
+// BridgeBinding holds the info needed to run a poller for one IM channel.
+// The sandbox to forward messages to is resolved dynamically from the channel ID.
 type BridgeBinding struct {
-	Provider     Provider
-	Credentials  Credentials
-	Cursor       string
-	BridgeSecret string
+	Provider    Provider
+	Credentials Credentials
+	ChannelID   string // workspace_im_channels.id
+	Cursor      string
 }
 
 // Bridge manages per-binding poll goroutines for all IM providers.
@@ -53,9 +54,9 @@ type Bridge struct {
 	resolver         SandboxResolver
 	exec             ExecCommander
 	providers        map[string]Provider
-	pollers          map[string]context.CancelFunc // key: "sandboxID:provider:botID"
+	pollers          map[string]context.CancelFunc // key: channelID
 	registeredGroups map[string]bool               // key: "sandboxID:chatJID"
-	typingSessions   map[string]func()             // key: "sandboxID:userID" → cancel func
+	typingSessions   map[string]func()             // key: "channelID:userID" → cancel func
 	mu               sync.Mutex
 }
 
@@ -90,17 +91,13 @@ func (b *Bridge) GetProvider(name string) Provider {
 	return b.providers[name]
 }
 
-func pollerKey(sandboxID, provider, botID string) string {
-	return sandboxID + ":" + provider + ":" + botID
-}
-
-// StartPoller starts a long-poll goroutine for a single binding.
-// If a poller already exists for this binding, it is stopped first.
+// StartPoller starts a long-poll goroutine for a channel.
+// If a poller already exists for this channel, it is stopped first.
 func (b *Bridge) StartPoller(binding BridgeBinding) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	key := pollerKey(binding.Credentials.SandboxID, binding.Provider.Name(), binding.Credentials.BotID)
+	key := binding.ChannelID
 	if cancel, ok := b.pollers[key]; ok {
 		cancel()
 	}
@@ -111,38 +108,29 @@ func (b *Bridge) StartPoller(binding BridgeBinding) {
 	go b.pollLoop(ctx, binding)
 }
 
-// StopPoller stops the polling goroutine for a specific binding.
-// This only cancels the goroutine; it does NOT clean up provider resources
-// like E2EE crypto clients. Use E2EEProvider.CleanupE2EE for that.
-func (b *Bridge) StopPoller(sandboxID, provider, botID string) {
+// StopPoller stops the polling goroutine for a specific channel.
+func (b *Bridge) StopPoller(channelID string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	key := pollerKey(sandboxID, provider, botID)
-	if cancel, ok := b.pollers[key]; ok {
+	if cancel, ok := b.pollers[channelID]; ok {
 		cancel()
-		delete(b.pollers, key)
+		delete(b.pollers, channelID)
 	}
 }
 
-// StopPollersForSandbox stops all polling goroutines and typing sessions for a sandbox.
-// This only cancels goroutines; it does NOT clean up provider resources.
-func (b *Bridge) StopPollersForSandbox(sandboxID string) {
+// StopAllPollers stops all polling goroutines and typing sessions.
+func (b *Bridge) StopAllPollers() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	prefix := sandboxID + ":"
 	for key, cancel := range b.pollers {
-		if strings.HasPrefix(key, prefix) {
-			cancel()
-			delete(b.pollers, key)
-		}
+		cancel()
+		delete(b.pollers, key)
 	}
 	for key, cancel := range b.typingSessions {
-		if strings.HasPrefix(key, prefix) {
-			cancel()
-			delete(b.typingSessions, key)
-		}
+		cancel()
+		delete(b.typingSessions, key)
 	}
 }
 
@@ -157,8 +145,8 @@ func (b *Bridge) FindProviderByJID(jid string) Provider {
 	return nil
 }
 
-func typingKey(sandboxID, userID string) string {
-	return sandboxID + ":" + userID
+func typingKey(channelID, userID string) string {
+	return channelID + ":" + userID
 }
 
 // startTypingForUser starts a typing indicator session if the provider supports it.
@@ -168,8 +156,7 @@ func (b *Bridge) startTypingForUser(binding BridgeBinding, msg InboundMessage) {
 		return
 	}
 
-	sandboxID := binding.Credentials.SandboxID
-	key := typingKey(sandboxID, msg.FromUserID)
+	key := typingKey(binding.ChannelID, msg.FromUserID)
 
 	sendError := func(text string) {
 		if err := binding.Provider.Send(context.Background(), &binding.Credentials, msg.FromUserID, text, msg.Metadata); err != nil {
@@ -194,9 +181,9 @@ func (b *Bridge) startTypingForUser(binding BridgeBinding, msg InboundMessage) {
 	tp.StartTyping(ctx, &binding.Credentials, msg.FromUserID, msg.Metadata, sendError)
 }
 
-// StopTyping stops the typing indicator for a user in a sandbox.
-func (b *Bridge) StopTyping(sandboxID, userID string) {
-	key := typingKey(sandboxID, userID)
+// StopTyping stops the typing indicator for a user in a channel.
+func (b *Bridge) StopTyping(channelID, userID string) {
+	key := typingKey(channelID, userID)
 	b.mu.Lock()
 	cancel, ok := b.typingSessions[key]
 	if ok {
@@ -208,19 +195,19 @@ func (b *Bridge) StopTyping(sandboxID, userID string) {
 	}
 }
 
-// pollLoop is the long-poll goroutine for a single binding.
+// pollLoop is the long-poll goroutine for a single channel.
 func (b *Bridge) pollLoop(ctx context.Context, binding BridgeBinding) {
 	cursor := binding.Cursor
 	consecutiveFailures := 0
 	providerName := binding.Provider.Name()
-	sandboxID := binding.Credentials.SandboxID
+	channelID := binding.ChannelID
 	botID := binding.Credentials.BotID
 
-	log.Printf("imbridge: starting poller for sandbox=%s provider=%s bot=%s", sandboxID, providerName, botID)
+	log.Printf("imbridge: starting poller for channel=%s provider=%s bot=%s", channelID, providerName, botID)
 
 	for {
 		if ctx.Err() != nil {
-			log.Printf("imbridge: poller stopped for sandbox=%s provider=%s bot=%s", sandboxID, providerName, botID)
+			log.Printf("imbridge: poller stopped for channel=%s provider=%s bot=%s", channelID, providerName, botID)
 			return
 		}
 
@@ -230,8 +217,8 @@ func (b *Bridge) pollLoop(ctx context.Context, binding BridgeBinding) {
 				return
 			}
 			consecutiveFailures++
-			log.Printf("imbridge: poll error sandbox=%s provider=%s bot=%s err=%v (%d/%d)",
-				sandboxID, providerName, botID, err, consecutiveFailures, maxConsecutiveFailures)
+			log.Printf("imbridge: poll error channel=%s provider=%s bot=%s err=%v (%d/%d)",
+				channelID, providerName, botID, err, consecutiveFailures, maxConsecutiveFailures)
 			if consecutiveFailures >= maxConsecutiveFailures {
 				consecutiveFailures = 0
 				sleepCtx(ctx, bridgeBackoffDelay)
@@ -251,30 +238,26 @@ func (b *Bridge) pollLoop(ctx context.Context, binding BridgeBinding) {
 		// Forward messages BEFORE advancing cursor.
 		allForwarded := true
 		for _, msg := range result.Messages {
-			// Persist provider-specific metadata with raw user ID.
+			// Persist provider-specific metadata.
 			for k, v := range msg.Metadata {
-				if err := b.db.UpsertProviderMeta(sandboxID, providerName, botID, msg.FromUserID, k, v); err != nil {
+				if err := b.db.UpsertChannelMeta(channelID, msg.FromUserID, k, v); err != nil {
 					log.Printf("imbridge: failed to save metadata key=%s: %v", k, err)
 				}
 			}
 
-			// Forward with the JID as-is from the provider. Do NOT append
-			// JIDSuffix here — some providers (e.g. iLink/WeChat) already
-			// include a domain suffix in their user IDs.
 			if err := b.forwardToNanoClaw(ctx, binding, msg); err != nil {
-				log.Printf("imbridge: forward failed sandbox=%s from=%s: %v (will retry next poll)",
-					sandboxID, msg.FromUserID, err)
+				log.Printf("imbridge: forward failed channel=%s from=%s: %v (will retry next poll)",
+					channelID, msg.FromUserID, err)
 				allForwarded = false
 				break
 			}
-			// Start typing indicator while NanoClaw processes the message.
 			b.startTypingForUser(binding, msg)
 		}
 
 		if allForwarded && result.NewCursor != "" {
 			cursor = result.NewCursor
-			if err := b.db.UpdateCursor(sandboxID, providerName, botID, cursor); err != nil {
-				log.Printf("imbridge: failed to save cursor sandbox=%s: %v", sandboxID, err)
+			if err := b.db.UpdateIMChannelCursor(channelID, cursor); err != nil {
+				log.Printf("imbridge: failed to save cursor channel=%s: %v", channelID, err)
 			}
 		}
 
@@ -285,17 +268,21 @@ func (b *Bridge) pollLoop(ctx context.Context, binding BridgeBinding) {
 }
 
 // forwardToNanoClaw sends a message to the NanoClaw pod's bridge HTTP endpoint.
+// The target sandbox is resolved dynamically from the channel binding.
 func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, msg InboundMessage) error {
-	sandboxID := binding.Credentials.SandboxID
-
-	podIP := b.resolver.GetPodIP(sandboxID)
+	// Resolve which sandbox is bound to this channel.
+	sandboxID, podIP, bridgeSecret, err := b.db.GetSandboxForChannel(binding.ChannelID)
+	if err != nil {
+		// No sandbox bound to this channel — skip forwarding silently.
+		return nil
+	}
 	if podIP == "" {
 		return fmt.Errorf("sandbox %s has no PodIP (pod may be down or paused)", sandboxID)
 	}
 
 	b.ensureGroupRegistered(ctx, sandboxID, msg.FromUserID)
 
-	if err := b.ensureChatRegistered(ctx, podIP, binding.BridgeSecret, msg.FromUserID, msg.SenderName, binding.Provider.Name(), msg.IsGroup); err != nil {
+	if err := b.ensureChatRegistered(ctx, podIP, bridgeSecret, msg.FromUserID, msg.SenderName, binding.Provider.Name(), msg.IsGroup); err != nil {
 		log.Printf("imbridge: failed to register chat %s: %v (continuing anyway)", msg.FromUserID, err)
 	}
 
@@ -330,7 +317,7 @@ func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, m
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+binding.BridgeSecret)
+	req.Header.Set("Authorization", "Bearer "+bridgeSecret)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

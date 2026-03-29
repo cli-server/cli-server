@@ -574,26 +574,26 @@ func (s *Server) toSandboxResponse(r *http.Request, sbx *sbxstore.Sandbox, authT
 	return resp
 }
 
-// attachIMBindings fetches and attaches IM binding records to a sandbox response.
+// attachIMBindings fetches and attaches IM channel records to a sandbox response.
 func (s *Server) attachIMBindings(resp *sandboxResponse) {
 	if resp.Type != "openclaw" && resp.Type != "nanoclaw" {
 		return
 	}
-	bindings, err := s.DB.ListIMBindings(resp.ID, "")
+	channels, err := s.DB.ListIMChannels(resp.WorkspaceID)
 	if err != nil {
-		log.Printf("list im bindings for %s: %v", resp.ID, err)
+		log.Printf("list im channels for workspace of sandbox %s: %v", resp.ID, err)
 		return
 	}
-	for _, b := range bindings {
+	for _, ch := range channels {
 		entry := imBindingResponse{
-			Provider: b.Provider,
-			BotID:    b.BotID,
-			UserID:   b.UserID,
-			BoundAt:  b.BoundAt.Format(time.RFC3339),
+			Provider: ch.Provider,
+			BotID:    ch.BotID,
+			UserID:   ch.UserID,
+			BoundAt:  ch.BoundAt.Format(time.RFC3339),
 		}
 		resp.IMBindings = append(resp.IMBindings, entry)
 		// Backwards compat: only weixin bindings go into weixin_bindings.
-		if b.Provider == "weixin" {
+		if ch.Provider == "weixin" {
 			resp.WeixinBindings = append(resp.WeixinBindings, entry)
 		}
 	}
@@ -1443,9 +1443,11 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Stop IM bridge pollers for nanoclaw sandboxes.
-	if sbx.Type == "nanoclaw" && s.IMBridge != nil {
-		s.IMBridge.StopPollersForSandbox(id)
+	// Unbind sandbox from its IM channel (poller keeps running at channel level).
+	if sbx.Type == "nanoclaw" {
+		if err := s.DB.UnbindSandboxFromChannel(id); err != nil {
+			log.Printf("failed to unbind sandbox %s from IM channel: %v", id, err)
+		}
 	}
 
 	if err := s.Sandboxes.Delete(id); err != nil {
@@ -1483,9 +1485,11 @@ func (s *Server) handlePauseSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stop IM bridge pollers before pausing (pod will be gone).
-	if sbx.Type == "nanoclaw" && s.IMBridge != nil {
-		s.IMBridge.StopPollersForSandbox(id)
+	// Unbind sandbox from its IM channel so the poller skips forwarding while paused.
+	if sbx.Type == "nanoclaw" {
+		if err := s.DB.UnbindSandboxFromChannel(id); err != nil {
+			log.Printf("failed to unbind sandbox %s from IM channel during pause: %v", id, err)
+		}
 	}
 
 	// Pause asynchronously.
@@ -1715,7 +1719,7 @@ func generatePassword() string {
 // ---------------------------------------------------------------------------
 
 // RestoreIMBridgePollers restarts long-poll goroutines for all active
-// nanoclaw IM bindings. Called once during server startup to recover
+// workspace IM channels. Called once during server startup to recover
 // from agentserver restarts — the cursor is persisted in DB,
 // so pollers resume from where they left off without message loss.
 func (s *Server) RestoreIMBridgePollers() {
@@ -1724,21 +1728,22 @@ func (s *Server) RestoreIMBridgePollers() {
 	}
 	restored := 0
 	for _, provider := range s.IMBridge.Providers() {
-		bindings, err := s.DB.GetActiveBindings(provider.Name())
+		channels, err := s.DB.ListAllActiveChannels(provider.Name())
 		if err != nil {
-			log.Printf("imbridge restore: failed to query %s bindings: %v", provider.Name(), err)
+			log.Printf("imbridge restore: failed to query %s channels: %v", provider.Name(), err)
 			continue
 		}
-		for _, b := range bindings {
-			sbx, ok := s.Sandboxes.Get(b.SandboxID)
-			if !ok || sbx.PodIP == "" {
-				continue
-			}
+		for _, ch := range channels {
 			s.IMBridge.StartPoller(imbridge.BridgeBinding{
-				Provider:     provider,
-				Credentials:  imbridge.Credentials{SandboxID: b.SandboxID, BotID: b.BotID, BotToken: b.BotToken, BaseURL: b.BaseURL},
-				Cursor:       b.Cursor,
-				BridgeSecret: sbx.NanoclawBridgeSecret,
+				Provider: provider,
+				Credentials: imbridge.Credentials{
+					ChannelID: ch.ID,
+					BotID:     ch.BotID,
+					BotToken:  ch.BotToken,
+					BaseURL:   ch.BaseURL,
+				},
+				ChannelID: ch.ID,
+				Cursor:    ch.Cursor,
 			})
 			restored++
 		}
@@ -1748,33 +1753,32 @@ func (s *Server) RestoreIMBridgePollers() {
 	}
 }
 
-// restoreIMBridgePollersForSandbox restarts pollers for a single sandbox.
-// Called after sandbox resume when the Pod has a new IP.
+// restoreIMBridgePollersForSandbox restarts the poller for the channel
+// bound to a sandbox. Called after sandbox resume when the Pod has a new IP.
 func (s *Server) restoreIMBridgePollersForSandbox(sandboxID string) {
 	if s.IMBridge == nil {
 		return
 	}
-	sbx, ok := s.Sandboxes.Get(sandboxID)
-	if !ok || sbx.PodIP == "" {
-		return
-	}
-	bindings, err := s.DB.GetActiveBindingsForSandbox(sandboxID)
+	ch, err := s.DB.GetIMChannelForSandbox(sandboxID)
 	if err != nil {
-		log.Printf("imbridge restore for %s: failed to query bindings: %v", sandboxID, err)
+		// No channel bound — nothing to restore.
 		return
 	}
-	for _, b := range bindings {
-		provider := s.IMBridge.GetProvider(b.Provider)
-		if provider == nil {
-			continue
-		}
-		s.IMBridge.StartPoller(imbridge.BridgeBinding{
-			Provider:     provider,
-			Credentials:  imbridge.Credentials{SandboxID: b.SandboxID, BotID: b.BotID, BotToken: b.BotToken, BaseURL: b.BaseURL},
-			Cursor:       b.Cursor,
-			BridgeSecret: sbx.NanoclawBridgeSecret,
-		})
+	provider := s.IMBridge.GetProvider(ch.Provider)
+	if provider == nil {
+		return
 	}
+	s.IMBridge.StartPoller(imbridge.BridgeBinding{
+		Provider: provider,
+		Credentials: imbridge.Credentials{
+			ChannelID: ch.ID,
+			BotID:     ch.BotID,
+			BotToken:  ch.BotToken,
+			BaseURL:   ch.BaseURL,
+		},
+		ChannelID: ch.ID,
+		Cursor:    ch.Cursor,
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1913,28 +1917,38 @@ func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, re
 		return fmt.Errorf("empty bot ID from ilink response")
 	}
 
-	// For nanoclaw: store credentials in DB (bridge mode).
+	// For nanoclaw: store credentials in workspace IM channels (bridge mode).
 	sbx, ok := s.Sandboxes.Get(sandboxID)
 	if ok && sbx.Type == "nanoclaw" {
 		baseURL := result.BaseURL
 		if baseURL == "" {
 			baseURL = wp.DefaultBaseURL()
 		}
-		// Save binding record first.
-		if dbErr := s.DB.CreateIMBinding(sandboxID, "weixin", accountID, result.UserID); dbErr != nil {
-			return fmt.Errorf("save binding: %w", dbErr)
+		// Create workspace-level IM channel.
+		channelID, dbErr := s.DB.CreateIMChannel(sbx.WorkspaceID, "weixin", accountID, result.UserID)
+		if dbErr != nil {
+			return fmt.Errorf("create IM channel: %w", dbErr)
 		}
 		// Store bot credentials for bridge messaging.
-		if dbErr := s.DB.SaveIMCredentials(sandboxID, "weixin", accountID, result.Token, baseURL); dbErr != nil {
-			return fmt.Errorf("save bot credentials: %w", dbErr)
+		if dbErr := s.DB.SaveIMChannelCredentials(channelID, result.Token, baseURL); dbErr != nil {
+			return fmt.Errorf("save channel credentials: %w", dbErr)
 		}
-		// Start long-polling for this newly bound WeChat account.
-		if sbx.PodIP != "" && s.IMBridge != nil {
+		// Bind sandbox to the channel.
+		if dbErr := s.DB.BindSandboxToChannel(sandboxID, channelID); dbErr != nil {
+			return fmt.Errorf("bind sandbox to channel: %w", dbErr)
+		}
+		// Start long-polling for this newly created channel.
+		if s.IMBridge != nil {
 			s.IMBridge.StartPoller(imbridge.BridgeBinding{
-				Provider:     wp,
-				Credentials:  imbridge.Credentials{SandboxID: sandboxID, BotID: accountID, BotToken: result.Token, BaseURL: baseURL},
-				Cursor:       "",
-				BridgeSecret: sbx.NanoclawBridgeSecret,
+				Provider: wp,
+				Credentials: imbridge.Credentials{
+					ChannelID: channelID,
+					BotID:     accountID,
+					BotToken:  result.Token,
+					BaseURL:   baseURL,
+				},
+				ChannelID: channelID,
+				Cursor:    "",
 			})
 		}
 		return nil
@@ -2101,7 +2115,14 @@ func (s *Server) handleNanoclawIMSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve provider: prefer explicit "provider" field, fall back to JID matching, default to weixin.
+	// Resolve the IM channel bound to this sandbox.
+	channel, err := s.DB.GetIMChannelForSandbox(sandboxID)
+	if err != nil {
+		http.Error(w, "no IM channel bound to this sandbox", http.StatusNotFound)
+		return
+	}
+
+	// Resolve provider: prefer explicit "provider" field, fall back to JID matching, then channel provider.
 	var provider imbridge.Provider
 	if reqMeta.ProviderID != "" {
 		provider = s.IMBridge.GetProvider(reqMeta.ProviderID)
@@ -2110,34 +2131,18 @@ func (s *Server) handleNanoclawIMSend(w http.ResponseWriter, r *http.Request) {
 		provider = s.IMBridge.FindProviderByJID(reqMeta.ToUserID)
 	}
 	if provider == nil {
-		provider = s.IMBridge.GetProvider("weixin")
+		provider = s.IMBridge.GetProvider(channel.Provider)
 	}
 	userID := reqMeta.ToUserID
 
-	botID := reqMeta.BotID
-	if botID == "" {
-		bindings, err := s.DB.ListIMBindings(sandboxID, provider.Name())
-		if err != nil || len(bindings) == 0 {
-			http.Error(w, "no IM binding found", http.StatusNotFound)
-			return
-		}
-		botID = bindings[0].BotID
-	}
-
-	botToken, baseURL, err := s.DB.GetIMCredentials(sandboxID, provider.Name(), botID)
-	if err != nil || botToken == "" {
-		http.Error(w, "bot credentials not found", http.StatusNotFound)
-		return
-	}
-
-	meta, _ := s.DB.GetAllProviderMeta(sandboxID, provider.Name(), botID, userID)
+	meta, _ := s.DB.GetAllChannelMeta(channel.ID, userID)
 
 	// Stop typing indicator before sending.
 	if s.IMBridge != nil {
-		s.IMBridge.StopTyping(sandboxID, userID)
+		s.IMBridge.StopTyping(channel.ID, userID)
 	}
 
-	creds := &imbridge.Credentials{SandboxID: sandboxID, BotID: botID, BotToken: botToken, BaseURL: baseURL}
+	creds := &imbridge.Credentials{ChannelID: channel.ID, BotID: channel.BotID, BotToken: channel.BotToken, BaseURL: channel.BaseURL}
 
 	// Send media or text.
 	if len(mediaData) > 0 {
@@ -2215,23 +2220,36 @@ func (s *Server) handleIMTelegramConfigure(w http.ResponseWriter, r *http.Reques
 		tgBaseURL = d.DefaultBaseURL()
 	}
 
-	if err := s.DB.CreateIMBinding(id, "telegram", botID, ""); err != nil {
-		log.Printf("telegram configure: create binding: %v", err)
-		http.Error(w, "failed to save binding", http.StatusInternalServerError)
+	// Create workspace-level IM channel.
+	channelID, err := s.DB.CreateIMChannel(sbx.WorkspaceID, "telegram", botID, "")
+	if err != nil {
+		log.Printf("telegram configure: create channel: %v", err)
+		http.Error(w, "failed to save channel", http.StatusInternalServerError)
 		return
 	}
-	if err := s.DB.SaveIMCredentials(id, "telegram", botID, req.BotToken, tgBaseURL); err != nil {
+	if err := s.DB.SaveIMChannelCredentials(channelID, req.BotToken, tgBaseURL); err != nil {
 		log.Printf("telegram configure: save credentials: %v", err)
 		http.Error(w, "failed to save credentials", http.StatusInternalServerError)
 		return
 	}
+	// Bind sandbox to the channel.
+	if err := s.DB.BindSandboxToChannel(id, channelID); err != nil {
+		log.Printf("telegram configure: bind sandbox: %v", err)
+		http.Error(w, "failed to bind sandbox", http.StatusInternalServerError)
+		return
+	}
 
-	if sbx.PodIP != "" && s.IMBridge != nil {
+	if s.IMBridge != nil {
 		s.IMBridge.StartPoller(imbridge.BridgeBinding{
-			Provider:     provider,
-			Credentials:  imbridge.Credentials{SandboxID: id, BotID: botID, BotToken: req.BotToken, BaseURL: tgBaseURL},
-			Cursor:       "",
-			BridgeSecret: sbx.NanoclawBridgeSecret,
+			Provider: provider,
+			Credentials: imbridge.Credentials{
+				ChannelID: channelID,
+				BotID:     botID,
+				BotToken:  req.BotToken,
+				BaseURL:   tgBaseURL,
+			},
+			ChannelID: channelID,
+			Cursor:    "",
 		})
 	}
 
@@ -2254,19 +2272,31 @@ func (s *Server) handleIMTelegramDisconnect(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	bindings, err := s.DB.ListIMBindings(id, "telegram")
-	if err != nil || len(bindings) == 0 {
-		http.Error(w, "no telegram binding found", http.StatusNotFound)
+	channels, err := s.DB.ListIMChannels(sbx.WorkspaceID)
+	if err != nil {
+		log.Printf("telegram disconnect: list channels: %v", err)
+		http.Error(w, "failed to list channels", http.StatusInternalServerError)
 		return
 	}
 
-	for _, b := range bindings {
+	found := false
+	for _, ch := range channels {
+		if ch.Provider != "telegram" {
+			continue
+		}
+		found = true
 		if s.IMBridge != nil {
-			s.IMBridge.StopPoller(id, "telegram", b.BotID)
+			s.IMBridge.StopPoller(ch.ID)
 		}
-		if err := s.DB.DeleteIMBinding(id, "telegram", b.BotID); err != nil {
-			log.Printf("telegram disconnect: delete binding: %v", err)
+		// Unbind any sandbox from this channel before deleting.
+		_ = s.DB.UnbindSandboxFromChannel(id)
+		if err := s.DB.DeleteIMChannel(ch.ID); err != nil {
+			log.Printf("telegram disconnect: delete channel %s: %v", ch.ID, err)
 		}
+	}
+	if !found {
+		http.Error(w, "no telegram binding found", http.StatusNotFound)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2324,14 +2354,22 @@ func (s *Server) handleIMMatrixConfigure(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := s.DB.CreateIMBinding(id, "matrix", botID, ""); err != nil {
-		log.Printf("matrix configure: create binding: %v", err)
-		http.Error(w, "failed to save binding", http.StatusInternalServerError)
+	// Create workspace-level IM channel.
+	channelID, err := s.DB.CreateIMChannel(sbx.WorkspaceID, "matrix", botID, "")
+	if err != nil {
+		log.Printf("matrix configure: create channel: %v", err)
+		http.Error(w, "failed to save channel", http.StatusInternalServerError)
 		return
 	}
-	if err := s.DB.SaveIMCredentials(id, "matrix", botID, req.AccessToken, req.HomeserverURL); err != nil {
+	if err := s.DB.SaveIMChannelCredentials(channelID, req.AccessToken, req.HomeserverURL); err != nil {
 		log.Printf("matrix configure: save credentials: %v", err)
 		http.Error(w, "failed to save credentials", http.StatusInternalServerError)
+		return
+	}
+	// Bind sandbox to the channel.
+	if err := s.DB.BindSandboxToChannel(id, channelID); err != nil {
+		log.Printf("matrix configure: bind sandbox: %v", err)
+		http.Error(w, "failed to bind sandbox", http.StatusInternalServerError)
 		return
 	}
 
@@ -2340,18 +2378,23 @@ func (s *Server) handleIMMatrixConfigure(w http.ResponseWriter, r *http.Request)
 		ConfigureE2EE(ctx context.Context, creds *imbridge.Credentials, recoveryKey string) error
 	}
 	if ec, ok := provider.(e2eeConfigurer); ok && req.RecoveryKey != "" {
-		creds := imbridge.Credentials{SandboxID: id, BotID: botID, BotToken: req.AccessToken, BaseURL: req.HomeserverURL}
+		creds := imbridge.Credentials{ChannelID: channelID, BotID: botID, BotToken: req.AccessToken, BaseURL: req.HomeserverURL}
 		if err := ec.ConfigureE2EE(r.Context(), &creds, req.RecoveryKey); err != nil {
 			log.Printf("matrix configure: E2EE init failed: %v", err)
 		}
 	}
 
-	if sbx.PodIP != "" && s.IMBridge != nil {
+	if s.IMBridge != nil {
 		s.IMBridge.StartPoller(imbridge.BridgeBinding{
-			Provider:     provider,
-			Credentials:  imbridge.Credentials{SandboxID: id, BotID: botID, BotToken: req.AccessToken, BaseURL: req.HomeserverURL},
-			Cursor:       "",
-			BridgeSecret: sbx.NanoclawBridgeSecret,
+			Provider: provider,
+			Credentials: imbridge.Credentials{
+				ChannelID: channelID,
+				BotID:     botID,
+				BotToken:  req.AccessToken,
+				BaseURL:   req.HomeserverURL,
+			},
+			ChannelID: channelID,
+			Cursor:    "",
 		})
 	}
 
@@ -2374,30 +2417,42 @@ func (s *Server) handleIMMatrixDisconnect(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	bindings, err := s.DB.ListIMBindings(id, "matrix")
-	if err != nil || len(bindings) == 0 {
-		http.Error(w, "no matrix binding found", http.StatusNotFound)
+	channels, err := s.DB.ListIMChannels(sbx.WorkspaceID)
+	if err != nil {
+		log.Printf("matrix disconnect: list channels: %v", err)
+		http.Error(w, "failed to list channels", http.StatusInternalServerError)
 		return
 	}
 
 	provider := s.IMBridge.GetProvider("matrix")
-	for _, b := range bindings {
+	found := false
+	for _, ch := range channels {
+		if ch.Provider != "matrix" {
+			continue
+		}
+		found = true
 		if s.IMBridge != nil {
-			s.IMBridge.StopPoller(id, "matrix", b.BotID)
+			s.IMBridge.StopPoller(ch.ID)
 		}
 		if dp, ok := provider.(imbridge.DisconnectProvider); ok {
-			dp.Disconnect(id, b.BotID)
+			dp.Disconnect(id, ch.BotID)
 		}
-		if err := s.DB.DeleteIMBinding(id, "matrix", b.BotID); err != nil {
-			log.Printf("matrix disconnect: delete binding: %v", err)
+		// Unbind any sandbox from this channel before deleting.
+		_ = s.DB.UnbindSandboxFromChannel(id)
+		if err := s.DB.DeleteIMChannel(ch.ID); err != nil {
+			log.Printf("matrix disconnect: delete channel %s: %v", ch.ID, err)
 		}
+	}
+	if !found {
+		http.Error(w, "no matrix binding found", http.StatusNotFound)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "disconnected"})
 }
 
-// handleListIMBindings returns all IM bindings for a sandbox.
+// handleListIMBindings returns all IM channels for the sandbox's workspace.
 func (s *Server) handleListIMBindings(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	sbx, ok := s.Sandboxes.Get(id)
@@ -2409,20 +2464,20 @@ func (s *Server) handleListIMBindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bindings, err := s.DB.ListIMBindings(id, "")
+	channels, err := s.DB.ListIMChannels(sbx.WorkspaceID)
 	if err != nil {
-		log.Printf("list im bindings: %v", err)
+		log.Printf("list im channels: %v", err)
 		http.Error(w, "failed to list bindings", http.StatusInternalServerError)
 		return
 	}
 
-	resp := make([]imBindingResponse, 0, len(bindings))
-	for _, b := range bindings {
+	resp := make([]imBindingResponse, 0, len(channels))
+	for _, ch := range channels {
 		resp = append(resp, imBindingResponse{
-			Provider: b.Provider,
-			BotID:    b.BotID,
-			UserID:   b.UserID,
-			BoundAt:  b.BoundAt.Format(time.RFC3339),
+			Provider: ch.Provider,
+			BotID:    ch.BotID,
+			UserID:   ch.UserID,
+			BoundAt:  ch.BoundAt.Format(time.RFC3339),
 		})
 	}
 

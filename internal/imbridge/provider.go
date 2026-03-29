@@ -24,7 +24,7 @@ type Provider interface {
 
 // Credentials holds the authentication info needed to talk to an IM API.
 type Credentials struct {
-	SandboxID string
+	ChannelID string // workspace_im_channels.id
 	BotID     string
 	BotToken  string
 	BaseURL   string
