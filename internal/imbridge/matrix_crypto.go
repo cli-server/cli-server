@@ -208,29 +208,12 @@ func (m *MatrixCryptoManager) GetOrCreate(ctx context.Context, creds *Credential
 	}
 	client.DeviceID = resp.DeviceID
 
-	cc, err := m.initCryptoHelper(ctx, client, key, recoveryKey)
+	cc, err := m.initCryptoHelper(ctx, client, key)
 	if err != nil {
-		// If init fails because the crypto DB is fresh but the server has
-		// stale keys from a previous Olm account, delete the old device
-		// and retry with a clean slate.
 		if strings.Contains(err.Error(), "not marked as shared, but there are keys on the server") {
-			log.Printf("matrix crypto: stale device keys detected, deleting device %s and retrying", client.DeviceID)
-			// Delete the old device (unauthed delete works on some homeservers for bot tokens).
-			delURL := client.BuildClientURL("v3", "devices", string(client.DeviceID))
-			delReq, _ := http.NewRequestWithContext(ctx, "DELETE", delURL, nil)
-			delReq.Header.Set("Authorization", "Bearer "+client.AccessToken)
-			if delResp, delErr := http.DefaultClient.Do(delReq); delErr == nil {
-				delResp.Body.Close()
-			}
-			// Whoami again to get new device ID (if server auto-creates).
-			if resp2, err2 := client.Whoami(ctx); err2 == nil && resp2.DeviceID != "" {
-				client.DeviceID = resp2.DeviceID
-			}
-			cc, err = m.initCryptoHelper(ctx, client, key, recoveryKey)
+			return nil, fmt.Errorf("matrix crypto: crypto database is out of sync with the server — the access token's device (%s) has keys on the server but no matching Olm account locally. Please generate a new access token and reconfigure the Matrix channel", client.DeviceID)
 		}
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 
 	// Self-verify and download key backup.
@@ -279,7 +262,7 @@ func (m *MatrixCryptoManager) Remove(sandboxID, botID string) {
 
 // initCryptoHelper creates a DB connection, crypto helper, and initializes it.
 // Returns a MatrixCryptoClient on success.
-func (m *MatrixCryptoManager) initCryptoHelper(ctx context.Context, client *mautrix.Client, accountID, recoveryKey string) (*MatrixCryptoClient, error) {
+func (m *MatrixCryptoManager) initCryptoHelper(ctx context.Context, client *mautrix.Client, accountID string) (*MatrixCryptoClient, error) {
 	sqlDB, err := sql.Open("postgres", m.cryptoDBURL)
 	if err != nil {
 		return nil, fmt.Errorf("matrix crypto: open db: %w", err)
