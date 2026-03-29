@@ -73,8 +73,26 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 		}
 	}
 
-	// On initial sync, skip message processing — only crypto state matters.
+	// On initial sync, proactively request keys for all encrypted messages
+	// we can't decrypt, so they're available when real polling starts.
+	// Don't return messages — they're historical.
 	if initialSync {
+		for _, joinedRoom := range resp.Rooms.Join {
+			for _, evt := range joinedRoom.Timeline.Events {
+				if evt.Type != event.EventEncrypted {
+					continue
+				}
+				if parseErr := evt.Content.ParseRaw(evt.Type); parseErr != nil {
+					continue
+				}
+				if _, decErr := mach.DecryptMegolmEvent(ctx, evt); decErr != nil {
+					content := evt.Content.AsEncrypted()
+					if content != nil {
+						cc.client.Crypto.RequestSession(ctx, evt.RoomID, content.SenderKey, content.SessionID, evt.Sender, content.DeviceID)
+					}
+				}
+			}
+		}
 		return nil, resp.NextBatch, nil
 	}
 
@@ -93,7 +111,6 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 					if content != nil {
 						cc.client.Crypto.RequestSession(ctx, evt.RoomID, content.SenderKey, content.SessionID, evt.Sender, content.DeviceID)
 						if mach.WaitForSession(ctx, evt.RoomID, content.SenderKey, content.SessionID, 5*time.Second) {
-							// Retry decryption after receiving the key.
 							decrypted, decErr = mach.DecryptMegolmEvent(ctx, evt)
 						}
 					}
