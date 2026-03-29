@@ -130,19 +130,24 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 			}
 
 			if evt.Type != event.EventMessage {
+				log.Printf("matrix: skipping non-message event type=%s", evt.Type.Type)
 				continue
 			}
 			if string(evt.Sender) == selfUserID {
+				log.Printf("matrix: skipping own message from %s", evt.Sender)
 				continue
 			}
 
 			if err := evt.Content.ParseRaw(evt.Type); err != nil {
+				log.Printf("matrix: ParseRaw failed for event %s: %v", evt.ID, err)
 				continue
 			}
 			msgContent := evt.Content.AsMessage()
 			if msgContent == nil {
+				log.Printf("matrix: AsMessage returned nil for event %s", evt.ID)
 				continue
 			}
+			log.Printf("matrix: got message from %s: %s", evt.Sender, msgContent.Body[:min(len(msgContent.Body), 50)])
 
 			messages = append(messages, MatrixMessage{
 				RoomID:    string(roomID),
