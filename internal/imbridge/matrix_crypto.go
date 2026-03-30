@@ -343,6 +343,10 @@ func (m *MatrixCryptoManager) GetOrCreate(ctx context.Context, creds *Credential
 	for key, c := range m.clients {
 		if strings.HasPrefix(key, creds.BotID+":") {
 			m.mu.Unlock()
+			// If recovery key is provided, run self-verify on the existing client.
+			if recoveryKey != "" {
+				m.selfVerifyAndFetchBackup(ctx, c, recoveryKey)
+			}
 			return c, nil
 		}
 	}
@@ -377,19 +381,8 @@ func (m *MatrixCryptoManager) GetOrCreate(ctx context.Context, creds *Credential
 		return nil, err
 	}
 
-	// Self-verify and download key backup.
 	if recoveryKey != "" {
-		mach := cc.cryptoHelper.Machine()
-		if err := mach.VerifyWithRecoveryKey(ctx, recoveryKey); err != nil {
-			log.Printf("matrix crypto: self-verify failed (continuing anyway): %v", err)
-		} else {
-			log.Printf("matrix crypto: device %s self-verified successfully", client.DeviceID)
-		}
-
-		// Download key backup so we can decrypt historical messages.
-		if err := fetchAndStoreKeyBackup(ctx, client, mach, recoveryKey); err != nil {
-			log.Printf("matrix crypto: key backup download failed (continuing anyway): %v", err)
-		}
+		m.selfVerifyAndFetchBackup(ctx, cc, recoveryKey)
 	}
 
 	m.mu.Lock()
@@ -423,6 +416,19 @@ func (m *MatrixCryptoManager) Remove(sandboxID, botID string) {
 		if cc.cryptoHelper != nil {
 			cc.cryptoHelper.Close()
 		}
+	}
+}
+
+// selfVerifyAndFetchBackup runs self-verification and key backup download using the recovery key.
+func (m *MatrixCryptoManager) selfVerifyAndFetchBackup(ctx context.Context, cc *MatrixCryptoClient, recoveryKey string) {
+	mach := cc.cryptoHelper.Machine()
+	if err := mach.VerifyWithRecoveryKey(ctx, recoveryKey); err != nil {
+		log.Printf("matrix crypto: self-verify failed (continuing anyway): %v", err)
+	} else {
+		log.Printf("matrix crypto: device %s self-verified successfully", cc.client.DeviceID)
+	}
+	if err := fetchAndStoreKeyBackup(ctx, cc.client, mach, recoveryKey); err != nil {
+		log.Printf("matrix crypto: key backup download failed (continuing anyway): %v", err)
 	}
 }
 
