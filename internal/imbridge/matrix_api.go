@@ -10,15 +10,20 @@ import (
 	"time"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 )
 
+// mdRenderer is a goldmark instance with GFM extensions (tables, strikethrough,
+// autolinks, task lists) enabled.
+var mdRenderer = goldmark.New(goldmark.WithExtensions(extension.GFM))
+
 // renderMarkdown converts Markdown text to HTML for use in formatted_body.
 func renderMarkdown(text string) string {
 	var buf bytes.Buffer
-	if err := goldmark.Convert([]byte(text), &buf); err != nil {
+	if err := mdRenderer.Convert([]byte(text), &buf); err != nil {
 		return ""
 	}
 	return buf.String()
