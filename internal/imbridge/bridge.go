@@ -246,13 +246,16 @@ func (b *Bridge) pollLoop(ctx context.Context, binding BridgeBinding) {
 				}
 			}
 
-			if err := b.forwardToNanoClaw(ctx, binding, msg); err != nil {
+			forwarded, err := b.forwardToNanoClaw(ctx, binding, msg)
+			if err != nil {
 				log.Printf("imbridge: forward failed channel=%s from=%s: %v (will retry next poll)",
 					channelID, msg.FromUserID, err)
 				allForwarded = false
 				break
 			}
-			b.startTypingForUser(binding, msg)
+			if forwarded {
+				b.startTypingForUser(binding, msg)
+			}
 		}
 
 		if allForwarded && result.NewCursor != "" {
@@ -270,21 +273,21 @@ func (b *Bridge) pollLoop(ctx context.Context, binding BridgeBinding) {
 
 // forwardToNanoClaw sends a message to the NanoClaw pod's bridge HTTP endpoint.
 // The target sandbox is resolved dynamically from the channel binding.
-func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, msg InboundMessage) error {
+// forwardToNanoClaw sends a message to the NanoClaw pod's bridge HTTP endpoint.
+// Returns (true, nil) if forwarded, (false, nil) if skipped (e.g. not mentioned), or (false, err) on failure.
+func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, msg InboundMessage) (bool, error) {
 	// Resolve which sandbox is bound to this channel.
 	sandboxID, podIP, bridgeSecret, err := b.db.GetSandboxForChannel(binding.ChannelID)
 	if err != nil {
-		// No running sandbox bound — return error so cursor does not advance.
-		// The message will be retried on the next poll cycle.
-		return fmt.Errorf("no running sandbox bound to channel %s", binding.ChannelID)
+		return false, fmt.Errorf("no running sandbox bound to channel %s", binding.ChannelID)
 	}
 	if podIP == "" {
-		return fmt.Errorf("sandbox %s has no PodIP (pod may be down or paused)", sandboxID)
+		return false, fmt.Errorf("sandbox %s has no PodIP (pod may be down or paused)", sandboxID)
 	}
 
 	// Skip messages in group chats that don't mention the bot (when require_mention is enabled).
 	if binding.RequireMention && msg.IsGroup && msg.Metadata["mentioned"] != "true" {
-		return nil // not mentioned — skip silently, advance cursor
+		return false, nil // not mentioned — skip silently, advance cursor
 	}
 
 	b.ensureGroupRegistered(ctx, sandboxID, msg.FromUserID)
@@ -312,7 +315,7 @@ func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, m
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshal message: %w", err)
+		return false, fmt.Errorf("marshal message: %w", err)
 	}
 
 	url := fmt.Sprintf("http://%s:3002/message", podIP)
@@ -321,21 +324,21 @@ func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, m
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+bridgeSecret)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("forward to nanoclaw: %w", err)
+		return false, fmt.Errorf("forward to nanoclaw: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("nanoclaw returned status %d", resp.StatusCode)
+		return false, fmt.Errorf("nanoclaw returned status %d", resp.StatusCode)
 	}
-	return nil
+	return true, nil
 }
 
 // ensureChatRegistered sends a /metadata request to register the chat JID.
