@@ -16,6 +16,10 @@
 | Agent type scope | `claudecode` only | Simplify implementation; Claude Code is the primary agent |
 | Task execution engine | Go Claude Agent SDK | Wraps `claude` CLI binary; aligns with official Python/TS SDKs |
 | SDK repository | Separate repo (`claude-agent-sdk-go`) | Independent module; reusable outside agentserver |
+| SDK scope | Full feature parity with TS/Python SDKs | Foundation for all subsequent phases; worth investing time upfront |
+| Cloud task receiver | Go process built with Agent SDK | Same SDK used for both task reception and execution in cloud containers |
+| Cloud LLM auth | Via existing llmproxy | Cloud agents route Claude API calls through agentserver's llmproxy |
+| Local LLM auth | User-provided (for now) | User's own claude CLI auth; agentserver may provide this in future |
 | Phase 1 worktree | Discard, restart from main | Stale worktree with outdated migration numbers |
 
 ---
@@ -56,10 +60,10 @@ Phase 5: Security + Observability ───────────────�
 ```
 
 **Delivery milestones:**
-- Phase 1 complete: Go Agent SDK usable independently
+- Phase 1 complete: Go Agent SDK usable independently, feature parity with TS/Python SDKs
 - Phase 2 complete: agents can register capabilities and discover each other
-- Phase 3 complete: agents can delegate tasks to peers and receive results
-- Phase 4 complete: AI model autonomously discovers and delegates via MCP tools
+- Phase 3 complete: task delegation infrastructure works (API + delivery + execution); external programs can create tasks via HTTP API, but the AI model cannot yet autonomously delegate (no MCP tools injected)
+- Phase 4 complete: AI model autonomously discovers and delegates via injected MCP tools; this is the phase that makes Phase 2+3 usable end-to-end
 - Phase 5 complete: production-grade security, audit trail, operator visibility
 
 ---
@@ -573,17 +577,21 @@ Background goroutine (30s sweep interval, 60s offline threshold). Marks agents a
 
 ### Task Execution Model
 
-When an agent receives a delegated task, the agentserver-agent process uses the **Go Claude Agent SDK** to execute it:
+When an agent receives a delegated task, the task receiver process uses the **Go Claude Agent SDK** to execute it. The same Go SDK serves dual roles: it is both the task receiver and the execution engine.
+
+**Cloud agents**: A lightweight Go process (`agentserver-task-runner`) runs inside the container alongside Claude Code. It listens for task HTTP requests and executes them using the Go Agent SDK. The `claude` CLI in cloud containers authenticates via the existing **llmproxy** — the `ANTHROPIC_BASE_URL` environment variable points to agentserver's LLM proxy, which handles API key management and billing.
+
+**Local agents**: The `agentserver-agent` process (already running for tunnel management) receives tasks via tunnel frames and executes them using the Go Agent SDK. The `claude` CLI uses the **user's own authentication** (OAuth login or API key already configured on the machine). In the future, agentserver may provide authentication to local agents as well.
 
 ```go
 // internal/agent/task_executor.go
 type TaskExecutor struct {
     workdir string
-    apiKey  string  // ANTHROPIC_API_KEY for Claude API access
+    env     map[string]string // environment for claude CLI (e.g., ANTHROPIC_BASE_URL for llmproxy)
 }
 
 func (e *TaskExecutor) Execute(ctx context.Context, task *TaskRequest) (*TaskResult, error) {
-    stream := agentsdk.Query(ctx, task.BuildPrompt(),
+    opts := []agentsdk.QueryOption{
         agentsdk.WithCwd(e.workdir),
         agentsdk.WithPermissionMode("bypassPermissions"),
         agentsdk.WithAllowDangerouslySkipPermissions(),
@@ -591,7 +599,11 @@ func (e *TaskExecutor) Execute(ctx context.Context, task *TaskRequest) (*TaskRes
         agentsdk.WithMaxTurns(50),
         agentsdk.WithMaxBudgetUSD(5.0),
         agentsdk.WithSystemPrompt(task.SystemContext()),
-    )
+    }
+    if len(e.env) > 0 {
+        opts = append(opts, agentsdk.WithEnv(e.env))
+    }
+    stream := agentsdk.Query(ctx, task.BuildPrompt(), opts...)
 
     var lastProgress time.Time
     for stream.Next() {
@@ -675,7 +687,7 @@ All under `/api/agent/` with `agentAuthMiddleware`:
 
 ### Task Delivery
 
-**Cloud agents** — HTTP POST to `http://{pod_ip}:{task_port}/agent/tasks`:
+**Cloud agents** — HTTP POST to `http://{pod_ip}:{task_port}/agent/tasks`, received by the `agentserver-task-runner` process inside the container:
 
 ```json
 {
@@ -686,6 +698,15 @@ All under `/api/agent/` with `agentAuthMiddleware`:
   "input": { "path": "/src/server", "focus": "bugs" }
 }
 ```
+
+The `agentserver-task-runner` is a Go binary that:
+1. Starts an HTTP server on `task_port` (e.g., 3010) inside the container
+2. Receives task requests from agentserver
+3. Spawns a `claude` CLI process via the Go Agent SDK to execute the task
+4. Reports status transitions back to agentserver via HTTP callbacks
+5. The `claude` CLI authenticates via llmproxy (`ANTHROPIC_BASE_URL` environment variable)
+
+This binary is built from the agentserver repo and included in the container image alongside the `claude` CLI.
 
 **Local agents** — New tunnel frame types:
 
@@ -754,11 +775,13 @@ Background `TaskCleanupWorker` runs daily. Deletes completed/failed tasks older 
 | Create | `internal/server/agent_tasks_test.go` | Unit tests |
 | Create | `internal/server/task_cleanup.go` | TaskCleanupWorker goroutine |
 | Create | `internal/agent/task_executor.go` | TaskExecutor using Go Agent SDK |
+| Create | `cmd/agentserver-task-runner/main.go` | Cloud container task receiver binary |
 | Modify | `internal/tunnel/stream.go` | Add StreamTypeTaskRequest/Response |
 | Modify | `internal/agent/client.go` | Handle task_request frames |
 | Modify | `internal/sandboxproxy/tunnel.go` | Handle task_response frames |
 | Modify | `internal/server/server.go` | Wire task routes |
 | Modify | `cmd/serve.go` | Start/stop TaskCleanupWorker |
+| Modify | `Dockerfile` | Include agentserver-task-runner + claude CLI |
 
 ---
 
@@ -830,7 +853,10 @@ Server sends `inject_tools` text frame to local agents:
 **Agent-side handling** (in `internal/agent/client.go`):
 1. Parse `inject_tools` control frame
 2. Start local `agentserver-mcp-bridge` process with the provided URL and token
-3. Configure Claude Code to connect to this MCP server
+3. Write MCP server configuration to Claude Code's project-level settings file (`.claude/settings.json` in the agent's working directory), adding the bridge as an MCP server entry
+4. On first `agentserver connect`, print a one-time setup instruction asking the user to restart Claude Code to pick up the new MCP configuration (subsequent connects reuse the existing config)
+
+**Alternative for already-running Claude Code**: If Claude Code supports hot-reloading MCP server config from settings.json (which it does when the file changes), step 4 is unnecessary — the bridge becomes available automatically after the settings file is updated.
 
 ### Injected MCP Tools
 
@@ -1048,6 +1074,45 @@ New endpoints under the existing cookie-auth `/api/` group:
 | MCP proxy call | proxy_token |
 | Direct fast-path (K8s) | Short-lived JWT (5min) |
 | Dashboard API | Cookie (existing auth) |
+
+### Data Sharing Between Agents
+
+Agents have isolated filesystems. When Agent A delegates a task to Agent B that involves files, the data access depends on topology:
+
+**Cloud agents in the same workspace:**
+- **Shared workspace volumes**: The existing `workspace_volumes` table supports mounting K8s PVCs. All cloud agents in a workspace can mount the same volume, giving shared read/write access.
+- This is the primary mechanism for cloud-to-cloud collaboration.
+
+**Cross-environment (local→cloud or local→local):**
+- **Task payload embedding**: For small inputs (code snippets, text), embed file content directly in the task's `input` field. This is the default for the first iteration.
+- **Git-based sharing**: For code review tasks, include a git remote URL + branch/commit in the task input. The target agent clones the repo independently.
+- **MCP proxy callback**: (Future, Phase 4+) The target agent's task executor calls back to the requester's `Read` tool via the server-side MCP proxy.
+
+**Task input schema indicates data access method:**
+```json
+{
+  "skill": "code-review",
+  "input": {
+    "data_access": "embedded",
+    "files": { "main.go": "package main\n..." },
+    "focus": "bugs and security"
+  }
+}
+```
+
+Or for git-based:
+```json
+{
+  "skill": "code-review",
+  "input": {
+    "data_access": "git",
+    "git_url": "https://github.com/org/repo.git",
+    "git_ref": "feature-branch",
+    "path": "src/server",
+    "focus": "bugs and security"
+  }
+}
+```
 
 ### Error Handling
 
