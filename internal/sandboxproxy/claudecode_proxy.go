@@ -1,6 +1,7 @@
 package sandboxproxy
 
 import (
+	"context"
 	"io"
 	"log"
 	"net/http"
@@ -50,6 +51,7 @@ func (s *Server) handleClaudeCodeSubdomainProxy(w http.ResponseWriter, r *http.R
 			Value:    token,
 			Path:     "/",
 			HttpOnly: true,
+			Secure:   true,
 			SameSite: http.SameSiteLaxMode,
 			MaxAge:   int((7 * 24 * time.Hour).Seconds()),
 		})
@@ -126,7 +128,11 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request, sbx *s
 		return
 	}
 
-	browserConn := tunnel.NewWSConn(r.Context(), browserWS)
+	// Use an independent context so that writes to the browser WebSocket
+	// are not cancelled prematurely by the HTTP request context.
+	wsCtx, wsCancel := context.WithCancel(context.Background())
+	defer wsCancel()
+	browserConn := tunnel.NewWSConn(wsCtx, browserWS)
 
 	// Bridge: browser ↔ terminal stream (xray-core style bidirectional copy).
 	done := make(chan struct{})

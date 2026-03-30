@@ -27,6 +27,7 @@ type BridgeDB interface {
 	GetChannelMeta(channelID, userID, key string) (string, error)
 	GetAllChannelMeta(channelID, userID string) (map[string]string, error)
 	GetSandboxForChannel(channelID string) (sandboxID, podIP, bridgeSecret string, err error)
+	GetChannelRequireMention(channelID string) (bool, error)
 }
 
 // SandboxResolver looks up the current state of a sandbox.
@@ -281,7 +282,8 @@ func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, m
 		return fmt.Errorf("sandbox %s has no PodIP (pod may be down or paused)", sandboxID)
 	}
 
-	b.ensureGroupRegistered(ctx, sandboxID, msg.FromUserID)
+	requireMention, _ := b.db.GetChannelRequireMention(binding.ChannelID)
+	b.ensureGroupRegistered(ctx, sandboxID, msg.FromUserID, requireMention)
 
 	if err := b.ensureChatRegistered(ctx, podIP, bridgeSecret, msg.FromUserID, msg.SenderName, binding.Provider.Name(), msg.IsGroup); err != nil {
 		log.Printf("imbridge: failed to register chat %s: %v (continuing anyway)", msg.FromUserID, err)
@@ -366,7 +368,7 @@ func (b *Bridge) ensureChatRegistered(ctx context.Context, podIP, bridgeSecret, 
 }
 
 // ensureGroupRegistered registers a chat JID as a NanoClaw group via IPC.
-func (b *Bridge) ensureGroupRegistered(ctx context.Context, sandboxID, chatJID string) {
+func (b *Bridge) ensureGroupRegistered(ctx context.Context, sandboxID, chatJID string, requireMention bool) {
 	key := sandboxID + ":" + chatJID
 	b.mu.Lock()
 	already := b.registeredGroups[key]
@@ -384,8 +386,8 @@ func (b *Bridge) ensureGroupRegistered(ctx context.Context, sandboxID, chatJID s
 	}
 
 	folderName := sanitizeFolder(chatJID)
-	ipcJSON := fmt.Sprintf(`{"type":"register_group","jid":"%s","name":"%s","folder":"%s","trigger":"Andy","requiresTrigger":false}`,
-		chatJID, chatJID, folderName)
+	ipcJSON := fmt.Sprintf(`{"type":"register_group","jid":"%s","name":"%s","folder":"%s","trigger":"Andy","requiresTrigger":%t}`,
+		chatJID, chatJID, folderName, requireMention)
 
 	script := fmt.Sprintf(
 		`mkdir -p /app/data/ipc/main/tasks && echo '%s' > /app/data/ipc/main/tasks/register-%s.json`,

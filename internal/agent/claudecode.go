@@ -112,6 +112,12 @@ func RunClaudeCode(opts ClaudeCodeOptions) {
 	// Set up terminal stream handler.
 	tunnelClient.OnTerminalStream = func(stream net.Conn) {
 		ptyMu.Lock()
+		// Reset dead PTY instance so a new one is started.
+		if ptyInstance != nil && !ptyInstance.IsAlive() {
+			log.Printf("Claude Code PTY exited, will restart on next connection")
+			ptyInstance.Close()
+			ptyInstance = nil
+		}
 		if ptyInstance == nil {
 			log.Printf("Starting Claude Code PTY...")
 			claudeBin := opts.ClaudeBin

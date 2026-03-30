@@ -264,6 +264,7 @@ func (s *Server) Router() http.Handler {
 		// Workspace IM channel management
 		r.Get("/api/workspaces/{id}/im/channels", s.handleListWorkspaceIMChannels)
 		r.Delete("/api/workspaces/{id}/im/channels/{channelId}", s.handleDeleteWorkspaceIMChannel)
+		r.Patch("/api/workspaces/{id}/im/channels/{channelId}", s.handleUpdateWorkspaceIMChannel)
 		r.Post("/api/workspaces/{id}/im/weixin/qr-start", s.handleWorkspaceWeixinQRStart)
 		r.Post("/api/workspaces/{id}/im/weixin/qr-wait", s.handleWorkspaceWeixinQRWait)
 		r.Post("/api/workspaces/{id}/im/telegram/configure", s.handleWorkspaceTelegramConfigure)
@@ -2497,20 +2498,22 @@ func (s *Server) handleListWorkspaceIMChannels(w http.ResponseWriter, r *http.Re
 	}
 
 	type channelResp struct {
-		ID       string `json:"id"`
-		Provider string `json:"provider"`
-		BotID    string `json:"bot_id"`
-		UserID   string `json:"user_id,omitempty"`
-		BoundAt  string `json:"bound_at"`
+		ID             string `json:"id"`
+		Provider       string `json:"provider"`
+		BotID          string `json:"bot_id"`
+		UserID         string `json:"user_id,omitempty"`
+		RequireMention bool   `json:"require_mention"`
+		BoundAt        string `json:"bound_at"`
 	}
 	resp := make([]channelResp, 0, len(channels))
 	for _, ch := range channels {
 		resp = append(resp, channelResp{
-			ID:       ch.ID,
-			Provider: ch.Provider,
-			BotID:    ch.BotID,
-			UserID:   ch.UserID,
-			BoundAt:  ch.BoundAt.Format(time.RFC3339),
+			ID:             ch.ID,
+			Provider:       ch.Provider,
+			BotID:          ch.BotID,
+			UserID:         ch.UserID,
+			RequireMention: ch.RequireMention,
+			BoundAt:        ch.BoundAt.Format(time.RFC3339),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -2546,6 +2549,38 @@ func (s *Server) handleDeleteWorkspaceIMChannel(w http.ResponseWriter, r *http.R
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleUpdateWorkspaceIMChannel(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "id")
+	channelID := chi.URLParam(r, "channelId")
+	if _, ok := s.requireWorkspaceMember(w, r, wsID); !ok {
+		return
+	}
+
+	ch, err := s.DB.GetIMChannel(channelID)
+	if err != nil || ch.WorkspaceID != wsID {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		RequireMention *bool `json:"require_mention"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.RequireMention != nil {
+		if err := s.DB.UpdateIMChannelSettings(channelID, *req.RequireMention); err != nil {
+			http.Error(w, "failed to update channel", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }
 
 func (s *Server) handleWorkspaceWeixinQRStart(w http.ResponseWriter, r *http.Request) {

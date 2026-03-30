@@ -4,15 +4,16 @@ import "time"
 
 // IMChannel represents a row in the workspace_im_channels table.
 type IMChannel struct {
-	ID          string
-	WorkspaceID string
-	Provider    string
-	BotID       string
-	UserID      string
-	BotToken    string
-	BaseURL     string
-	Cursor      string
-	BoundAt     time.Time
+	ID             string
+	WorkspaceID    string
+	Provider       string
+	BotID          string
+	UserID         string
+	BotToken       string
+	BaseURL        string
+	Cursor         string
+	RequireMention bool
+	BoundAt        time.Time
 }
 
 // CreateIMChannel inserts or updates a workspace IM channel record.
@@ -45,10 +46,10 @@ func (db *DB) GetIMChannel(channelID string) (*IMChannel, error) {
 	c := &IMChannel{}
 	var botToken, baseURL, cursor *string
 	err := db.QueryRow(
-		`SELECT id, workspace_id, provider, bot_id, user_id, bot_token, base_url, cursor, bound_at
+		`SELECT id, workspace_id, provider, bot_id, user_id, bot_token, base_url, cursor, require_mention, bound_at
 		FROM workspace_im_channels WHERE id = $1`,
 		channelID,
-	).Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.BoundAt)
+	).Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.RequireMention, &c.BoundAt)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +68,7 @@ func (db *DB) GetIMChannel(channelID string) (*IMChannel, error) {
 // ListIMChannels returns all IM channels for a workspace.
 func (db *DB) ListIMChannels(workspaceID string) ([]IMChannel, error) {
 	rows, err := db.Query(
-		`SELECT id, workspace_id, provider, bot_id, user_id, bot_token, base_url, cursor, bound_at
+		`SELECT id, workspace_id, provider, bot_id, user_id, bot_token, base_url, cursor, require_mention, bound_at
 		FROM workspace_im_channels WHERE workspace_id = $1 ORDER BY bound_at`,
 		workspaceID,
 	)
@@ -80,7 +81,7 @@ func (db *DB) ListIMChannels(workspaceID string) ([]IMChannel, error) {
 	for rows.Next() {
 		var c IMChannel
 		var botToken, baseURL, cursor *string
-		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.BoundAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.RequireMention, &c.BoundAt); err != nil {
 			return nil, err
 		}
 		if botToken != nil {
@@ -101,7 +102,7 @@ func (db *DB) ListIMChannels(workspaceID string) ([]IMChannel, error) {
 // Used by RestoreIMBridgePollers.
 func (db *DB) ListAllActiveChannels(provider string) ([]IMChannel, error) {
 	rows, err := db.Query(
-		`SELECT id, workspace_id, provider, bot_id, user_id, bot_token, base_url, cursor, bound_at
+		`SELECT id, workspace_id, provider, bot_id, user_id, bot_token, base_url, cursor, require_mention, bound_at
 		FROM workspace_im_channels
 		WHERE provider = $1 AND bot_token IS NOT NULL`,
 		provider,
@@ -115,7 +116,7 @@ func (db *DB) ListAllActiveChannels(provider string) ([]IMChannel, error) {
 	for rows.Next() {
 		var c IMChannel
 		var botToken, baseURL, cursor *string
-		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.BoundAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.RequireMention, &c.BoundAt); err != nil {
 			return nil, err
 		}
 		if botToken != nil {
@@ -146,6 +147,22 @@ func (db *DB) UpdateIMChannelCursor(channelID, cursor string) error {
 	_, err := db.Exec(
 		`UPDATE workspace_im_channels SET cursor = $1 WHERE id = $2`,
 		cursor, channelID,
+	)
+	return err
+}
+
+// GetChannelRequireMention returns the require_mention flag for a channel.
+func (db *DB) GetChannelRequireMention(channelID string) (bool, error) {
+	var v bool
+	err := db.QueryRow(`SELECT require_mention FROM workspace_im_channels WHERE id = $1`, channelID).Scan(&v)
+	return v, err
+}
+
+// UpdateIMChannelSettings updates channel settings.
+func (db *DB) UpdateIMChannelSettings(channelID string, requireMention bool) error {
+	_, err := db.Exec(
+		`UPDATE workspace_im_channels SET require_mention = $1 WHERE id = $2`,
+		requireMention, channelID,
 	)
 	return err
 }
@@ -237,12 +254,12 @@ func (db *DB) GetIMChannelForSandbox(sandboxID string) (*IMChannel, error) {
 	c := &IMChannel{}
 	var botToken, baseURL, cursor *string
 	err := db.QueryRow(
-		`SELECT c.id, c.workspace_id, c.provider, c.bot_id, c.user_id, c.bot_token, c.base_url, c.cursor, c.bound_at
+		`SELECT c.id, c.workspace_id, c.provider, c.bot_id, c.user_id, c.bot_token, c.base_url, c.cursor, c.require_mention, c.bound_at
 		FROM workspace_im_channels c
 		JOIN sandboxes s ON s.im_channel_id = c.id
 		WHERE s.id = $1`,
 		sandboxID,
-	).Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.BoundAt)
+	).Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.RequireMention, &c.BoundAt)
 	if err != nil {
 		return nil, err
 	}

@@ -77,9 +77,11 @@ func newTunnel(ctx context.Context, sandboxID string, ws *websocket.Conn) *Tunne
 	if err != nil {
 		log.Printf("tunnel %s: failed to create yamux session: %v", sandboxID, err)
 		conn.Close()
+		done := make(chan struct{})
+		close(done) // unblock waiters immediately
 		return &Tunnel{
 			SandboxID: sandboxID,
-			done:      make(chan struct{}),
+			done:      done,
 		}
 	}
 	t := &Tunnel{

@@ -32,6 +32,7 @@ import {
   renameWorkspace,
   listWorkspaceIMChannels,
   deleteWorkspaceIMChannel,
+  updateWorkspaceIMChannel,
   type Workspace,
   type WorkspaceMember,
   type WorkspaceSandboxDefaults,
@@ -714,13 +715,29 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
                       {new Date(ch.bound_at).toLocaleString()}
                     </span>
                   </div>
-                  <button
-                    onClick={() => setConfirmDeleteChannel(ch)}
-                    className="rounded p-1 text-[var(--muted-foreground)] hover:bg-red-500/10 hover:text-red-400 transition-colors"
-                    title="Delete channel"
-                  >
-                    <Trash2 size={13} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-[11px] text-[var(--muted-foreground)] cursor-pointer" title="Only reply when @mentioned in group chats">
+                      <input
+                        type="checkbox"
+                        checked={ch.require_mention}
+                        onChange={async (e) => {
+                          try {
+                            await updateWorkspaceIMChannel(workspace.id, ch.id, { require_mention: e.target.checked })
+                            loadChannels()
+                          } catch {}
+                        }}
+                        className="rounded"
+                      />
+                      @mention
+                    </label>
+                    <button
+                      onClick={() => setConfirmDeleteChannel(ch)}
+                      className="rounded p-1 text-[var(--muted-foreground)] hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                      title="Delete channel"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

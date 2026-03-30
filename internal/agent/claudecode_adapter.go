@@ -53,8 +53,14 @@ func (p *ClaudeCodePTY) Resize(cols, rows uint16) error {
 func (p *ClaudeCodePTY) Close() error {
 	if p.cmd.Process != nil {
 		p.cmd.Process.Kill()
+		p.cmd.Wait() // reap the zombie process
 	}
 	return p.ptmx.Close()
+}
+
+// IsAlive reports whether the underlying process is still running.
+func (p *ClaudeCodePTY) IsAlive() bool {
+	return p.cmd.ProcessState == nil // nil means Wait() hasn't returned yet
 }
 
 // BridgeTerminalStream bridges a yamux terminal stream to a PTY.

@@ -443,6 +443,7 @@ export interface IMChannel {
   provider: string
   bot_id: string
   user_id: string
+  require_mention: boolean
   bound_at: string
 }
 
@@ -450,6 +451,15 @@ export async function listWorkspaceIMChannels(workspaceId: string): Promise<{ ch
   const res = await fetch(`/api/workspaces/${workspaceId}/im/channels`)
   if (!res.ok) throw new Error('Failed to list IM channels')
   return res.json()
+}
+
+export async function updateWorkspaceIMChannel(workspaceId: string, channelId: string, settings: { require_mention?: boolean }): Promise<void> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/im/channels/${channelId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
+  if (!res.ok) throw new Error('Failed to update IM channel')
 }
 
 export async function deleteWorkspaceIMChannel(workspaceId: string, channelId: string): Promise<void> {

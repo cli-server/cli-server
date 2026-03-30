@@ -39,24 +39,46 @@
     term.open(document.getElementById('terminal'));
     fitAddon.fit();
 
+    let dataDisposable = null;
+    let currentWS = null;
+
+    function sendResize() {
+      fitAddon.fit();
+      if (currentWS && currentWS.readyState === WebSocket.OPEN) {
+        const msg = JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows });
+        currentWS.send(new Uint8Array([0x01, ...new TextEncoder().encode(msg)]));
+      }
+    }
+
+    window.addEventListener('resize', sendResize);
+
     function connect() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(proto + '//' + location.host + '/ws/terminal');
       ws.binaryType = 'arraybuffer';
+      currentWS = ws;
 
       ws.onopen = function() {
         statusEl.textContent = 'Connected';
         statusEl.className = 'connected';
-        // Send initial resize.
-        const msg = JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows });
-        ws.send(new Uint8Array([0x01, ...new TextEncoder().encode(msg)]));
+        sendResize();
+
+        // Re-register onData handler for this WebSocket (dispose previous).
+        if (dataDisposable) dataDisposable.dispose();
+        dataDisposable = term.onData(function(data) {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          const encoded = new TextEncoder().encode(data);
+          const frame = new Uint8Array(1 + encoded.length);
+          frame[0] = 0x00;
+          frame.set(encoded, 1);
+          ws.send(frame);
+        });
       };
 
       ws.onmessage = function(e) {
         if (e.data instanceof ArrayBuffer) {
           const buf = new Uint8Array(e.data);
           if (buf.length > 0 && buf[0] === 0x00) {
-            // Data frame: skip prefix byte.
             term.write(buf.subarray(1));
           }
         }
@@ -72,23 +94,6 @@
       ws.onerror = function() {
         ws.close();
       };
-
-      term.onData(function(data) {
-        if (ws.readyState !== WebSocket.OPEN) return;
-        const encoded = new TextEncoder().encode(data);
-        const frame = new Uint8Array(1 + encoded.length);
-        frame[0] = 0x00; // Data frame prefix.
-        frame.set(encoded, 1);
-        ws.send(frame);
-      });
-
-      window.addEventListener('resize', function() {
-        fitAddon.fit();
-        if (ws.readyState === WebSocket.OPEN) {
-          const msg = JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows });
-          ws.send(new Uint8Array([0x01, ...new TextEncoder().encode(msg)]));
-        }
-      });
     }
 
     connect();

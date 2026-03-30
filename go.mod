@@ -9,6 +9,7 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
+	github.com/hashicorp/yamux v0.1.2
 	github.com/lib/pq v1.11.2
 	github.com/shirou/gopsutil/v4 v4.26.2
 	github.com/spf13/cobra v1.10.2
@@ -62,7 +63,6 @@ require (
 	github.com/go-openapi/swag/yamlutils v0.25.4 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
-	github.com/hashicorp/yamux v0.1.2 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
