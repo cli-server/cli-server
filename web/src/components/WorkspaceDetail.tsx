@@ -575,23 +575,13 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div className="max-w-2xl">
-      {/* ModelServer Connection */}
-      <div className="mb-6">
-        <div className="flex items-center gap-2 mb-3">
-          <h3 className="text-base font-semibold text-[var(--foreground)]">ModelServer</h3>
-        </div>
-        {msStatus?.connected ? (
-          <div className="p-4 border border-[var(--border)] rounded-lg bg-[var(--card)]">
-            <p className="mb-2 text-sm text-[var(--foreground)]">
-              Connected to project: <strong>{msStatus.project_name}</strong>
-            </p>
-            {msStatus.models && msStatus.models.length > 0 && (
-              <div className="flex flex-wrap gap-1 mb-3">
-                {msStatus.models.map(m => (
-                  <span key={m.id} className="px-2 py-0.5 text-xs rounded bg-[var(--muted)] text-[var(--muted-foreground)]">{m.id}</span>
-                ))}
-              </div>
-            )}
+      <h3 className="text-base font-semibold text-[var(--foreground)] mb-4">LLM Provider</h3>
+
+      {/* ModelServer */}
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] mb-4">
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
+          <span className="text-sm font-medium text-[var(--foreground)]">ModelServer</span>
+          {msStatus?.connected && (
             <div className="flex gap-2">
               <button
                 onClick={() => { window.location.href = `/api/workspaces/${workspaceId}/modelserver/connect` }}
@@ -609,28 +599,48 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
                 Disconnect
               </button>
             </div>
-          </div>
-        ) : (
-          <button
-            onClick={() => { window.location.href = `/api/workspaces/${workspaceId}/modelserver/connect` }}
-            className="rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)]"
-          >
-            Connect to ModelServer
-          </button>
-        )}
+          )}
+        </div>
+        <div className="px-5 py-4">
+          {msStatus?.connected ? (
+            <div>
+              <p className="mb-2 text-sm text-[var(--foreground)]">
+                Connected to project: <strong>{msStatus.project_name}</strong>
+              </p>
+              {msStatus.models && msStatus.models.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {msStatus.models.map(m => (
+                    <span key={m.id} className="px-2 py-0.5 text-xs rounded bg-[var(--muted)] text-[var(--muted-foreground)]">{m.id}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-[var(--muted-foreground)]">Not connected</span>
+              <button
+                onClick={() => { window.location.href = `/api/workspaces/${workspaceId}/modelserver/connect` }}
+                className="rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)]"
+              >
+                Connect
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {msStatus?.connected && (
-        <p className="text-sm text-[var(--muted-foreground)] mb-4">
-          Manual LLM configuration below is overridden by the ModelServer connection.
+        <p className="text-xs text-[var(--muted-foreground)] mb-4">
+          Custom provider configuration below is overridden by the ModelServer connection.
         </p>
       )}
 
+      {/* Custom Provider */}
       <div className="rounded-lg border border-[var(--border)] bg-[var(--card)]">
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
           <div className="flex items-center gap-2">
             <Key size={14} className="text-[var(--muted-foreground)]" />
-            <span className="text-sm font-medium text-[var(--foreground)]">LLM Provider</span>
+            <span className="text-sm font-medium text-[var(--foreground)]">Custom Provider</span>
           </div>
           <div className="flex gap-2">
             <button onClick={startEdit} className="rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)]">
