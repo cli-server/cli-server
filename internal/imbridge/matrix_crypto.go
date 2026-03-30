@@ -369,6 +369,9 @@ func (m *MatrixCryptoManager) GetOrCreate(ctx context.Context, creds *Credential
 	m.mu.Lock()
 	if c, ok := m.clients[key]; ok {
 		m.mu.Unlock()
+		if recoveryKey != "" {
+			m.selfVerifyAndFetchBackup(ctx, c, recoveryKey)
+		}
 		return c, nil
 	}
 	m.mu.Unlock()
@@ -389,6 +392,9 @@ func (m *MatrixCryptoManager) GetOrCreate(ctx context.Context, creds *Credential
 	if existing, ok := m.clients[key]; ok {
 		m.mu.Unlock()
 		cc.cryptoHelper.Close()
+		if recoveryKey != "" {
+			m.selfVerifyAndFetchBackup(ctx, existing, recoveryKey)
+		}
 		return existing, nil
 	}
 	m.clients[key] = cc
