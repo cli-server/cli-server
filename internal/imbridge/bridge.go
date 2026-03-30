@@ -56,7 +56,7 @@ type Bridge struct {
 	exec             ExecCommander
 	providers        map[string]Provider
 	pollers          map[string]context.CancelFunc // key: channelID
-	registeredGroups map[string]bool               // key: "sandboxID:chatJID"
+	registeredGroups map[string]string             // key: "sandboxID:chatJID" → cached settings hash
 	typingSessions   map[string]func()             // key: "channelID:userID" → cancel func
 	mu               sync.Mutex
 }
@@ -73,7 +73,7 @@ func NewBridge(db BridgeDB, resolver SandboxResolver, exec ExecCommander, provid
 		exec:             exec,
 		providers:        pm,
 		pollers:          make(map[string]context.CancelFunc),
-		registeredGroups: make(map[string]bool),
+		registeredGroups: make(map[string]string),
 		typingSessions:   make(map[string]func()),
 	}
 }
@@ -368,40 +368,46 @@ func (b *Bridge) ensureChatRegistered(ctx context.Context, podIP, bridgeSecret, 
 }
 
 // ensureGroupRegistered registers a chat JID as a NanoClaw group via IPC.
+// Re-registers if the settings (e.g. requireMention) have changed.
 func (b *Bridge) ensureGroupRegistered(ctx context.Context, sandboxID, chatJID string, requireMention bool) {
-	key := sandboxID + ":" + chatJID
-	b.mu.Lock()
-	already := b.registeredGroups[key]
-	if !already {
-		b.registeredGroups[key] = true
-	}
-	b.mu.Unlock()
-	if already {
+	if b.exec == nil {
 		return
 	}
 
-	if b.exec == nil {
-		log.Printf("imbridge: no exec commander, cannot register group %s in sandbox %s", chatJID, sandboxID)
+	// Cache includes settings so changes trigger re-registration.
+	key := sandboxID + ":" + chatJID
+	settingsHash := fmt.Sprintf("mention=%t", requireMention)
+	b.mu.Lock()
+	if b.registeredGroups[key] == settingsHash {
+		b.mu.Unlock()
 		return
 	}
+	b.registeredGroups[key] = settingsHash
+	b.mu.Unlock()
 
 	folderName := sanitizeFolder(chatJID)
-	ipcJSON := fmt.Sprintf(`{"type":"register_group","jid":"%s","name":"%s","folder":"%s","trigger":"Andy","requiresTrigger":%t}`,
-		chatJID, chatJID, folderName, requireMention)
+
+	// Use json.Marshal to safely encode the payload (avoids shell injection via chatJID).
+	ipcData, _ := json.Marshal(map[string]interface{}{
+		"type":            "register_group",
+		"jid":             chatJID,
+		"name":            chatJID,
+		"folder":          folderName,
+		"trigger":         "Andy",
+		"requiresTrigger": requireMention,
+	})
+	b64 := base64.StdEncoding.EncodeToString(ipcData)
 
 	script := fmt.Sprintf(
-		`mkdir -p /app/data/ipc/main/tasks && echo '%s' > /app/data/ipc/main/tasks/register-%s.json`,
-		ipcJSON, folderName)
+		`mkdir -p /app/data/ipc/main/tasks && echo %s | base64 -d > /app/data/ipc/main/tasks/register-%s.json`,
+		b64, folderName)
 
-	_, err := b.exec.ExecSimple(ctx, sandboxID, []string{"sh", "-c", script})
-	if err != nil {
+	if _, err := b.exec.ExecSimple(ctx, sandboxID, []string{"sh", "-c", script}); err != nil {
 		log.Printf("imbridge: failed to register group %s in sandbox %s: %v", chatJID, sandboxID, err)
 		b.mu.Lock()
 		delete(b.registeredGroups, key)
 		b.mu.Unlock()
-		return
 	}
-	log.Printf("imbridge: registered group %s (folder=%s) in sandbox %s via IPC", chatJID, folderName, sandboxID)
 }
 
 // sanitizeFolder converts a JID to a filesystem-safe folder name.
