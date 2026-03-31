@@ -32,6 +32,7 @@ func (p *WeixinProvider) Poll(ctx context.Context, creds *Credentials, cursor st
 	// Handle API-level errors
 	if resp.Ret != 0 || resp.ErrCode != 0 {
 		if resp.ErrCode == weixin.SessionExpiredErrCode || resp.Ret == weixin.SessionExpiredErrCode {
+			log.Printf("imbridge: weixin session expired for bot=%s, backing off 5m", creds.BotID)
 			return &PollResult{ShouldBackoff: 5 * time.Minute}, nil
 		}
 		return nil, fmt.Errorf("ilink API error: ret=%d errcode=%d errmsg=%s", resp.Ret, resp.ErrCode, resp.ErrMsg)

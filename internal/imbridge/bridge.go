@@ -246,6 +246,7 @@ func (b *Bridge) pollLoop(ctx context.Context, binding BridgeBinding) {
 		}
 
 		if result.ShouldBackoff > 0 {
+			log.Printf("imbridge: provider requested backoff=%v channel=%s provider=%s", result.ShouldBackoff, channelID, providerName)
 			sleepCtx(ctx, result.ShouldBackoff)
 			continue
 		}
