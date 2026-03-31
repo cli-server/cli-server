@@ -476,9 +476,10 @@ type sandboxResponse struct {
 	CPU             int     `json:"cpu,omitempty"`
 	Memory          int64   `json:"memory,omitempty"`
 	IdleTimeout     *int    `json:"idle_timeout,omitempty"`
-	AgentInfo       *agentInfoResponse `json:"agent_info,omitempty"`
-	WeixinBindings  []imBindingResponse `json:"weixin_bindings,omitempty"`
-	IMBindings      []imBindingResponse `json:"im_bindings,omitempty"`
+	AgentInfo       *agentInfoResponse     `json:"agent_info,omitempty"`
+	WeixinBindings  []imBindingResponse    `json:"weixin_bindings,omitempty"`
+	IMBindings      []imBindingResponse    `json:"im_bindings,omitempty"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
 }
 
 func (s *Server) toWorkspaceResponse(ws *db.Workspace) workspaceResponse {
@@ -570,6 +571,9 @@ func (s *Server) toSandboxResponse(r *http.Request, sbx *sbxstore.Sandbox, authT
 				UpdatedAt:       ai.UpdatedAt.Format(time.RFC3339),
 			}
 		}
+	}
+	if len(sbx.Metadata) > 0 {
+		resp.Metadata = sbx.Metadata
 	}
 	return resp
 }
@@ -1162,11 +1166,12 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	memBytes := wd.MaxSandboxMemory // already int64 bytes
 
 	var req struct {
-		Name        string `json:"name"`
-		Type        string `json:"type"`
-		CPU         *int   `json:"cpu"`
-		Memory      *int64 `json:"memory"`
-		IdleTimeout *int   `json:"idle_timeout"`
+		Name          string                 `json:"name"`
+		Type          string                 `json:"type"`
+		CPU           *int                   `json:"cpu"`
+		Memory        *int64                 `json:"memory"`
+		IdleTimeout   *int                   `json:"idle_timeout"`
+		Metadata      map[string]interface{} `json:"metadata"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		req.Name = "New Sandbox"
@@ -1276,7 +1281,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	var sbx *sbxstore.Sandbox
 	var createErr error
 	for attempts := 0; attempts < 3; attempts++ {
-		sbx, createErr = s.Sandboxes.Create(id, wsID, req.Name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, sid, cpuMillis, memBytes, idleTimeout)
+		sbx, createErr = s.Sandboxes.Create(id, wsID, req.Name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, sid, cpuMillis, memBytes, idleTimeout, req.Metadata)
 		if createErr == nil {
 			break
 		}
@@ -1311,6 +1316,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	if sandboxType == "nanoclaw" {
 		startOpts.NanoclawBridgeSecret = sbx.NanoclawBridgeSecret
 		startOpts.SandboxID = id
+		startOpts.AssistantName = sbx.MetadataString("assistant_name")
 	}
 	// Priority: modelserver > BYOK > platform default
 	if msConn != nil {

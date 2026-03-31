@@ -5,7 +5,7 @@ import { getWorkspaceDefaults, type WorkspaceSandboxDefaults } from '../lib/api'
 interface CreateSandboxModalProps {
   workspaceId: string
   onClose: () => void
-  onCreate: (name: string, type: 'opencode' | 'nanoclaw', cpu?: number, memory?: number, idleTimeout?: number) => void
+  onCreate: (name: string, type: 'opencode' | 'nanoclaw', cpu?: number, memory?: number, idleTimeout?: number, metadata?: Record<string, unknown>) => void
   creating: boolean
 }
 
@@ -22,6 +22,7 @@ export function CreateSandboxModal({ workspaceId, onClose, onCreate, creating }:
   // Idle timeout in minutes (display), stored as seconds internally
   const [timeoutMinutes, setTimeoutMinutes] = useState<string>('')
 
+  const [assistantName, setAssistantName] = useState('')
   const [validationError, setValidationError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -89,7 +90,11 @@ export function CreateSandboxModal({ workspaceId, onClose, onCreate, creating }:
     e.preventDefault()
     const resources = validate()
     if (!resources) return
-    onCreate(name, sandboxType, resources.cpu, resources.memory, resources.idleTimeout)
+    const metadata: Record<string, unknown> = {}
+    if (sandboxType === 'nanoclaw' && assistantName.trim()) {
+      metadata.assistant_name = assistantName.trim()
+    }
+    onCreate(name, sandboxType, resources.cpu, resources.memory, resources.idleTimeout, Object.keys(metadata).length > 0 ? metadata : undefined)
   }
 
   return (
@@ -146,6 +151,24 @@ export function CreateSandboxModal({ workspaceId, onClose, onCreate, creating }:
               </button>
             </div>
           </div>
+
+          {sandboxType === 'nanoclaw' && (
+            <div>
+              <label className="block text-sm font-medium text-[var(--foreground)] mb-1">
+                Assistant Name
+                <span className="ml-1 text-xs font-normal text-[var(--muted-foreground)]">
+                  default: Andy
+                </span>
+              </label>
+              <input
+                type="text"
+                value={assistantName}
+                onChange={(e) => setAssistantName(e.target.value)}
+                placeholder="Andy"
+                className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
+              />
+            </div>
+          )}
 
           {loadingDefaults ? (
             <div className="flex items-center justify-center gap-2 py-3 text-sm text-[var(--muted-foreground)]">

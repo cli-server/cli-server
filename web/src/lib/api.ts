@@ -314,6 +314,7 @@ export async function createSandbox(
   cpu?: number,
   memory?: number,
   idleTimeout?: number,
+  metadata?: Record<string, unknown>,
 ): Promise<Sandbox> {
   const body: Record<string, unknown> = {
     name: name || 'New Sandbox',
@@ -322,6 +323,7 @@ export async function createSandbox(
   if (cpu !== undefined) body.cpu = cpu
   if (memory !== undefined) body.memory = memory
   if (idleTimeout !== undefined) body.idle_timeout = idleTimeout
+  if (metadata !== undefined) body.metadata = metadata
   const res = await fetch(`/api/workspaces/${workspaceId}/sandboxes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

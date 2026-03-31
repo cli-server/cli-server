@@ -26,7 +26,7 @@ type BridgeDB interface {
 	UpsertChannelMeta(channelID, userID, key, value string) error
 	GetChannelMeta(channelID, userID, key string) (string, error)
 	GetAllChannelMeta(channelID, userID string) (map[string]string, error)
-	GetSandboxForChannel(channelID string) (sandboxID, podIP, bridgeSecret string, err error)
+	GetSandboxForChannel(channelID string) (sandboxID, podIP, bridgeSecret, assistantName string, err error)
 }
 
 // SandboxResolver looks up the current state of a sandbox.
@@ -291,7 +291,7 @@ func (b *Bridge) pollLoop(ctx context.Context, binding BridgeBinding) {
 // Returns (true, nil) if forwarded, (false, nil) if skipped (e.g. not mentioned), or (false, err) on failure.
 func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, msg InboundMessage) (bool, error) {
 	// Resolve which sandbox is bound to this channel.
-	sandboxID, podIP, bridgeSecret, err := b.db.GetSandboxForChannel(binding.ChannelID)
+	sandboxID, podIP, bridgeSecret, assistantName, err := b.db.GetSandboxForChannel(binding.ChannelID)
 	if err != nil {
 		return false, fmt.Errorf("no running sandbox bound to channel %s", binding.ChannelID)
 	}
@@ -304,7 +304,7 @@ func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, m
 		return false, nil // not mentioned — skip silently, advance cursor
 	}
 
-	b.ensureGroupRegistered(ctx, sandboxID, msg.FromUserID)
+	b.ensureGroupRegistered(ctx, sandboxID, msg.FromUserID, assistantName)
 
 	if err := b.ensureChatRegistered(ctx, podIP, bridgeSecret, msg.FromUserID, msg.SenderName, binding.Provider.Name(), msg.IsGroup); err != nil {
 		log.Printf("imbridge: failed to register chat %s: %v (continuing anyway)", msg.FromUserID, err)
@@ -389,15 +389,19 @@ func (b *Bridge) ensureChatRegistered(ctx context.Context, podIP, bridgeSecret, 
 }
 
 // ensureGroupRegistered registers a chat JID as a NanoClaw group via IPC.
+// assistantName is used as the trigger name; defaults to "Andy" if empty.
 // Re-registers if the settings (e.g. requireMention) have changed.
-func (b *Bridge) ensureGroupRegistered(ctx context.Context, sandboxID, chatJID string) {
+func (b *Bridge) ensureGroupRegistered(ctx context.Context, sandboxID, chatJID, assistantName string) {
 	if b.exec == nil {
 		return
+	}
+	if assistantName == "" {
+		assistantName = "Andy"
 	}
 
 	// Cache includes settings so changes trigger re-registration.
 	key := sandboxID + ":" + chatJID
-	settingsHash := "v1"
+	settingsHash := "v2:" + assistantName
 	b.mu.Lock()
 	if b.registeredGroups[key] == settingsHash {
 		b.mu.Unlock()
@@ -414,7 +418,7 @@ func (b *Bridge) ensureGroupRegistered(ctx context.Context, sandboxID, chatJID s
 		"jid":             chatJID,
 		"name":            chatJID,
 		"folder":          folderName,
-		"trigger":         "Andy",
+		"trigger":         assistantName,
 		"requiresTrigger": false,
 	})
 	b64 := base64.StdEncoding.EncodeToString(ipcData)

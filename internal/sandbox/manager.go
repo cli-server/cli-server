@@ -409,7 +409,7 @@ fs.writeFileSync(path, JSON.stringify(existing, null, 2));
 		// Use the raw LLM proxy URL without path for NanoClaw.
 		nanoclawProxyURL := strings.TrimSuffix(proxyBaseURL, "/v1")
 		nanoclawCfg := BuildNanoclawConfig(
-			nanoclawProxyURL, opts.ProxyToken, "Andy",
+			nanoclawProxyURL, opts.ProxyToken, opts.AssistantName,
 			imBridgeURL, bridgeSecret,
 			opts.BYOKBaseURL, opts.BYOKAPIKey,
 		)

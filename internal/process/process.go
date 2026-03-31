@@ -36,6 +36,7 @@ type StartOptions struct {
 	CustomModels     []LLMModel    // modelserver models (for OpenClaw, independent of BYOK)
 	NanoclawBridgeSecret string        // nanoclaw only: shared secret for bridge HTTP auth
 	SandboxID            string        // sandbox ID (used for nanoclaw bridge URL construction)
+	AssistantName        string        // nanoclaw only: configurable assistant name (default "Andy")
 }
 
 // Manager manages process lifecycles.

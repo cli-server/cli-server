@@ -1,6 +1,9 @@
 package db
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // IMChannel represents a row in the workspace_im_channels table.
 type IMChannel struct {
@@ -239,12 +242,21 @@ func (db *DB) UnbindSandboxFromChannel(sandboxID string) error {
 
 // GetSandboxForChannel returns the running sandbox bound to a channel.
 // Returns sql.ErrNoRows if no sandbox is bound or none is running.
-func (db *DB) GetSandboxForChannel(channelID string) (sandboxID, podIP, bridgeSecret string, err error) {
+func (db *DB) GetSandboxForChannel(channelID string) (sandboxID, podIP, bridgeSecret, assistantName string, err error) {
+	var metadataJSON []byte
 	err = db.QueryRow(
-		`SELECT id, pod_ip, nanoclaw_bridge_secret FROM sandboxes
+		`SELECT id, pod_ip, nanoclaw_bridge_secret, metadata FROM sandboxes
 		WHERE im_channel_id = $1 AND status = 'running' AND pod_ip != ''`,
 		channelID,
-	).Scan(&sandboxID, &podIP, &bridgeSecret)
+	).Scan(&sandboxID, &podIP, &bridgeSecret, &metadataJSON)
+	if err == nil && len(metadataJSON) > 0 {
+		var meta map[string]interface{}
+		if json.Unmarshal(metadataJSON, &meta) == nil {
+			if v, ok := meta["assistant_name"].(string); ok {
+				assistantName = v
+			}
+		}
+	}
 	return
 }
 

@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -28,13 +29,17 @@ type Sandbox struct {
 	CPU         *int
 	Memory      *int64
 	IdleTimeout *int
+	Metadata    json.RawMessage
 }
 
-func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID string, cpu int, memory int64, idleTimeout *int) error {
+func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID string, cpu int, memory int64, idleTimeout *int, metadata json.RawMessage) error {
+	if len(metadata) == 0 {
+		metadata = json.RawMessage("{}")
+	}
 	_, err := db.Exec(
-		`INSERT INTO sandboxes (id, workspace_id, name, type, status, sandbox_name, proxy_token, opencode_token, openclaw_token, short_id, last_activity_at, cpu, memory, idle_timeout)
-		 VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, NOW(), $10, $11, $12)`,
-		id, workspaceID, name, sandboxType, sandboxName, proxyToken, nullIfEmpty(opencodeToken), nullIfEmpty(openclawToken), nullIfEmpty(shortID), cpu, memory, idleTimeout,
+		`INSERT INTO sandboxes (id, workspace_id, name, type, status, sandbox_name, proxy_token, opencode_token, openclaw_token, short_id, last_activity_at, cpu, memory, idle_timeout, metadata)
+		 VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7, $8, $9, NOW(), $10, $11, $12, $13)`,
+		id, workspaceID, name, sandboxType, sandboxName, proxyToken, nullIfEmpty(opencodeToken), nullIfEmpty(openclawToken), nullIfEmpty(shortID), cpu, memory, idleTimeout, metadata,
 	)
 	if err != nil {
 		return fmt.Errorf("create sandbox: %w", err)
@@ -43,11 +48,11 @@ func (db *DB) CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, ope
 }
 
 // sandboxColumns is the list of columns selected for sandbox queries.
-const sandboxColumns = `id, workspace_id, name, type, status, is_local, short_id, sandbox_name, pod_ip, proxy_token, opencode_token, openclaw_token, tunnel_token, last_activity_at, created_at, paused_at, last_heartbeat_at, cpu, memory, idle_timeout, nanoclaw_bridge_secret`
+const sandboxColumns = `id, workspace_id, name, type, status, is_local, short_id, sandbox_name, pod_ip, proxy_token, opencode_token, openclaw_token, tunnel_token, last_activity_at, created_at, paused_at, last_heartbeat_at, cpu, memory, idle_timeout, nanoclaw_bridge_secret, metadata`
 
 func scanSandbox(scanner interface{ Scan(...interface{}) error }) (*Sandbox, error) {
 	s := &Sandbox{}
-	err := scanner.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.IsLocal, &s.ShortID, &s.SandboxName, &s.PodIP, &s.ProxyToken, &s.OpencodeToken, &s.OpenclawToken, &s.TunnelToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt, &s.LastHeartbeatAt, &s.CPU, &s.Memory, &s.IdleTimeout, &s.NanoclawBridgeSecret)
+	err := scanner.Scan(&s.ID, &s.WorkspaceID, &s.Name, &s.Type, &s.Status, &s.IsLocal, &s.ShortID, &s.SandboxName, &s.PodIP, &s.ProxyToken, &s.OpencodeToken, &s.OpenclawToken, &s.TunnelToken, &s.LastActivityAt, &s.CreatedAt, &s.PausedAt, &s.LastHeartbeatAt, &s.CPU, &s.Memory, &s.IdleTimeout, &s.NanoclawBridgeSecret, &s.Metadata)
 	return s, err
 }
 

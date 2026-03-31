@@ -86,6 +86,7 @@ export function SandboxList({
     cpu?: number,
     memory?: number,
     idleTimeout?: number,
+    metadata?: Record<string, unknown>,
   ) => {
     if (creating || !selectedWorkspaceId) return
     setCreating(true)
@@ -93,7 +94,7 @@ export function SandboxList({
     setQuotaError(null)
     navigate(selectedWorkspaceId ? `/w/${selectedWorkspaceId}` : '/')
     try {
-      const sbx = await createSandbox(selectedWorkspaceId, name, type, cpu, memory, idleTimeout)
+      const sbx = await createSandbox(selectedWorkspaceId, name, type, cpu, memory, idleTimeout, metadata)
       setSandboxes((prev) => [...prev, sbx])
       navigate(`/w/${selectedWorkspaceId}/sandboxes/${sbx.id}`)
     } catch (err: unknown) {

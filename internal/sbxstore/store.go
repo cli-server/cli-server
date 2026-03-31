@@ -1,6 +1,7 @@
 package sbxstore
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/agentserver/agentserver/internal/db"
@@ -26,9 +27,10 @@ type Sandbox struct {
 	PausedAt        *time.Time `json:"paused_at,omitempty"`
 	IsLocal         bool       `json:"is_local"`
 	LastHeartbeatAt *time.Time `json:"last_heartbeat_at,omitempty"`
-	CPU             int        `json:"cpu,omitempty"`
-	Memory          int64      `json:"memory,omitempty"`
-	IdleTimeout     *int       `json:"idle_timeout,omitempty"`
+	CPU             int                    `json:"cpu,omitempty"`
+	Memory          int64                  `json:"memory,omitempty"`
+	IdleTimeout     *int                   `json:"idle_timeout,omitempty"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // Store manages sandboxes via PostgreSQL.
@@ -41,8 +43,12 @@ func NewStore(database *db.DB) *Store {
 }
 
 // Create inserts a new sandbox into the DB with 'creating' status.
-func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID string, cpu int, memory int64, idleTimeout *int) (*Sandbox, error) {
-	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID, cpu, memory, idleTimeout); err != nil {
+func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID string, cpu int, memory int64, idleTimeout *int, metadata map[string]interface{}) (*Sandbox, error) {
+	var metaJSON json.RawMessage
+	if len(metadata) > 0 {
+		metaJSON, _ = json.Marshal(metadata)
+	}
+	if err := s.db.CreateSandbox(id, workspaceID, name, sandboxType, sandboxName, opencodeToken, proxyToken, openclawToken, shortID, cpu, memory, idleTimeout, metaJSON); err != nil {
 		return nil, err
 	}
 
@@ -63,6 +69,7 @@ func (s *Store) Create(id, workspaceID, name, sandboxType, sandboxName, opencode
 		CPU:              cpu,
 		Memory:           memory,
 		IdleTimeout:      idleTimeout,
+		Metadata:         metadata,
 	}, nil
 }
 
@@ -188,5 +195,18 @@ func dbSandboxToSandbox(ds *db.Sandbox) *Sandbox {
 		sbx.Memory = *ds.Memory
 	}
 	sbx.IdleTimeout = ds.IdleTimeout
+	if len(ds.Metadata) > 0 {
+		_ = json.Unmarshal(ds.Metadata, &sbx.Metadata)
+	}
 	return sbx
+}
+
+// MetadataString returns a metadata value as a string, or "" if not set.
+func (s *Sandbox) MetadataString(key string) string {
+	if v, ok := s.Metadata[key]; ok {
+		if str, ok := v.(string); ok {
+			return str
+		}
+	}
+	return ""
 }
