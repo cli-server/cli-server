@@ -121,6 +121,7 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 			// Decrypt encrypted events.
 			if evt.Type == event.EventEncrypted {
 				if parseErr := evt.Content.ParseRaw(evt.Type); parseErr != nil {
+					log.Printf("matrix: encrypted event parse failed room=%s event=%s: %v", roomID, evt.ID, parseErr)
 					continue
 				}
 				decrypted, decErr := mach.DecryptMegolmEvent(ctx, evt)
@@ -142,9 +143,11 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 			}
 
 			if evt.Type != event.EventMessage {
+				log.Printf("matrix: skipping non-message event room=%s type=%s sender=%s", roomID, evt.Type.Type, evt.Sender)
 				continue
 			}
 			if string(evt.Sender) == selfUserID {
+				log.Printf("matrix: skipping own message room=%s event=%s", roomID, evt.ID)
 				continue
 			}
 
