@@ -117,6 +117,7 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 
 		for _, evt := range joinedRoom.Timeline.Events {
 			evt.RoomID = id.RoomID(roomID)
+			log.Printf("matrix: event room=%s type=%s sender=%s event_id=%s", roomID, evt.Type.Type, evt.Sender, evt.ID)
 
 			// Decrypt encrypted events.
 			if evt.Type == event.EventEncrypted {
@@ -140,6 +141,7 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 					}
 				}
 				evt = decrypted
+				log.Printf("matrix: decrypted event room=%s type=%s sender=%s", roomID, evt.Type.Type, evt.Sender)
 			}
 
 			if evt.Type != event.EventMessage {
