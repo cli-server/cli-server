@@ -199,16 +199,31 @@ func (b *Bridge) getChannelRequireMention(channelID string) bool {
 }
 
 // StopTyping stops the typing indicator for a user in a channel.
+// It first tries an exact match on channelID:userID, then falls back
+// to stopping all typing sessions for the channel (needed for group
+// chats where the reply's to_user_id is the room, not the sender).
 func (b *Bridge) StopTyping(channelID, userID string) {
 	key := typingKey(channelID, userID)
 	b.mu.Lock()
 	cancel, ok := b.typingSessions[key]
 	if ok {
 		delete(b.typingSessions, key)
+		b.mu.Unlock()
+		cancel()
+		return
+	}
+	// Fallback: stop all typing sessions for this channel.
+	prefix := channelID + ":"
+	var toCancel []func()
+	for k, c := range b.typingSessions {
+		if strings.HasPrefix(k, prefix) {
+			toCancel = append(toCancel, c)
+			delete(b.typingSessions, k)
+		}
 	}
 	b.mu.Unlock()
-	if ok {
-		cancel()
+	for _, c := range toCancel {
+		c()
 	}
 }
 
@@ -302,7 +317,8 @@ func (b *Bridge) forwardToNanoClaw(ctx context.Context, binding BridgeBinding, m
 
 	// Skip messages in group chats that don't mention the bot (when require_mention is enabled).
 	if b.getChannelRequireMention(binding.ChannelID) && msg.IsGroup && msg.Metadata["mentioned"] != "true" {
-		return false, nil // not mentioned — skip silently, advance cursor
+		log.Printf("imbridge: skipping group message (not mentioned) channel=%s from=%s", binding.ChannelID, msg.FromUserID)
+		return false, nil
 	}
 
 	b.ensureGroupRegistered(ctx, sandboxID, msg.FromUserID, assistantName)
