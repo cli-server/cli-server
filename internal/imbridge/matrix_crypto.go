@@ -99,9 +99,6 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 
 	var messages []MatrixMessage
 	for roomID, joinedRoom := range resp.Rooms.Join {
-		if len(joinedRoom.Timeline.Events) > 0 {
-			log.Printf("matrix: room=%s has %d timeline events", roomID, len(joinedRoom.Timeline.Events))
-		}
 		// Detect DM rooms (exactly 2 members) via state store.
 		isDM := false
 		if cc.client.StateStore != nil {

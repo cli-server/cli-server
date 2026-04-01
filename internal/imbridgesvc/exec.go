@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"os"
 
@@ -99,11 +100,17 @@ func (e *K8sExec) ExecSimple(ctx context.Context, sandboxID string, command []st
 
 func (e *K8sExec) lookupNamespace(sandboxID string) (string, error) {
 	sbx, err := e.db.GetSandbox(sandboxID)
-	if err != nil || sbx == nil {
+	if err != nil {
+		return "", fmt.Errorf("get sandbox %s: %w", sandboxID, err)
+	}
+	if sbx == nil {
 		return "", fmt.Errorf("sandbox %s not found", sandboxID)
 	}
 	ws, err := e.db.GetWorkspace(sbx.WorkspaceID)
-	if err != nil || ws == nil {
+	if err != nil {
+		return "", fmt.Errorf("get workspace %s: %w", sbx.WorkspaceID, err)
+	}
+	if ws == nil {
 		return "", fmt.Errorf("workspace %s not found", sbx.WorkspaceID)
 	}
 	if !ws.K8sNamespace.Valid || ws.K8sNamespace.String == "" {
@@ -137,17 +144,9 @@ func shortID(id string) string {
 }
 
 func nameHash(name string) string {
-	h := fnvHash(name)
-	return fmt.Sprintf("%08x", h)
-}
-
-func fnvHash(s string) uint32 {
-	h := uint32(2166136261)
-	for i := 0; i < len(s); i++ {
-		h ^= uint32(s[i])
-		h *= 16777619
-	}
-	return h
+	h := fnv.New32a()
+	h.Write([]byte(name))
+	return fmt.Sprintf("%08x", h.Sum32())
 }
 
 func buildRESTConfig() (*rest.Config, error) {
