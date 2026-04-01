@@ -33,9 +33,15 @@ func main() {
 	authSvc := auth.New(database)
 	sandboxStore := sbxstore.NewStore(database)
 
-	// Create bridge with all providers. ExecCommander is nil — group
-	// registration degrades gracefully (bridge.go handles exec==nil).
-	bridge := imbridge.NewBridge(database, sandboxStore, nil, []imbridge.Provider{
+	// Create K8s exec client for IPC group registration in sandbox pods.
+	// Returns nil in non-K8s environments; bridge degrades gracefully.
+	var execCmd imbridge.ExecCommander
+	if k8sExec := imbridgesvc.NewK8sExec(database); k8sExec != nil {
+		execCmd = k8sExec
+		log.Println("imbridge: K8s exec available for group registration")
+	}
+
+	bridge := imbridge.NewBridge(database, sandboxStore, execCmd, []imbridge.Provider{
 		&imbridge.WeixinProvider{},
 		&imbridge.TelegramProvider{},
 		&imbridge.MatrixProvider{},

@@ -29,6 +29,7 @@ spec:
                 sleep 2
               done
       {{- end }}
+      serviceAccountName: {{ .Release.Name }}
       containers:
         - name: imbridge
           image: "{{ .Values.imbridge.image.repository }}:{{ .Values.imbridge.image.tag }}"

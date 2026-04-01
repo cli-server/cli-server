@@ -117,12 +117,10 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 
 		for _, evt := range joinedRoom.Timeline.Events {
 			evt.RoomID = id.RoomID(roomID)
-			log.Printf("matrix: event room=%s type=%s sender=%s event_id=%s", roomID, evt.Type.Type, evt.Sender, evt.ID)
 
 			// Decrypt encrypted events.
 			if evt.Type == event.EventEncrypted {
 				if parseErr := evt.Content.ParseRaw(evt.Type); parseErr != nil {
-					log.Printf("matrix: encrypted event parse failed room=%s event=%s: %v", roomID, evt.ID, parseErr)
 					continue
 				}
 				decrypted, decErr := mach.DecryptMegolmEvent(ctx, evt)
@@ -141,15 +139,12 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 					}
 				}
 				evt = decrypted
-				log.Printf("matrix: decrypted event room=%s type=%s sender=%s", roomID, evt.Type.Type, evt.Sender)
 			}
 
 			if evt.Type != event.EventMessage {
-				log.Printf("matrix: skipping non-message event room=%s type=%s sender=%s", roomID, evt.Type.Type, evt.Sender)
 				continue
 			}
 			if string(evt.Sender) == selfUserID {
-				log.Printf("matrix: skipping own message room=%s event=%s", roomID, evt.ID)
 				continue
 			}
 
@@ -157,13 +152,11 @@ func (cc *MatrixCryptoClient) SyncAndDecrypt(ctx context.Context, selfUserID str
 			// Decrypted events already have their content parsed by DecryptMegolmEvent.
 			if evt.Content.Parsed == nil {
 				if err := evt.Content.ParseRaw(evt.Type); err != nil {
-					log.Printf("matrix: ParseRaw failed room=%s event=%s: %v", roomID, evt.ID, err)
 					continue
 				}
 			}
 			msgContent := evt.Content.AsMessage()
 			if msgContent == nil {
-				log.Printf("matrix: AsMessage() nil room=%s event=%s parsed_type=%T", roomID, evt.ID, evt.Content.Parsed)
 				continue
 			}
 
