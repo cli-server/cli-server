@@ -484,16 +484,27 @@ type MessageParseError struct {
 
 ## Phase 2: Foundation (Agent Cards + Discovery)
 
+### Design Inspiration: Claude Code's Agent Discovery
+
+Claude Code 的 Agent 发现策略有以下值得借鉴的设计：
+
+1. **能力声明即发现依据**：CC 的 Agent 通过 frontmatter 声明 description（给 AI 看的选择指南）、tools、skills、model、permissionMode 等。发现不是简单的 name 匹配，而是多维能力匹配。
+2. **依赖就绪检查**：CC 的 `filterAgentsByMcpRequirements()` 在返回可用 Agent 前检查其声明的 MCP 依赖是否就绪。Agent 不仅要"在线"，还要"能力完备"。
+3. **自动注册**：CC 的 Agent 定义从文件系统自动加载，不需要显式 API 调用注册。
+
+以下 CC 设计不适用于 agentserver（以及原因）：
+
+| CC 设计 | 不适用原因 |
+|---------|-----------|
+| 四层优先级覆盖链 | agentserver 每个 sandbox 只有一张 card，不存在多源冲突 |
+| Built-in Agent 类型 | agentserver 不内置 Agent，所有 Agent 均用户注册 |
+| agent_listing_delta 注入 | agentserver 通过 API 发现，不需要注入系统提示词 |
+| Fork path | agentserver Agent 间无共享上下文 |
+| Skill 加载系统 | agentserver Agent 能力通过 card 声明，无需独立 skill 机制 |
+
 ### Scope
 
-This phase adds the server-side infrastructure for agents to register their capabilities and discover each other. Simplified to support `claudecode` type only.
-
-This phase is largely identical to the [existing Phase 1 plan](../plans/2026-03-27-phase1-agent-cards-discovery.md) with these changes:
-
-1. **Migration number**: `013_agent_cards.sql` (current latest is 012)
-2. **Default card**: Only `claudecode` type gets default skills/tools
-3. **Default skills for claudecode**: `code-editing`, `terminal`, `code-search`, `web-search`, `web-fetch`
-4. **Default MCP tools for claudecode**: `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`
+This phase adds the server-side infrastructure for agents to register their capabilities and discover each other. First iteration targets `claudecode` type only; `agent_type` field retained for future extensibility.
 
 ### Database
 
@@ -503,6 +514,7 @@ CREATE TABLE agent_cards (
     sandbox_id   TEXT PRIMARY KEY REFERENCES sandboxes(id) ON DELETE CASCADE,
     agent_type   TEXT NOT NULL,
     agent_status TEXT NOT NULL DEFAULT 'available',
+    -- agent_status: 'available' | 'busy' | 'offline'
     card_json    TEXT NOT NULL,
     version      INTEGER NOT NULL DEFAULT 1,
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -510,6 +522,49 @@ CREATE TABLE agent_cards (
 
 CREATE INDEX idx_agent_cards_type ON agent_cards(agent_type);
 CREATE INDEX idx_agent_cards_status ON agent_cards(agent_status);
+```
+
+### Agent Card Data Model
+
+借鉴 CC 的 Agent frontmatter 结构，Card 包含能力边界和运行约束：
+
+```go
+// internal/db/agent_cards.go
+
+type AgentCardData struct {
+    // --- 身份 ---
+    Name        string `json:"name"`
+    Description string `json:"description"` // AI 模型选择时看到的简短描述（类比 CC 的 whenToUse）
+
+    // --- 能力声明 ---
+    Skills   []Skill   `json:"skills,omitempty"`
+    MCPTools []MCPTool `json:"mcp_tools,omitempty"`
+    Tags     []string  `json:"tags,omitempty"` // 自由标签（"go", "security", "frontend"）
+
+    // --- 运行约束 ---
+    SupportedModes []string `json:"supported_modes"` // ["async"], ["async", "sync"]
+    MaxConcurrency int      `json:"max_concurrency"` // 并发任务上限
+    MaxTurns       int      `json:"max_turns,omitempty"`       // 单任务最大轮次
+    MaxBudgetUSD   float64  `json:"max_budget_usd,omitempty"`  // 单任务预算上限
+    Model          string   `json:"model,omitempty"`           // 使用的模型（信息性字段）
+    Isolation      string   `json:"isolation,omitempty"`       // "none", "worktree"
+
+    // --- 依赖声明（借鉴 CC 的 requiredMcpServers）---
+    // 发现 API 只返回所有依赖就绪的 Agent。
+    // 支持通配符匹配：["database-*", "auth-server"]
+    RequiredServices []string `json:"required_services,omitempty"`
+}
+
+type Skill struct {
+    Name        string   `json:"name"`
+    Description string   `json:"description"`
+    Tags        []string `json:"tags,omitempty"`
+}
+
+type MCPTool struct {
+    Name        string `json:"name"`
+    Description string `json:"description"`
+}
 ```
 
 ### Default Card for claudecode
@@ -537,114 +592,518 @@ func DefaultCardForType(agentType, name string) AgentCardData {
             {Name: "Glob", Description: "Find files by pattern"},
             {Name: "Grep", Description: "Search file contents with regex"},
         },
+        Tags:           []string{"code", "terminal", "search"},
         SupportedModes: []string{"async"},
         MaxConcurrency: 1,
+        MaxTurns:       50,
+        MaxBudgetUSD:   5.0,
     }
 }
 ```
 
-### API Endpoints
+### Auto-Registration via Tunnel Heartbeat
+
+借鉴 CC 的自动加载设计：本地 Agent 连接 tunnel 时自动注册/更新 Card，无需显式 API 调用。
+
+```go
+// internal/sandboxproxy/tunnel.go — 扩展心跳处理
+
+func (s *Server) handleTunnelHeartbeat(sandboxID string, data json.RawMessage) {
+    // 1. 更新 sandbox 心跳（已有逻辑）
+    s.DB.UpdateSandboxHeartbeat(sandboxID)
+
+    // 2. 检查是否携带 card 数据（新增）
+    var heartbeat struct {
+        AgentInfo json.RawMessage `json:"agent_info,omitempty"`
+        Card      *AgentCardData  `json:"card,omitempty"`      // Agent 自带 card
+        CardHash  string          `json:"card_hash,omitempty"` // card 内容哈希，变更时才更新
+    }
+    json.Unmarshal(data, &heartbeat)
+
+    if heartbeat.Card != nil {
+        // 仅在 card 内容变更时更新 DB（通过 hash 判断）
+        existing, _ := s.DB.GetAgentCard(sandboxID)
+        if existing == nil || existing.CardHash != heartbeat.CardHash {
+            s.DB.UpsertAgentCard(sandboxID, heartbeat.Card)
+        }
+    }
+}
+```
+
+Agent 侧：从本地配置文件 `~/.agent/card.yaml` 加载 card 数据，每次心跳携带：
+
+```yaml
+# ~/.agent/card.yaml — 本地 Agent 能力声明
+name: "Go Expert"
+description: "Specialized in Go code review, testing, and performance optimization"
+skills:
+  - name: code-review
+    description: "Review Go code for bugs, security issues, and best practices"
+    tags: [go, security, review]
+  - name: testing
+    description: "Write and run Go tests"
+    tags: [go, test]
+tags: [go, backend, senior]
+max_concurrency: 2
+max_turns: 100
+max_budget_usd: 10.0
+```
+
+### Discovery API
 
 All under `/api/agent/discovery/` with `agentAuthMiddleware` (proxy_token auth):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/agent/discovery/cards` | Register/update agent card |
-| GET | `/api/agent/discovery/agents` | List agents (filter by type/status/skill/tag) |
-| GET | `/api/agent/discovery/agents/{sandbox_id}` | Get single agent card with MCP tools |
+| POST | `/api/agent/discovery/cards` | Register/update agent card (显式 API，云端 Agent 使用) |
+| GET | `/api/agent/discovery/agents` | 多维发现（见下方） |
+| GET | `/api/agent/discovery/agents/{sandbox_id}` | 获取单个 Agent card |
+
+#### 多维发现查询
+
+借鉴 CC 的能力匹配设计，发现 API 支持服务端多维过滤（不是客户端遍历）：
+
+```
+GET /api/agent/discovery/agents?skill=code-review&tag=go&status=available&mode=async&limit=10
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `skill` | string | 按 skill name 匹配（模糊匹配） |
+| `tag` | string | 按 tag 匹配（精确，可多个：`tag=go&tag=security`） |
+| `type` | string | 按 agent_type 过滤（默认 `claudecode`） |
+| `status` | string | `available`, `busy`, `offline`（默认 `available`） |
+| `mode` | string | `async`, `sync` |
+| `limit` | int | 最大返回数（默认 10） |
+| `exclude` | string | 排除的 sandbox_id（避免自己发现自己） |
+
+```go
+// internal/server/agent_discovery.go
+
+func (s *Server) handleDiscoverAgents(w http.ResponseWriter, r *http.Request) {
+    q := r.URL.Query()
+    filters := DiscoveryFilters{
+        Skill:   q.Get("skill"),
+        Tags:    q["tag"],
+        Type:    q.Get("type"),
+        Status:  q.Get("status"),
+        Mode:    q.Get("mode"),
+        Limit:   parseIntOr(q.Get("limit"), 10),
+        Exclude: q.Get("exclude"),
+    }
+
+    agents, err := s.DB.DiscoverAgents(r.Context(), filters)
+    // ...
+
+    // 借鉴 CC 的 filterAgentsByMcpRequirements：
+    // 过滤掉 required_services 未满足的 Agent
+    agents = filterByServiceReadiness(agents, s.getAvailableServices())
+
+    json.NewEncoder(w).Encode(agents)
+}
+```
+
+#### 发现结果格式
+
+返回值格式参考 CC 给 AI 模型的 Agent 列表，简洁且信息充分：
+
+```json
+[
+  {
+    "agent_id": "sandbox-abc123",
+    "name": "Go Expert",
+    "description": "Specialized in Go code review, testing, and performance optimization",
+    "skills": [
+      {"name": "code-review", "description": "Review Go code for bugs...", "tags": ["go", "security"]}
+    ],
+    "tags": ["go", "backend", "senior"],
+    "status": "available",
+    "model": "opus",
+    "supported_modes": ["async"],
+    "max_concurrency": 2,
+    "current_tasks": 0
+  }
+]
+```
+
+注意 `current_tasks` 字段：让调用方知道 Agent 当前的负载，以便做出更好的选择。
 
 ### AgentHealthMonitor
 
-Background goroutine (30s sweep interval, 60s offline threshold). Marks agents as `offline` when heartbeat lapses. Started in `cmd/serve.go` alongside `idleWatcher`.
+Background goroutine (30s sweep interval, 60s offline threshold).
+
+```go
+// internal/server/agent_health.go
+
+type AgentHealthMonitor struct {
+    db       *db.DB
+    interval time.Duration // 30s
+    offline  time.Duration // 60s
+}
+
+func (m *AgentHealthMonitor) Run(ctx context.Context) {
+    ticker := time.NewTicker(m.interval)
+    defer ticker.Stop()
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+            // 1. 标记心跳过期的 Agent 为 offline
+            m.db.MarkOfflineAgents(m.offline)
+            // 2. 清除已删除 sandbox 的残留 card（CASCADE 已处理，这是兜底）
+        }
+    }
+}
+```
+
+### Card 文件格式（本地 Agent）
+
+本地 Agent 使用 YAML 文件声明能力（借鉴 CC 的 `.claude/agents/*.md` frontmatter 模式）：
+
+```
+~/.agent/
+├── registry.json    # 已有：连接信息
+└── card.yaml        # 新增：能力声明
+```
+
+`card.yaml` 在 Agent 启动时加载，通过 tunnel 心跳同步到服务端。用户修改 `card.yaml` 后，下次心跳（≤20s）自动生效。
+
+### Cloud Agent Card 注册
+
+云端 Agent 在容器启动时通过 HTTP API 显式注册：
+
+```go
+// cmd/agentserver-task-runner/main.go — 容器启动时
+
+func registerCard(serverURL, proxyToken string) error {
+    card := DefaultCardForType("claudecode", hostname)
+    // 容器可通过环境变量覆盖默认 card：
+    if custom := os.Getenv("AGENT_CARD_JSON"); custom != "" {
+        json.Unmarshal([]byte(custom), &card)
+    }
+    // POST /api/agent/discovery/cards
+    return postJSON(serverURL+"/api/agent/discovery/cards", proxyToken, card)
+}
+```
 
 ### Files
 
 | Action | File | Description |
 |--------|------|-------------|
 | Create | `internal/db/migrations/013_agent_cards.sql` | Schema |
-| Create | `internal/db/agent_cards.go` | Types + CRUD |
-| Create | `internal/server/agent_auth.go` | AgentAuthMiddleware |
-| Create | `internal/server/agent_discovery.go` | Handlers + matching logic |
+| Create | `internal/db/agent_cards.go` | Types + CRUD + DiscoverAgents 多维查询 |
+| Create | `internal/server/agent_auth.go` | AgentAuthMiddleware (proxy_token) |
+| Create | `internal/server/agent_discovery.go` | 发现 API handlers + 能力匹配 + service readiness filter |
 | Create | `internal/server/agent_discovery_test.go` | Unit tests |
 | Create | `internal/server/agent_health.go` | AgentHealthMonitor |
 | Modify | `internal/server/server.go` | Wire routes |
-| Modify | `internal/sandboxproxy/tunnel.go` | Extended heartbeat + auto-register |
+| Modify | `internal/sandboxproxy/tunnel.go` | 心跳扩展：解析 card 数据，自动 upsert |
+| Modify | `internal/agent/client.go` | 加载 ~/.agent/card.yaml，心跳时携带 card |
 | Modify | `cmd/serve.go` | Start/stop health monitor |
 
 ---
 
-## Phase 3: Task Delegation
+## Phase 3: Task Delegation with Bridge Transport
 
-### Task Execution Model
+### Design Inspiration: Claude Code's Remote Agent Architecture
 
-When an agent receives a delegated task, the task receiver process uses the **Go Claude Agent SDK** to execute it. The same Go SDK serves dual roles: it is both the task receiver and the execution engine.
+Claude Code uses a **session-based bridge transport** for remote agent communication. The key insight is that task execution is not a one-shot fire-and-forget operation — it's a **persistent session** with real-time bidirectional communication. This allows:
 
-**Cloud agents**: A lightweight Go process (`agentserver-task-runner`) runs inside the container alongside Claude Code. It listens for task HTTP requests and executes them using the Go Agent SDK. The `claude` CLI in cloud containers authenticates via the existing **llmproxy** — the `ANTHROPIC_BASE_URL` environment variable points to agentserver's LLM proxy, which handles API key management and billing.
+- Real-time streaming of task output (not polling)
+- Runtime control (interrupt, model change, permission forwarding)
+- Graceful reconnection after network failures
+- Epoch-based worker registration to prevent stale connections
+- UUID-based message deduplication to prevent echo/replay
 
-**Local agents**: The `agentserver-agent` process (already running for tunnel management) receives tasks via tunnel frames and executes them using the Go Agent SDK. The `claude` CLI uses the **user's own authentication** (OAuth login or API key already configured on the machine). In the future, agentserver may provide authentication to local agents as well.
+We adopt this architecture for agentserver, with a **unified transport abstraction** that works over both yamux streams (local agents) and SSE+HTTP (cloud agents).
+
+### Bridge Transport Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                       agentserver                            │
+│                                                              │
+│  ┌──────────────┐   ┌───────────────────────────────────┐   │
+│  │ TaskSession   │   │ BridgeTransport (interface)       │   │
+│  │ Manager       │──→│                                   │   │
+│  │              │   │  ┌─────────────┐ ┌─────────────┐  │   │
+│  │ • create     │   │  │ YamuxBridge │ │  SSEBridge   │  │   │
+│  │ • route      │   │  │ (local)     │ │  (cloud)     │  │   │
+│  │ • gc         │   │  └──────┬──────┘ └──────┬───────┘  │   │
+│  └──────────────┘   └─────────│───────────────│──────────┘   │
+│                               │               │              │
+└───────────────────────────────│───────────────│──────────────┘
+                                │               │
+              yamux stream      │               │  SSE (read) +
+              (bidirectional)   │               │  HTTP POST (write)
+                                │               │
+┌───────────────────────────────▼───┐ ┌─────────▼──────────────┐
+│  Local Agent (agentserver-agent)  │ │  Cloud Agent (K8s pod)  │
+│                                   │ │                         │
+│  ┌─────────────────────────────┐  │ │  ┌───────────────────┐  │
+│  │ TaskWorker                  │  │ │  │ TaskWorker         │  │
+│  │                             │  │ │  │                    │  │
+│  │  Go Agent SDK → claude CLI  │  │ │  │ Go Agent SDK       │  │
+│  │  stream messages back       │  │ │  │ → claude CLI       │  │
+│  │  handle control requests    │  │ │  │ via llmproxy       │  │
+│  └─────────────────────────────┘  │ │  └────────────────────┘  │
+└───────────────────────────────────┘ └──────────────────────────┘
+```
+
+### Transport Interface
 
 ```go
-// internal/agent/task_executor.go
-type TaskExecutor struct {
-    workdir string
-    env     map[string]string // environment for claude CLI (e.g., ANTHROPIC_BASE_URL for llmproxy)
+// internal/bridge/transport.go
+
+// BridgeTransport abstracts bidirectional communication with a remote agent.
+// Two implementations: YamuxBridge (local agents via existing tunnel) and
+// SSEBridge (cloud agents via SSE read + HTTP POST write).
+type BridgeTransport interface {
+    // Write sends a message to the worker agent.
+    Write(msg *TaskMessage) error
+    // WriteBatch sends multiple messages atomically.
+    WriteBatch(msgs []*TaskMessage) error
+    // Messages returns a channel that yields messages from the worker.
+    Messages() <-chan *TaskMessage
+    // SendControlRequest sends a control request and waits for response.
+    SendControlRequest(ctx context.Context, req *ControlRequest) (*ControlResponse, error)
+    // Close terminates the transport.
+    Close() error
+    // Epoch returns the current worker epoch (for stale detection).
+    Epoch() int
 }
 
-func (e *TaskExecutor) Execute(ctx context.Context, task *TaskRequest) (*TaskResult, error) {
-    opts := []agentsdk.QueryOption{
-        agentsdk.WithCwd(e.workdir),
-        agentsdk.WithPermissionMode("bypassPermissions"),
-        agentsdk.WithAllowDangerouslySkipPermissions(),
-        agentsdk.WithAllowedTools("Read", "Write", "Edit", "Bash", "Glob", "Grep"),
-        agentsdk.WithMaxTurns(50),
-        agentsdk.WithMaxBudgetUSD(5.0),
-        agentsdk.WithSystemPrompt(task.SystemContext()),
-    }
-    if len(e.env) > 0 {
-        opts = append(opts, agentsdk.WithEnv(e.env))
-    }
-    stream := agentsdk.Query(ctx, task.BuildPrompt(), opts...)
-
-    var lastProgress time.Time
-    for stream.Next() {
-        msg := stream.Current()
-        // Report progress every 10 seconds
-        if time.Since(lastProgress) > 10*time.Second {
-            e.reportProgress(ctx, task.ID, msg)
-            lastProgress = time.Now()
-        }
-    }
-    if err := stream.Err(); err != nil {
-        return nil, fmt.Errorf("task execution failed: %w", err)
-    }
-
-    result, err := stream.Result()
-    if err != nil {
-        return nil, err
-    }
-    return &TaskResult{
-        Output:  result.Result,
-        CostUSD: result.TotalCostUSD,
-    }, nil
+// TaskMessage is the standard message envelope for bridge communication.
+// Modeled after Claude Code's SDKMessage format.
+type TaskMessage struct {
+    Type      string          `json:"type"`       // "user", "assistant", "system", "result", "control_request", "control_response"
+    Subtype   string          `json:"subtype,omitempty"`
+    TaskID    string          `json:"task_id"`
+    UUID      string          `json:"uuid"`       // For deduplication
+    SessionID string          `json:"session_id"`
+    Payload   json.RawMessage `json:"payload"`
+    Timestamp time.Time       `json:"timestamp"`
 }
 ```
 
-### Task Prompt Construction
+### YamuxBridge (Local Agents)
+
+Reuses the existing yamux tunnel with a new stream type:
 
 ```go
-func (t *TaskRequest) BuildPrompt() string {
-    var sb strings.Builder
-    sb.WriteString(fmt.Sprintf("You are executing a delegated task from agent %q.\n\n", t.RequesterName))
-    if t.Skill != "" {
-        sb.WriteString(fmt.Sprintf("Skill requested: %s\n\n", t.Skill))
-    }
-    sb.WriteString("Task input:\n")
-    // Marshal t.Input as formatted JSON
-    inputJSON, _ := json.MarshalIndent(t.Input, "", "  ")
-    sb.Write(inputJSON)
-    sb.WriteString("\n\nExecute this task thoroughly and report the result.")
-    return sb.String()
+// internal/tunnel/stream.go — extend existing stream types
+const (
+    StreamTypeHTTP          byte = 0x01
+    StreamTypeTerminal      byte = 0x02
+    StreamTypeControl       byte = 0x03
+    StreamTypeBridge        byte = 0x04  // NEW: bidirectional task bridge
+)
+```
+
+The `StreamTypeBridge` stream is long-lived — one per active task session. Both sides can write NDJSON messages at any time. This maps directly to the yamux bidirectional stream model already used for terminals.
+
+```go
+// internal/bridge/yamux_bridge.go
+
+type YamuxBridge struct {
+    stream    net.Conn       // yamux stream (StreamTypeBridge)
+    epoch     int
+    msgCh     chan *TaskMessage
+    writeMu   sync.Mutex
+    dedup     *BoundedUUIDSet // echo/replay prevention
 }
+
+func NewYamuxBridge(tunnel *tunnel.Tunnel, taskID string) (*YamuxBridge, error) {
+    // Open a new yamux stream with StreamTypeBridge type
+    meta := BridgeStreamMeta{TaskID: taskID, Epoch: nextEpoch()}
+    stream, err := tunnel.OpenStream(StreamTypeBridge, meta)
+    // ... start read loop, return bridge
+}
+```
+
+### SSEBridge (Cloud Agents)
+
+For cloud agents without a yamux tunnel. Follows Claude Code's CCR v2 design:
+
+```go
+// internal/bridge/sse_bridge.go
+
+type SSEBridge struct {
+    taskID       string
+    podIP        string
+    workerToken  string
+    epoch        int
+    sequenceNum  int64         // SSE high-water mark for resume
+    msgCh        chan *TaskMessage
+    httpClient   *http.Client
+    dedup        *BoundedUUIDSet
+    heartbeatTk  *time.Ticker  // 20s heartbeat to maintain lease
+}
+```
+
+**Read channel**: SSE stream at `http://{pod_ip}:{port}/bridge/events/stream?from_seq={n}`
+- Worker pushes events as SSE frames with sequence numbers
+- `Last-Event-ID` header enables resume after reconnect
+- Reconnect with exponential backoff (1s → 30s, max 10 minutes)
+- 45s liveness timeout
+
+**Write channel**: HTTP POST to `http://{pod_ip}:{port}/bridge/events`
+- Batched uploads (max 100 messages per batch)
+- 10 retries with backoff (500ms → 8s)
+
+**Heartbeat**: PUT `http://{pod_ip}:{port}/bridge/worker` every 20s
+- Worker TTL: 60s — missing 3 heartbeats kills the session
+- Reports worker state: `idle` | `running` | `requires_action`
+
+### Message Deduplication
+
+Adopted from Claude Code's `BoundedUUIDSet`:
+
+```go
+// internal/bridge/dedup.go
+
+// BoundedUUIDSet is a circular buffer for UUID deduplication.
+// Prevents echo (receiving our own sent messages back) and
+// replay (re-processing messages after reconnect).
+type BoundedUUIDSet struct {
+    posted   map[string]struct{} // UUIDs we sent (echo detection)
+    inbound  map[string]struct{} // UUIDs we received (replay detection)
+    order    []string            // FIFO eviction order
+    capacity int                 // typically 100
+}
+
+func (s *BoundedUUIDSet) IsEcho(uuid string) bool    // check posted set
+func (s *BoundedUUIDSet) IsReplay(uuid string) bool   // check inbound set
+func (s *BoundedUUIDSet) MarkPosted(uuid string)      // add to posted set
+func (s *BoundedUUIDSet) MarkInbound(uuid string)     // add to inbound set
+```
+
+### Epoch Management
+
+Prevents stale workers (adopted from Claude Code's epoch mechanism):
+
+```go
+// internal/bridge/epoch.go
+
+// Worker registration bumps epoch atomically.
+// Old workers with stale epochs are rejected (409 Conflict).
+//
+// Flow:
+//   1. Worker registers → gets epoch=N
+//   2. Every heartbeat includes epoch=N
+//   3. New worker registers → epoch bumps to N+1
+//   4. Old worker's next heartbeat → 409 → must re-register or exit
+//   5. Guarantees: exactly one active worker per task session
+
+type EpochManager struct {
+    mu     sync.Mutex
+    epochs map[string]int // taskID → current epoch
+}
+
+func (m *EpochManager) Register(taskID string) int           // bump & return new epoch
+func (m *EpochManager) Validate(taskID string, epoch int) bool // check if epoch is current
+```
+
+### Control Protocol
+
+Runtime control during task execution (adopted from Claude Code):
+
+```go
+// internal/bridge/control.go
+
+type ControlRequest struct {
+    RequestID string `json:"request_id"`
+    Subtype   string `json:"subtype"`    // see subtypes below
+    Params    any    `json:"params,omitempty"`
+}
+
+type ControlResponse struct {
+    RequestID string `json:"request_id"`
+    Subtype   string `json:"subtype"`    // "success" | "error"
+    Result    any    `json:"result,omitempty"`
+    Error     string `json:"error,omitempty"`
+}
+```
+
+**Server → Worker control requests:**
+
+| Subtype | Purpose | When |
+|---------|---------|------|
+| `interrupt` | Cancel the current task turn | Requester calls cancel |
+| `set_model` | Change LLM model mid-task | Requester requests model change |
+| `can_use_tool` | Permission check forwarding | Task needs tool approval |
+
+**Worker → Server control requests:**
+
+| Subtype | Purpose | When |
+|---------|---------|------|
+| `progress` | Real-time progress update | Tool use count, token usage changes |
+| `permission_request` | Forward permission prompt to requester | Worker needs approval |
+
+**Timeout**: Server waits 15s for control responses. No response → error.
+
+### Task Session Lifecycle
+
+Each delegated task creates a **TaskSession** — a persistent, resumable session:
+
+```go
+// internal/bridge/session.go
+
+type TaskSession struct {
+    ID            string          // unique session ID (ts_xxx)
+    TaskID        string          // linked agent_task ID
+    WorkerSandbox string          // target agent's sandbox ID
+    RequesterID   string          // requesting agent's sandbox ID
+    Transport     BridgeTransport // YamuxBridge or SSEBridge
+    Epoch         int             // current worker epoch
+    State         SessionState    // idle | running | requires_action
+    CreatedAt     time.Time
+    LastActivity  time.Time
+
+    // Message history (for resume)
+    transcript    []TaskMessage
+    transcriptMu  sync.Mutex
+}
+
+type SessionState string
+const (
+    SessionIdle           SessionState = "idle"
+    SessionRunning        SessionState = "running"
+    SessionRequiresAction SessionState = "requires_action"
+)
+```
+
+**Lifecycle:**
+
+```
+1. POST /api/agent/tasks (requester creates task)
+   ↓
+2. Server creates TaskSession
+   ↓
+3. Server establishes BridgeTransport:
+   - Local agent: open StreamTypeBridge on existing yamux tunnel
+   - Cloud agent: POST /bridge/sessions on pod → SSEBridge
+   ↓
+4. Server sends task prompt via bridge:
+   { type: "user", task_id: "...", payload: { prompt, system_context, ... } }
+   ↓
+5. Worker receives, starts Go Agent SDK execution:
+   agentsdk.Query(ctx, prompt, opts...)
+   ↓
+6. Worker streams messages back via bridge:
+   - assistant messages (real-time)
+   - system messages (tool use, progress)
+   - control requests (permission checks)
+   ↓
+7. Worker sends result:
+   { type: "result", subtype: "success", payload: { result, usage, cost } }
+   ↓
+8. Server updates agent_tasks status, notifies requester
+   ↓
+9. Session kept alive for potential follow-up turns (TTL: 5 minutes idle)
+   ↓
+10. Session closed, transcript archived
 ```
 
 ### Database
@@ -656,14 +1115,19 @@ CREATE TABLE agent_tasks (
     workspace_id      TEXT NOT NULL REFERENCES workspaces(id),
     requester_id      TEXT NOT NULL REFERENCES sandboxes(id) ON DELETE CASCADE,
     target_id         TEXT NOT NULL REFERENCES sandboxes(id) ON DELETE CASCADE,
+    session_id        TEXT UNIQUE,        -- bridge session ID (ts_xxx)
     skill             TEXT,
     input_json        TEXT NOT NULL,
     output_json       TEXT,
     status            TEXT NOT NULL DEFAULT 'pending',
+    -- pending → accepted → running → completed/failed/cancelled
     mode              TEXT NOT NULL DEFAULT 'async',
     failure_reason    TEXT,
     timeout_seconds   INTEGER DEFAULT 300,
     delegation_chain  TEXT NOT NULL DEFAULT '[]',
+    epoch             INTEGER NOT NULL DEFAULT 0,
+    total_cost_usd    REAL,
+    num_turns         INTEGER DEFAULT 0,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     accepted_at       TIMESTAMPTZ,
     completed_at      TIMESTAMPTZ
@@ -672,116 +1136,236 @@ CREATE TABLE agent_tasks (
 CREATE INDEX idx_agent_tasks_workspace ON agent_tasks(workspace_id);
 CREATE INDEX idx_agent_tasks_requester ON agent_tasks(requester_id);
 CREATE INDEX idx_agent_tasks_target_status ON agent_tasks(target_id, status);
+CREATE INDEX idx_agent_tasks_session ON agent_tasks(session_id);
 CREATE INDEX idx_agent_tasks_cleanup ON agent_tasks(status, completed_at);
+
+-- Task transcript storage (JSONL sidecar files, not in DB)
+-- Path: /data/transcripts/{workspace_id}/{task_id}.jsonl
 ```
 
 ### API Endpoints
 
-All under `/api/agent/` with `agentAuthMiddleware`:
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/agent/tasks` | Create task (with optional `stream: true` for SSE) |
+| GET | `/api/agent/tasks/{task_id}` | Get task status and result |
+| GET | `/api/agent/tasks` | List requester's tasks |
+| DELETE | `/api/agent/tasks/{task_id}` | Cancel running task (sends interrupt) |
+| GET | `/api/agent/tasks/{task_id}/stream` | SSE stream of task messages (for requester) |
+
+The `/stream` endpoint is new — it allows the **requester** to observe task execution in real-time:
+
+```
+GET /api/agent/tasks/{task_id}/stream
+Accept: text/event-stream
+
+data: {"type":"system","subtype":"task_started","task_id":"t1"}
+
+data: {"type":"assistant","task_id":"t1","payload":{"message":{"content":[...]}}}
+
+data: {"type":"system","subtype":"task_progress","task_id":"t1","payload":{"tool_count":3,"token_count":1500}}
+
+data: {"type":"result","subtype":"success","task_id":"t1","payload":{"result":"Found 3 bugs..."}}
+```
+
+### Task Worker (Agent Side)
+
+The `TaskWorker` runs inside the agent process (both local `agentserver-agent` and cloud `agentserver-task-runner`). It receives tasks via the bridge and executes them using the Go Agent SDK.
+
+```go
+// internal/agent/task_worker.go
+
+type TaskWorker struct {
+    workdir    string
+    env        map[string]string
+    maxTasks   int              // max concurrent tasks
+    activeTasks sync.Map        // taskID → *activeTask
+}
+
+type activeTask struct {
+    taskID  string
+    stream  *agentsdk.Stream
+    bridge  BridgeTransport
+    cancel  context.CancelFunc
+}
+
+func (w *TaskWorker) HandleTask(ctx context.Context, bridge BridgeTransport, task *TaskRequest) {
+    // Register task
+    ctx, cancel := context.WithTimeout(ctx, time.Duration(task.TimeoutSeconds)*time.Second)
+    defer cancel()
+
+    opts := []agentsdk.QueryOption{
+        agentsdk.WithCwd(w.workdir),
+        agentsdk.WithPermissionMode(agentsdk.PermissionBypassAll),
+        agentsdk.WithAllowDangerouslySkipPermissions(),
+        agentsdk.WithMaxTurns(task.MaxTurns),
+        agentsdk.WithMaxBudgetUSD(task.MaxBudgetUSD),
+        agentsdk.WithSystemPrompt(task.SystemContext()),
+        agentsdk.WithHooks(map[agentsdk.HookEvent][]agentsdk.HookMatcher{
+            agentsdk.HookPreToolUse: {{
+                Hooks: []agentsdk.HookCallback{
+                    // Forward permission checks to requester via bridge control protocol
+                    w.makePermissionForwarder(bridge),
+                },
+            }},
+        }),
+    }
+
+    stream := agentsdk.Query(ctx, task.BuildPrompt(), opts...)
+    defer stream.Close()
+
+    at := &activeTask{taskID: task.ID, stream: stream, bridge: bridge, cancel: cancel}
+    w.activeTasks.Store(task.ID, at)
+    defer w.activeTasks.Delete(task.ID)
+
+    // Stream all messages back to requester via bridge
+    for stream.Next() {
+        msg := stream.Current()
+        bridgeMsg := &TaskMessage{
+            Type:      msg.Type,
+            Subtype:   msg.Subtype,
+            TaskID:    task.ID,
+            UUID:      uuid.New().String(),
+            Payload:   msg.Raw,
+            Timestamp: time.Now(),
+        }
+        bridge.Write(bridgeMsg)
+    }
+
+    // Send final result
+    if result, _ := stream.Result(); result != nil {
+        bridge.Write(&TaskMessage{
+            Type:    "result",
+            Subtype: result.Subtype,
+            TaskID:  task.ID,
+            UUID:    uuid.New().String(),
+            Payload: mustMarshal(result),
+        })
+    }
+}
+```
+
+### Cloud Agent: Bridge Endpoints
+
+The `agentserver-task-runner` binary in cloud containers exposes bridge endpoints:
+
+```go
+// cmd/agentserver-task-runner/main.go
+
+// Bridge endpoints (served on :3010 inside container)
+mux.HandleFunc("POST /bridge/sessions", handleCreateSession)     // register worker
+mux.HandleFunc("GET  /bridge/events/stream", handleSSEStream)    // SSE read channel
+mux.HandleFunc("POST /bridge/events", handleWriteEvents)         // batch write channel
+mux.HandleFunc("PUT  /bridge/worker", handleWorkerHeartbeat)     // heartbeat + state
+```
+
+### Permission Forwarding
+
+When a task executor encounters a tool that requires permission, the control protocol forwards the prompt to the requester (adopted from Claude Code's bridge permission model):
+
+```
+Worker: claude CLI needs "Bash(rm -rf /tmp)" approval
+  ↓
+TaskWorker hook intercepts PreToolUse
+  ↓
+Worker sends control_request via bridge:
+  { subtype: "can_use_tool", tool_name: "Bash", input: { command: "rm -rf /tmp" } }
+  ↓
+Server receives, forwards to requester via:
+  - Requester's SSE stream (/api/agent/tasks/{id}/stream)
+  - Or requester's yamux tunnel (if local)
+  ↓
+Requester (or its user) decides: allow/deny
+  ↓
+Server sends control_response back to worker
+  ↓
+Worker continues or aborts tool use
+```
+
+For automated agents (no human), the `WithPermissionMode(PermissionBypassAll)` option skips this entirely.
+
+### Teammate Coordination
+
+For multi-agent workflows where agents need to communicate peer-to-peer (not just requester→target):
+
+```go
+// internal/bridge/mailbox.go
+
+// Mailbox enables inter-agent messaging within a workspace.
+// Adopted from Claude Code's teammate mailbox system.
+// Uses DB-backed storage (not filesystem) for cloud compatibility.
+
+type MailboxMessage struct {
+    ID        string    `json:"id"`
+    From      string    `json:"from"`       // sender sandbox ID
+    To        string    `json:"to"`         // recipient sandbox ID, or "*" for broadcast
+    TeamID    string    `json:"team_id"`    // workspace-scoped team
+    Text      string    `json:"text"`
+    MsgType   string    `json:"msg_type"`   // "message" | "shutdown_request" | "plan_approval"
+    CreatedAt time.Time `json:"created_at"`
+    ReadAt    *time.Time `json:"read_at,omitempty"`
+}
+```
+
+```sql
+-- Part of 014_agent_tasks.sql
+
+CREATE TABLE agent_mailbox (
+    id           TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    from_id      TEXT NOT NULL,
+    to_id        TEXT NOT NULL,    -- sandbox ID or "*"
+    team_id      TEXT NOT NULL DEFAULT '',
+    text         TEXT NOT NULL,
+    msg_type     TEXT NOT NULL DEFAULT 'message',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    read_at      TIMESTAMPTZ
+);
+
+CREATE INDEX idx_agent_mailbox_recipient ON agent_mailbox(to_id, read_at);
+CREATE INDEX idx_agent_mailbox_team ON agent_mailbox(team_id, created_at);
+```
+
+API for mailbox (injected as MCP tools via Phase 4):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/agent/tasks` | Create delegation (sync/async, by ID or skill) |
-| GET | `/api/agent/tasks/{task_id}` | Get task status and result |
-| GET | `/api/agent/tasks` | List requester's tasks (filter by status) |
+| POST | `/api/agent/mailbox/send` | Send message to agent or broadcast |
+| GET | `/api/agent/mailbox/inbox` | Poll inbox (long-poll with 30s timeout) |
 
-### Task Delivery
+### Loop Detection, Overflow, Cleanup
 
-**Cloud agents** — HTTP POST to `http://{pod_ip}:{task_port}/agent/tasks`, received by the `agentserver-task-runner` process inside the container:
-
-```json
-{
-  "task_id": "task-123",
-  "requester_id": "sandbox-a",
-  "requester_name": "My Claude Code",
-  "skill": "code-review",
-  "input": { "path": "/src/server", "focus": "bugs" }
-}
-```
-
-The `agentserver-task-runner` is a Go binary that:
-1. Starts an HTTP server on `task_port` (e.g., 3010) inside the container
-2. Receives task requests from agentserver
-3. Spawns a `claude` CLI process via the Go Agent SDK to execute the task
-4. Reports status transitions back to agentserver via HTTP callbacks
-5. The `claude` CLI authenticates via llmproxy (`ANTHROPIC_BASE_URL` environment variable)
-
-This binary is built from the agentserver repo and included in the container image alongside the `claude` CLI.
-
-**Local agents** — New tunnel frame types:
-
-```go
-// internal/tunnel/stream.go
-const (
-    StreamTypeHTTP          byte = 0x01
-    StreamTypeTerminal      byte = 0x02
-    StreamTypeControl       byte = 0x03
-    StreamTypeTaskRequest   byte = 0x04  // server → agent
-    StreamTypeTaskResponse  byte = 0x05  // agent → server
-)
-```
-
-Task request frame payload:
-```json
-{
-  "task_id": "task-123",
-  "requester_id": "sandbox-a",
-  "requester_name": "My Claude Code",
-  "skill": "code-review",
-  "input": { ... }
-}
-```
-
-Task response frame payload:
-```json
-{
-  "task_id": "task-123",
-  "status": "accepted|running|completed|failed",
-  "output": { ... },
-  "failure_reason": "..."
-}
-```
-
-Agent client handling — extend `handleServerStream()` in `internal/agent/client.go`:
-
-```go
-case tunnel.StreamTypeTaskRequest:
-    go c.handleTaskRequest(ctx, stream, metadata)
-```
-
-### Sync Mode
-
-The server holds the HTTP connection open using a blocking channel. A background goroutine monitors task status changes. Hard timeout: `min(request.timeout, 600)` seconds. If the connection drops, the task continues — requester polls via GET.
-
-### Loop Detection
-
-Each task carries `delegation_chain` (JSON array of sandbox IDs). Before creating a task, the server checks if `target_id` appears in the chain. Max depth: 5.
-
-### Task Overflow
-
-When an agent is at `max_concurrency`, tasks are rejected with `at_capacity`. No server-side queuing.
-
-### Task Cleanup
-
-Background `TaskCleanupWorker` runs daily. Deletes completed/failed tasks older than 7 days. The `agent_interactions` audit table (Phase 5) is not cleaned.
+Same as original design:
+- **Loop detection**: `delegation_chain` JSON array, max depth 5
+- **Overflow**: reject with `at_capacity` when at `max_concurrency`
+- **Cleanup**: `TaskCleanupWorker` deletes completed tasks after 7 days; transcript JSONL files cleaned alongside
 
 ### Files
 
 | Action | File | Description |
 |--------|------|-------------|
-| Create | `internal/db/migrations/014_agent_tasks.sql` | Schema |
-| Create | `internal/db/agent_tasks.go` | Types + CRUD |
-| Create | `internal/server/agent_tasks.go` | Handlers (create, get, list) |
-| Create | `internal/server/agent_tasks_test.go` | Unit tests |
-| Create | `internal/server/task_cleanup.go` | TaskCleanupWorker goroutine |
-| Create | `internal/agent/task_executor.go` | TaskExecutor using Go Agent SDK |
-| Create | `cmd/agentserver-task-runner/main.go` | Cloud container task receiver binary |
-| Modify | `internal/tunnel/stream.go` | Add StreamTypeTaskRequest/Response |
-| Modify | `internal/agent/client.go` | Handle task_request frames |
-| Modify | `internal/sandboxproxy/tunnel.go` | Handle task_response frames |
+| Create | `internal/bridge/transport.go` | BridgeTransport interface + TaskMessage |
+| Create | `internal/bridge/yamux_bridge.go` | YamuxBridge implementation |
+| Create | `internal/bridge/sse_bridge.go` | SSEBridge implementation |
+| Create | `internal/bridge/dedup.go` | BoundedUUIDSet |
+| Create | `internal/bridge/epoch.go` | EpochManager |
+| Create | `internal/bridge/control.go` | ControlRequest/Response types |
+| Create | `internal/bridge/session.go` | TaskSession lifecycle |
+| Create | `internal/bridge/mailbox.go` | Inter-agent mailbox |
+| Create | `internal/db/migrations/014_agent_tasks.sql` | Tasks + mailbox schema |
+| Create | `internal/db/agent_tasks.go` | Task CRUD |
+| Create | `internal/db/agent_mailbox.go` | Mailbox CRUD |
+| Create | `internal/server/agent_tasks.go` | Task API handlers + SSE stream |
+| Create | `internal/server/agent_tasks_test.go` | Tests |
+| Create | `internal/server/task_cleanup.go` | TaskCleanupWorker |
+| Create | `internal/agent/task_worker.go` | TaskWorker using Go Agent SDK |
+| Create | `cmd/agentserver-task-runner/main.go` | Cloud bridge endpoint + task worker |
+| Modify | `internal/tunnel/stream.go` | Add StreamTypeBridge |
+| Modify | `internal/agent/client.go` | Accept bridge streams, start TaskWorker |
+| Modify | `internal/sandboxproxy/tunnel.go` | Open bridge streams for tasks |
 | Modify | `internal/server/server.go` | Wire task routes |
 | Modify | `cmd/serve.go` | Start/stop TaskCleanupWorker |
-| Modify | `Dockerfile` | Include agentserver-task-runner + claude CLI |
+| Modify | `Dockerfile` | Include agentserver-task-runner |
 
 ---
 
@@ -789,17 +1373,17 @@ Background `TaskCleanupWorker` runs daily. Deletes completed/failed tasks older 
 
 ### agentserver-mcp-bridge
 
-A standalone Go binary that acts as a stdio MCP server. Claude Code connects to it via MCP configuration, and it proxies `discover_agents`, `delegate_task`, and `check_task` tools to the agentserver HTTP API.
+A standalone Go binary that acts as a stdio MCP server. Claude Code connects to it via MCP configuration, and it proxies `discover_agents`, `delegate_task`, `check_task`, and `send_message` tools to the agentserver HTTP API.
 
 ```
 cmd/agentserver-mcp-bridge/
 ├── main.go                 // stdio server, JSON-RPC 2.0
 internal/mcpbridge/
 ├── bridge.go               // MCP server implementation
-└── tools.go                // discover_agents, delegate_task, check_task handlers
+└── tools.go                // tool handlers
 ```
 
-**How it's configured in Claude Code** (via MCP server config):
+**Configuration in Claude Code** (via MCP server config):
 
 ```json
 {
@@ -815,250 +1399,159 @@ internal/mcpbridge/
 }
 ```
 
-**For cloud agents**: The bridge binary is included in the container image. The MCP config is injected via `OPENCODE_CONFIG_CONTENT` (or equivalent Claude Code config mechanism) during container creation.
-
-**For local agents**: The agentserver-agent process starts a local bridge instance when it receives the `inject_tools` tunnel frame.
-
 ### inject_tools Tunnel Frame
 
-Server sends `inject_tools` text frame to local agents:
-1. On tunnel connection establishment
-2. When workspace agent topology changes
+Server sends `inject_tools` control frame to local agents on tunnel connect and topology changes:
 
 ```json
 {
   "type": "inject_tools",
-  "tools": [
-    {
-      "name": "discover_agents",
-      "description": "Discover other agents in this workspace...",
-      "input_schema": { ... }
-    },
-    {
-      "name": "delegate_task",
-      "description": "Delegate a task to another agent...",
-      "input_schema": { ... }
-    },
-    {
-      "name": "check_task",
-      "description": "Check the status of a delegated task...",
-      "input_schema": { ... }
-    }
-  ],
+  "tools": ["discover_agents", "delegate_task", "check_task", "send_message"],
   "api_base_url": "https://agentserver.example.com/api/agent",
   "auth_token": "<proxy_token>"
 }
 ```
 
-**Agent-side handling** (in `internal/agent/client.go`):
-1. Parse `inject_tools` control frame
-2. Start local `agentserver-mcp-bridge` process with the provided URL and token
-3. Write MCP server configuration to Claude Code's project-level settings file (`.claude/settings.json` in the agent's working directory), adding the bridge as an MCP server entry
-4. On first `agentserver connect`, print a one-time setup instruction asking the user to restart Claude Code to pick up the new MCP configuration (subsequent connects reuse the existing config)
-
-**Alternative for already-running Claude Code**: If Claude Code supports hot-reloading MCP server config from settings.json (which it does when the file changes), step 4 is unnecessary — the bridge becomes available automatically after the settings file is updated.
+Agent-side: starts local `agentserver-mcp-bridge` process, writes MCP config to `.claude/settings.json`.
 
 ### Injected MCP Tools
 
-```json
-{
-  "name": "discover_agents",
-  "description": "Discover other agents in this workspace by skill, tags, or type.",
-  "input_schema": {
-    "type": "object",
-    "properties": {
-      "skill": { "type": "string" },
-      "tags": { "type": "array", "items": { "type": "string" } },
-      "type": { "type": "string", "enum": ["claudecode"] },
-      "status": { "type": "string", "enum": ["available", "busy"] },
-      "limit": { "type": "integer", "default": 10 }
-    }
-  }
-}
-```
+| Tool | Description |
+|------|-------------|
+| `discover_agents` | Find agents by skill, tags, type, status |
+| `delegate_task` | Create task (sync/async) with real-time streaming |
+| `check_task` | Get task status and result |
+| `send_message` | Send message to another agent (mailbox) |
+| `read_inbox` | Read messages from inbox |
 
-```json
-{
-  "name": "delegate_task",
-  "description": "Delegate a task to another agent. Use discover_agents first to find a suitable agent.",
-  "input_schema": {
-    "type": "object",
-    "properties": {
-      "target_id": { "type": "string", "description": "Target agent's sandbox ID" },
-      "skill": { "type": "string", "description": "Skill to invoke" },
-      "input": { "type": "object", "description": "Task input data" },
-      "mode": { "type": "string", "enum": ["sync", "async"], "default": "async" }
-    },
-    "required": ["target_id", "input"]
-  }
-}
-```
-
-```json
-{
-  "name": "check_task",
-  "description": "Check the status and result of a previously delegated task.",
-  "input_schema": {
-    "type": "object",
-    "properties": {
-      "task_id": { "type": "string" }
-    },
-    "required": ["task_id"]
-  }
-}
-```
-
-### Server-side MCP Proxy
-
-For future use when task executors need to call tools on peer agents:
-
-```
-Agent A calls tool "agent/{sandbox-b-id}/read_file"
-  → Server parses "agent/{id}/{tool}" prefix
-  → Server validates: both agents in same workspace
-  → Local agents: forwards via WebSocket tunnel (new frame type)
-  → Cloud agents: forwards via HTTP POST to pod-ip:port/mcp/tools/call
-  → Server relays result back to Agent A
-```
-
-This is Phase 4+ infrastructure and can be deferred if task delegation (Phase 3) is sufficient for initial use cases.
+The `delegate_task` tool in async mode returns a task ID immediately. The AI model can then:
+1. Call `check_task` periodically to poll status
+2. Or use Claude Code's background agent pattern to monitor the SSE stream
 
 ### Files
 
 | Action | File | Description |
 |--------|------|-------------|
-| Create | `cmd/agentserver-mcp-bridge/main.go` | MCP bridge binary entry point |
+| Create | `cmd/agentserver-mcp-bridge/main.go` | MCP bridge binary |
 | Create | `internal/mcpbridge/bridge.go` | MCP server implementation |
-| Create | `internal/mcpbridge/tools.go` | Tool handlers |
-| Modify | `internal/agent/client.go` | Handle inject_tools frame, start local bridge |
-| Modify | `internal/sandboxproxy/tunnel.go` | Send inject_tools frame on connect |
-| Modify | `Dockerfile` | Include agentserver-mcp-bridge binary |
+| Create | `internal/mcpbridge/tools.go` | Tool handlers (5 tools) |
+| Modify | `internal/agent/client.go` | Handle inject_tools, start bridge |
+| Modify | `internal/sandboxproxy/tunnel.go` | Send inject_tools on connect |
+| Modify | `Dockerfile` | Include agentserver-mcp-bridge |
 
 ---
 
 ## Phase 5: Security + Observability
 
-### JWT Fast-Path (Cloud-to-Cloud Direct Calls)
+### JWT Fast-Path (Cloud-to-Cloud Direct Bridge)
 
-For MCP tool calls between cloud agents in the same K8s namespace:
+For bridge connections between cloud agents in the same K8s namespace, skip the server relay:
 
-1. Agent A requests direct access to Agent B
-2. Server issues short-lived JWT (5min TTL, HMAC-SHA256):
+1. Requester requests direct bridge to target
+2. Server issues short-lived JWT (5min TTL):
    ```json
    {
      "requester_id": "sandbox-a",
      "target_id": "sandbox-b",
      "workspace_id": "ws-123",
-     "allowed_tools": ["Read", "Grep"],
-     "jti": "unique-jwt-id",
+     "task_id": "task-123",
      "exp": 1711382400
    }
    ```
-3. Server returns target pod IP + port + JWT
-4. Agent A calls target directly
-5. Target validates JWT signature, checks fields
-
-**Signing key**: `AGENTSERVER_JWT_SECRET` env var, distributed to cloud agents during container creation.
+3. Server returns target pod IP + bridge port + JWT
+4. Requester establishes SSEBridge directly to target pod
+5. Target validates JWT, creates TaskSession
 
 ### Audit Logging
 
 ```sql
 -- Migration: 015_agent_interactions.sql
--- No FK constraints: audit records must survive entity deletion
 CREATE TABLE agent_interactions (
     id               TEXT PRIMARY KEY,
     workspace_id     TEXT NOT NULL,
     requester_id     TEXT NOT NULL,
     target_id        TEXT NOT NULL,
-    interaction_type TEXT NOT NULL,  -- "discovery" | "task_create" | "task_complete" | "mcp_tool_call"
+    interaction_type TEXT NOT NULL,
     detail_json      TEXT,
-    status           TEXT NOT NULL,  -- "success" | "failed" | "rejected"
+    status           TEXT NOT NULL,
     duration_ms      INTEGER,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_agent_interactions_workspace_time ON agent_interactions(workspace_id, created_at);
 
--- Workspace delegation mode
 ALTER TABLE workspaces ADD COLUMN delegation_mode TEXT NOT NULL DEFAULT 'auto';
 ```
 
-### Audit Middleware
+### Rate Limiting & Delegation Mode
 
-Wraps all `/api/agent/` handlers. Logs interaction type, requester, target, status, and duration. Does not log full payloads.
-
-### Workspace Delegation Mode
-
-| Mode | Behavior |
-|------|----------|
-| `auto` | Tasks delivered to targets immediately |
-| `approval` | Tasks held in `pending` until workspace member approves via UI |
-
-### Rate Limiting
-
-- Per-agent: 10 tasks/min default
-- Per-workspace: 50 tasks/min aggregate
-- Prevents delegation loops from consuming resources
+- Per-agent: 10 tasks/min, per-workspace: 50 tasks/min
+- `delegation_mode`: `auto` (immediate) or `approval` (human-in-the-loop)
 
 ### Dashboard API
 
-New endpoints under the existing cookie-auth `/api/` group:
-
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/workspaces/{wid}/agents` | List all agents with cards |
-| GET | `/api/workspaces/{wid}/agent-tasks` | Task history with pagination |
-| GET | `/api/workspaces/{wid}/agent-interactions` | Audit log with pagination |
+| GET | `/api/workspaces/{wid}/agents` | List agents with cards |
+| GET | `/api/workspaces/{wid}/agent-tasks` | Task history + live status |
+| GET | `/api/workspaces/{wid}/agent-tasks/{id}/stream` | SSE stream (for dashboard UI) |
+| GET | `/api/workspaces/{wid}/agent-interactions` | Audit log |
 
 ### Files
 
 | Action | File | Description |
 |--------|------|-------------|
-| Create | `internal/db/migrations/015_agent_interactions.sql` | Audit table + delegation mode |
+| Create | `internal/db/migrations/015_agent_interactions.sql` | Audit + delegation mode |
 | Create | `internal/server/agent_jwt.go` | JWT issuance + validation |
-| Create | `internal/server/audit.go` | Audit logging middleware |
-| Create | `internal/db/agent_interactions.go` | Audit table CRUD |
-| Modify | `internal/db/workspaces.go` | Add delegation_mode field |
-| Modify | `internal/server/server.go` | Wire dashboard routes, audit middleware |
-| Modify | `internal/server/agent_tasks.go` | Add rate limiting, approval mode |
+| Create | `internal/server/audit.go` | Audit middleware |
+| Create | `internal/db/agent_interactions.go` | Audit CRUD |
+| Modify | `internal/server/agent_tasks.go` | Rate limiting, approval mode |
 
 ---
 
-## End-to-End Example
+## End-to-End Example (with Bridge Transport)
 
-**Scenario**: User tells local Claude Code to review Go code, and another Claude Code agent specializing in Go is available.
+**Scenario**: User tells local Claude Code to review Go code. A cloud agent specializes in Go.
 
 ```
 1. User → Local Claude Code: "Review the Go code in /src/server"
 
-2. Local Claude Code AI model calls discover_agents({ skill: "code-review", tags: ["go"] })
-   → agentserver-mcp-bridge proxies to GET /api/agent/discovery/agents?skill=code-review&tag=go
+2. AI model calls discover_agents({ skill: "code-review", tags: ["go"] })
+   → MCP bridge → GET /api/agent/discovery/agents
 
-3. Server returns:
-   [{ agent_id: "cloud-reviewer", name: "Go Expert", status: "available",
-      skills: [{ name: "code-review", tags: ["go", "security"] }] }]
+3. Server returns: [{ agent_id: "go-expert", status: "available", ... }]
 
 4. AI model calls delegate_task({
-     target_id: "cloud-reviewer",
-     skill: "code-review",
-     input: { path: "/src/server", focus: "bugs and security" },
+     target_id: "go-expert", skill: "code-review",
+     input: { data_access: "git", git_url: "...", path: "src/server" },
      mode: "async"
    })
-   → Bridge proxies to POST /api/agent/tasks
+   → MCP bridge → POST /api/agent/tasks
 
-5. Server creates task, delivers to cloud-reviewer via HTTP
-   → Cloud-reviewer's agentserver-agent receives task
-   → TaskExecutor uses Go Agent SDK:
-     agentsdk.Query(ctx, buildPrompt(task), WithCwd(...), ...)
-   → Claude autonomously reviews the code
-   → Task completes with findings
+5. Server creates TaskSession + establishes SSEBridge to cloud agent:
+   - POST http://{pod_ip}:3010/bridge/sessions → epoch=1, worker_token
+   - Open SSE read stream + HTTP POST write channel
+   - Send task prompt via bridge
 
-6. Local AI model calls check_task({ task_id: "task-123" })
-   → Gets review results
+6. Cloud agent's TaskWorker receives prompt, starts Go Agent SDK:
+   agentsdk.Query(ctx, prompt, WithCwd(...), ...)
 
-7. AI presents findings to user:
-   "The Go Expert found 3 issues: ..."
+7. REAL-TIME STREAMING (not polling!):
+   Worker → Bridge → Server → Requester's SSE stream:
+   - assistant messages as Claude generates them
+   - tool_progress as tools execute
+   - permission_request if tool needs approval
+
+8. Task completes:
+   Worker sends result → Server updates DB → SSE event to requester
+
+9. AI model sees task_notification, calls check_task({ task_id: "..." })
+   → Gets full result with code review findings
+
+10. AI presents to user: "The Go Expert found 3 issues: ..."
 ```
+
+**Key difference from original design**: Steps 6-8 are real-time streaming, not polling. The requester can observe the task executing live, interrupt it, or forward permission decisions — all via the bridge transport.
 
 ---
 
@@ -1068,62 +1561,32 @@ New endpoints under the existing cookie-auth `/api/` group:
 
 | Operation | Auth Method |
 |-----------|-------------|
-| Discovery (list agents) | proxy_token (AgentAuthMiddleware) |
+| Discovery | proxy_token (AgentAuthMiddleware) |
 | Card registration | proxy_token |
 | Task creation | proxy_token |
-| MCP proxy call | proxy_token |
-| Direct fast-path (K8s) | Short-lived JWT (5min) |
-| Dashboard API | Cookie (existing auth) |
+| Bridge transport (local) | tunnel_token (yamux) |
+| Bridge transport (cloud) | worker_token (per-session JWT) |
+| Direct fast-path (K8s) | Short-lived JWT |
+| Dashboard API | Cookie auth |
+| Mailbox | proxy_token |
 
 ### Data Sharing Between Agents
 
-Agents have isolated filesystems. When Agent A delegates a task to Agent B that involves files, the data access depends on topology:
-
-**Cloud agents in the same workspace:**
-- **Shared workspace volumes**: The existing `workspace_volumes` table supports mounting K8s PVCs. All cloud agents in a workspace can mount the same volume, giving shared read/write access.
-- This is the primary mechanism for cloud-to-cloud collaboration.
-
-**Cross-environment (local→cloud or local→local):**
-- **Task payload embedding**: For small inputs (code snippets, text), embed file content directly in the task's `input` field. This is the default for the first iteration.
-- **Git-based sharing**: For code review tasks, include a git remote URL + branch/commit in the task input. The target agent clones the repo independently.
-- **MCP proxy callback**: (Future, Phase 4+) The target agent's task executor calls back to the requester's `Read` tool via the server-side MCP proxy.
-
-**Task input schema indicates data access method:**
-```json
-{
-  "skill": "code-review",
-  "input": {
-    "data_access": "embedded",
-    "files": { "main.go": "package main\n..." },
-    "focus": "bugs and security"
-  }
-}
-```
-
-Or for git-based:
-```json
-{
-  "skill": "code-review",
-  "input": {
-    "data_access": "git",
-    "git_url": "https://github.com/org/repo.git",
-    "git_ref": "feature-branch",
-    "path": "src/server",
-    "focus": "bugs and security"
-  }
-}
-```
+Same as original design — shared volumes (cloud), embedded payload, git-based, or MCP proxy callback.
 
 ### Error Handling
 
-- Agent goes offline during task → task marked `failed` with reason `agent_offline`
-- Task timeout → task marked `failed` with reason `timeout`
-- Delegation loop detected → task rejected with reason `delegation_loop_detected`
-- Agent at capacity → task rejected with reason `at_capacity`
-- Claude API error during execution → task marked `failed` with SDK error details
+- Agent offline during task → bridge transport error → task `failed` with `agent_offline`
+- Task timeout → context deadline → task `failed` with `timeout`
+- Bridge reconnect failure → task `failed` with `bridge_disconnected`
+- Epoch conflict → old worker ejected → new worker registered
+- Delegation loop → rejected with `delegation_loop_detected`
+- Agent at capacity → rejected with `at_capacity`
 
 ### Data Retention
 
-- Agent cards: Retained while sandbox exists (CASCADE DELETE)
+- Agent cards: retained while sandbox exists
 - Agent tasks: 7-day retention after completion
-- Agent interactions: Permanent audit trail (no FK, no cleanup)
+- Task transcripts (JSONL): cleaned alongside tasks
+- Mailbox messages: 24-hour retention after read
+- Agent interactions: permanent audit trail
