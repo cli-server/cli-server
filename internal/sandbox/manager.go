@@ -419,7 +419,7 @@ fs.writeFileSync(path, JSON.stringify(existing, null, 2));
 		// readEnvFile() has a chance to parse the .env file.
 		containerEnv = append(containerEnv, corev1.EnvVar{Name: "NANOCLAW_NO_CONTAINER", Value: "true"})
 		if m.cfg.NanoclawModel != "" {
-			containerEnv = append(containerEnv, corev1.EnvVar{Name: "CLAUDE_MODEL", Value: m.cfg.NanoclawModel})
+			containerEnv = append(containerEnv, corev1.EnvVar{Name: "ANTHROPIC_MODEL", Value: m.cfg.NanoclawModel})
 		}
 	default: // "opencode"
 		if opts.OpencodeToken != "" {
