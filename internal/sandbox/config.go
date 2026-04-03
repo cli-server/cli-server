@@ -232,9 +232,11 @@ func BuildNanoclawConfig(proxyBaseURL, proxyToken, assistantName string, imBridg
 	if bridgeSecret != "" {
 		lines = append(lines, "NANOCLAW_BRIDGE_SECRET="+bridgeSecret)
 	}
-	if geminiProxyBaseURL != "" {
+	// Inject Gemini proxy credentials only when not in BYOK mode.
+	// BYOK bypasses the proxy, so the BYOK key is not a valid proxy token.
+	if geminiProxyBaseURL != "" && byokBaseURL == "" {
 		lines = append(lines, "GOOGLE_GEMINI_BASE_URL="+geminiProxyBaseURL)
-		lines = append(lines, "GEMINI_API_KEY="+apiKey)
+		lines = append(lines, "GEMINI_API_KEY="+proxyToken)
 	}
 	return strings.Join(lines, "\n") + "\n"
 }

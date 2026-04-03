@@ -77,8 +77,11 @@ func TestBuildNanoclawConfig_WithoutGemini(t *testing.T) {
 func TestBuildNanoclawConfig_GeminiWithBYOK(t *testing.T) {
 	result := BuildNanoclawConfig("https://proxy.example.com", "tok-123", "Andy",
 		"", "", "https://custom.llm.com", "custom-key-456", "https://gemini-proxy.example.com")
-	// BYOK overrides the API key for both providers.
-	if !strings.Contains(result, "GEMINI_API_KEY=custom-key-456") {
-		t.Errorf("BYOK should override Gemini API key, got: %s", result)
+	// BYOK bypasses the proxy — Gemini proxy vars should NOT be injected.
+	if strings.Contains(result, "GEMINI_API_KEY") {
+		t.Errorf("BYOK should suppress Gemini proxy vars, got: %s", result)
+	}
+	if strings.Contains(result, "GOOGLE_GEMINI_BASE_URL") {
+		t.Errorf("BYOK should suppress Gemini proxy vars, got: %s", result)
 	}
 }

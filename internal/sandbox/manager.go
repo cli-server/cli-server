@@ -335,7 +335,8 @@ func (m *Manager) StartContainerWithIP(id string, opts process.StartOptions) (st
 		)
 	}
 	// Inject Gemini proxy credentials as real env vars (same reason as Anthropic above).
-	if m.cfg.GeminiProxyBaseURL != "" && opts.ProxyToken != "" {
+	// Skip when BYOK is active — BYOK bypasses the proxy entirely.
+	if m.cfg.GeminiProxyBaseURL != "" && opts.ProxyToken != "" && opts.BYOKBaseURL == "" {
 		containerEnv = append(containerEnv,
 			corev1.EnvVar{Name: "GEMINI_API_KEY", Value: opts.ProxyToken},
 			corev1.EnvVar{Name: "GOOGLE_GEMINI_BASE_URL", Value: m.cfg.GeminiProxyBaseURL},
