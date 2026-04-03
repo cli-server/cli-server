@@ -10,6 +10,9 @@ import (
 const (
 	traceIDPrefix   = "at-"
 	requestIDPrefix = "ar-"
+
+	geminiTraceIDPrefix   = "gt-"
+	geminiRequestIDPrefix = "gr-"
 )
 
 // ExtractTraceID extracts a trace ID from the request.
@@ -40,4 +43,33 @@ func GenerateTraceID() string {
 // GenerateRequestID creates a new request ID with the "ar-" prefix.
 func GenerateRequestID() string {
 	return requestIDPrefix + uuid.New().String()
+}
+
+// GenerateGeminiTraceID creates a new trace ID with the "gt-" prefix.
+func GenerateGeminiTraceID() string {
+	return geminiTraceIDPrefix + uuid.New().String()
+}
+
+// GenerateGeminiRequestID creates a new request ID with the "gr-" prefix.
+func GenerateGeminiRequestID() string {
+	return geminiRequestIDPrefix + uuid.New().String()
+}
+
+// ExtractGeminiTraceID extracts a trace ID from the request for Gemini.
+// Same priority as ExtractTraceID but uses gt- prefix for auto-generated IDs.
+func (s *Server) ExtractGeminiTraceID(r *http.Request, body []byte) (string, string) {
+	// 1. Check custom trace header.
+	if s.config.TraceHeader != "" {
+		if hdr := r.Header.Get(s.config.TraceHeader); hdr != "" {
+			return hdr, "header"
+		}
+	}
+
+	// 2. Try OpenCode x-opencode-session header.
+	if hdr := r.Header.Get("x-opencode-session"); hdr != "" {
+		return geminiTraceIDPrefix + hdr, "opencode"
+	}
+
+	// 3. Auto-generate.
+	return GenerateGeminiTraceID(), "auto"
 }

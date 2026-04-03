@@ -13,6 +13,8 @@ type Config struct {
 	AnthropicBaseURL   string // upstream Anthropic API URL
 	AnthropicAPIKey    string // real Anthropic API key
 	AnthropicAuthToken string // alternative: Bearer token auth
+	GeminiBaseURL      string // upstream Gemini API URL
+	GeminiAPIKey       string // real Google API key for Gemini
 	TraceHeader        string // custom trace header name
 	DefaultMaxRPD      int    // default max requests per day per workspace (0 = unlimited)
 }
@@ -26,6 +28,8 @@ func LoadConfigFromEnv() Config {
 		AnthropicBaseURL:   envOr("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
 		AnthropicAPIKey:    os.Getenv("ANTHROPIC_API_KEY"),
 		AnthropicAuthToken: os.Getenv("ANTHROPIC_AUTH_TOKEN"),
+		GeminiBaseURL:      envOr("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
+		GeminiAPIKey:       os.Getenv("GEMINI_API_KEY"),
 		TraceHeader:        envOr("LLMPROXY_TRACE_HEADER", "X-Trace-Id"),
 	}
 	if v := os.Getenv("LLMPROXY_DEFAULT_MAX_RPD"); v != "" {
