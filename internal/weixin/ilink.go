@@ -503,12 +503,10 @@ func SendImageMessage(ctx context.Context, apiBaseURL, botToken, toUserID string
 	}
 	u.Path = "/ilink/bot/sendmessage"
 
-	// aes_key in message payload is base64-encoded (not hex)
-	aesKeyBytes, err := hex.DecodeString(aesKeyHex)
-	if err != nil {
-		return fmt.Errorf("invalid aes key hex: %w", err)
-	}
-	aesKeyB64 := base64.StdEncoding.EncodeToString(aesKeyBytes)
+	// aes_key in message payload is base64-encoded hex string (not raw bytes).
+	// The iLink protocol expects base64(hex_string), matching the openclaw-weixin SDK:
+	//   Buffer.from(hexString).toString("base64")
+	aesKeyB64 := base64.StdEncoding.EncodeToString([]byte(aesKeyHex))
 
 	clientID := fmt.Sprintf("agentserver-%d", time.Now().UnixMilli())
 	body := SendMessageRequest{
