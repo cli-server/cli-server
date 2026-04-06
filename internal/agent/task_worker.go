@@ -37,22 +37,25 @@ func NewTaskWorker(opts TaskWorkerOptions) *TaskWorker {
 	}
 }
 
-// ExecuteTask runs a single task: creates session, connects bridge, executes via Agent SDK.
-func (w *TaskWorker) ExecuteTask(ctx context.Context, taskID, prompt, systemContext string, maxTurns int, maxBudgetUSD float64) error {
-	log.Printf("task-worker: executing task %s", taskID)
+// ExecuteTask runs a single task: connects bridge, executes via Agent SDK.
+func (w *TaskWorker) ExecuteTask(ctx context.Context, taskID, sessionID, prompt, systemContext string, maxTurns int, maxBudgetUSD float64) error {
+	log.Printf("task-worker: executing task %s (session=%s)", taskID, sessionID)
 
-	// 1. Create session via POST /v1/agent/sessions.
-	sessionID, err := agentsdk.CreateSession(agentsdk.CreateSessionOptions{
-		BaseURL:    w.opts.ServerURL,
-		Token:      w.opts.ProxyToken,
-		Title:      fmt.Sprintf("Task %s", taskID),
-		PathPrefix: "/v1/agent/sessions",
-		TimeoutMs:  10000,
-	})
-	if err != nil {
-		return fmt.Errorf("create session: %w", err)
+	// Create session only if not provided by the server.
+	if sessionID == "" {
+		var err error
+		sessionID, err = agentsdk.CreateSession(agentsdk.CreateSessionOptions{
+			BaseURL:    w.opts.ServerURL,
+			Token:      w.opts.ProxyToken,
+			Title:      fmt.Sprintf("Task %s", taskID),
+			PathPrefix: "/v1/agent/sessions",
+			TimeoutMs:  10000,
+		})
+		if err != nil {
+			return fmt.Errorf("create session: %w", err)
+		}
+		log.Printf("task-worker: created session %s", sessionID)
 	}
-	log.Printf("task-worker: created session %s", sessionID)
 
 	// 2. Fetch bridge credentials via POST /v1/agent/sessions/{id}/bridge.
 	creds, err := agentsdk.FetchRemoteCredentials(agentsdk.FetchRemoteCredentialsOptions{
@@ -158,7 +161,7 @@ func RunTaskWorker(ctx context.Context, opts TaskWorkerOptions) {
 				if ctx.Err() != nil {
 					return
 				}
-				if err := worker.ExecuteTask(ctx, task.ID, task.Prompt, task.SystemContext, task.MaxTurns, task.MaxBudgetUSD); err != nil {
+				if err := worker.ExecuteTask(ctx, task.ID, task.SessionID, task.Prompt, task.SystemContext, task.MaxTurns, task.MaxBudgetUSD); err != nil {
 					log.Printf("task-worker: task %s failed: %v", task.ID, err)
 					worker.reportTaskFailure(ctx, task.ID, err.Error())
 				} else {
@@ -206,6 +209,7 @@ func RegisterDefaultCard(serverURL, proxyToken, displayName string) error {
 
 type pollTask struct {
 	ID            string  `json:"task_id"`
+	SessionID     string  `json:"session_id"`
 	Prompt        string  `json:"prompt"`
 	SystemContext string  `json:"system_context"`
 	MaxTurns      int     `json:"max_turns"`
