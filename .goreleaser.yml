@@ -18,10 +18,26 @@ builds:
       - amd64
       - arm64
 
+  - id: agentserver-mcp-bridge
+    main: ./cmd/agentserver-mcp-bridge
+    binary: agentserver-mcp-bridge
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
 archives:
   - id: agentserver-agent
     ids:
       - agentserver-agent
+      - agentserver-mcp-bridge
     formats:
       - tar.gz
     name_template: "agentserver-{{ .Os }}-{{ .Arch }}"
