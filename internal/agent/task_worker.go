@@ -89,7 +89,7 @@ func (w *TaskWorker) ExecuteTask(ctx context.Context, taskID, prompt, systemCont
 		agentsdk.WithPermissionMode(agentsdk.PermissionBypassAll),
 		agentsdk.WithAllowDangerouslySkipPermissions(),
 	}
-	if w.opts.CLIPath != "" {
+	if w.opts.CLIPath != "" && w.opts.CLIPath != "claude" {
 		opts = append(opts, agentsdk.WithCLIPath(w.opts.CLIPath))
 	}
 	if maxTurns > 0 {
