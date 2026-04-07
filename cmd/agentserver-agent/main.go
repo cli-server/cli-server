@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/agentserver/agentserver/internal/agent"
+	"github.com/agentserver/agentserver/internal/mcpbridge"
 	"github.com/spf13/cobra"
 )
 
@@ -246,6 +247,24 @@ Requires --server and a valid sandbox registration (credentials from ~/.agentser
 	},
 }
 
+var mcpServerCmd = &cobra.Command{
+	Use:   "mcp-server",
+	Short: "Run as an MCP stdio server for Claude Code integration",
+	Long: `Start a stdio MCP server that exposes agentserver agent discovery and
+task delegation as tools for Claude Code.
+
+Typically invoked automatically via .mcp.json — not run manually.
+
+Required environment variables:
+  AGENTSERVER_URL          - agentserver base URL
+  AGENTSERVER_TOKEN        - tunnel_token for auth
+  AGENTSERVER_WORKSPACE_ID - workspace ID
+  AGENTSERVER_SANDBOX_ID   - this agent's sandbox ID (optional)`,
+	Run: func(cmd *cobra.Command, args []string) {
+		mcpbridge.RunMCPServer()
+	},
+}
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the agent version",
@@ -255,7 +274,7 @@ var versionCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(connectCmd, claudecodeCmd, listCmd, removeCmd, taskWorkerCmd, versionCmd)
+	rootCmd.AddCommand(connectCmd, claudecodeCmd, listCmd, removeCmd, taskWorkerCmd, mcpServerCmd, versionCmd)
 
 	connectCmd.Flags().StringVar(&server, "server", "", "Agent server URL (e.g., https://cli.example.com)")
 	connectCmd.Flags().StringVar(&code, "code", "", "One-time registration code from Web UI")

@@ -7,7 +7,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sync"
@@ -200,16 +199,18 @@ func RunClaudeCode(opts ClaudeCodeOptions) {
 // injectMCPConfig writes a .mcp.json in the working directory so Claude Code
 // auto-discovers the agentserver MCP bridge.
 func injectMCPConfig(serverURL, token, workspaceID, sandboxID, workDir string) error {
-	// Find the MCP bridge binary.
-	bridgeBin, err := findMCPBridge()
+	// Find our own binary — MCP server runs as `agentserver mcp-server`.
+	self, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("agentserver-mcp-bridge not found: %w", err)
+		return fmt.Errorf("cannot find own executable: %w", err)
 	}
+	self, _ = filepath.EvalSymlinks(self)
 
 	mcpConfig := map[string]any{
 		"mcpServers": map[string]any{
 			"agentserver": map[string]any{
-				"command": bridgeBin,
+				"command": self,
+				"args":    []string{"mcp-server"},
 				"env": map[string]string{
 					"AGENTSERVER_URL":          serverURL,
 					"AGENTSERVER_TOKEN":        token,
@@ -245,30 +246,3 @@ func injectMCPConfig(serverURL, token, workspaceID, sandboxID, workDir string) e
 	return os.WriteFile(mcpPath, append(data, '\n'), 0600)
 }
 
-// findMCPBridge locates the agentserver-mcp-bridge binary.
-func findMCPBridge() (string, error) {
-	// 1. Same directory as current executable.
-	if exe, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exe), "agentserver-mcp-bridge")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-
-	// 2. PATH.
-	if path, err := exec.LookPath("agentserver-mcp-bridge"); err == nil {
-		return path, nil
-	}
-
-	// 3. Common locations.
-	for _, p := range []string{
-		"/usr/local/bin/agentserver-mcp-bridge",
-		"/opt/homebrew/bin/agentserver-mcp-bridge",
-	} {
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-
-	return "", fmt.Errorf("not in PATH or standard locations")
-}
