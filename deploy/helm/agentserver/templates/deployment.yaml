@@ -144,6 +144,14 @@ spec:
             - name: OPENCLAW_WEIXIN_ENABLED
               value: "true"
             {{- end }}
+            {{- if .Values.sandbox.claudecode.image }}
+            - name: CLAUDECODE_IMAGE
+              value: {{ .Values.sandbox.claudecode.image | quote }}
+            {{- end }}
+            {{- if .Values.sandbox.claudecode.runtimeClassName }}
+            - name: CLAUDECODE_RUNTIME_CLASS
+              value: {{ .Values.sandbox.claudecode.runtimeClassName | quote }}
+            {{- end }}
             {{- if .Values.sandbox.nanoclaw.image }}
             - name: NANOCLAW_IMAGE
               value: {{ .Values.sandbox.nanoclaw.image | quote }}

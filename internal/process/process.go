@@ -36,6 +36,7 @@ type StartOptions struct {
 	CustomModels     []LLMModel    // modelserver models (for OpenClaw, independent of BYOK)
 	NanoclawBridgeSecret string        // nanoclaw only: shared secret for bridge HTTP auth
 	SandboxID            string        // sandbox ID (used for nanoclaw bridge URL construction)
+	WorkspaceID          string        // workspace ID (used for claudecode MCP bridge config)
 	AssistantName        string        // nanoclaw only: configurable assistant name (default "Andy")
 }
 

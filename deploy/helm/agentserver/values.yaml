@@ -102,6 +102,9 @@ sandbox:
     runtimeClassName: ""
     subdomainPrefix: "claw"  # subdomain: {prefix}-{sessionID}.{baseDomain}
     weixinEnabled: false     # Install and enable the official WeChat channel plugin
+  claudecode:
+    image: ""                # e.g. ghcr.io/agentserver/claudecode-agent:main
+    runtimeClassName: ""
   nanoclaw:
     image: ""                # e.g. ghcr.io/agentserver/nanoclaw-agent:v1.2.42
     runtimeClassName: ""

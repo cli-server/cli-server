@@ -5,6 +5,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"time"
 
 	"github.com/agentserver/agentserver/internal/sbxstore"
@@ -13,6 +15,7 @@ import (
 )
 
 const claudecodeCookieKey = "claude-token"
+const claudecodePort = "7681"
 
 // handleClaudeCodeSubdomainProxy handles all requests on claude-{sandboxID}.{baseDomain}.
 //
@@ -21,8 +24,8 @@ const claudecodeCookieKey = "claude-token"
 //  2. All other requests — validated via the per-subdomain cookie.
 //
 // Routing:
-//   - /ws/terminal — WebSocket terminal proxy via tunnel
-//   - everything else — serves the embedded xterm.js terminal page
+//   - Cloud sandbox (PodIP set): reverse proxy to ttyd on pod (port 7681)
+//   - Local agent (IsLocal, no PodIP): tunnel-based terminal proxy (legacy)
 func (s *Server) handleClaudeCodeSubdomainProxy(w http.ResponseWriter, r *http.Request, sandboxID string) {
 	// Step 1: handle /auth?token=xxx.
 	if r.URL.Path == "/auth" {
@@ -89,14 +92,27 @@ func (s *Server) handleClaudeCodeSubdomainProxy(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Route: WebSocket terminal proxy.
+	s.throttledActivity(sbx.ID)
+
+	// Cloud sandbox: reverse proxy to ttyd on pod IP.
+	if sbx.PodIP != "" {
+		target := &url.URL{
+			Scheme: "http",
+			Host:   sbx.PodIP + ":" + claudecodePort,
+		}
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy.FlushInterval = -1 // streaming support for WebSocket upgrade
+		proxy.ServeHTTP(w, r)
+		return
+	}
+
+	// Local agent fallback: tunnel-based terminal proxy.
 	if r.URL.Path == "/ws/terminal" {
 		s.handleTerminalWS(w, r, sbx)
 		return
 	}
 
-	// Everything else: serve the embedded terminal page.
-	s.throttledActivity(sbx.ID)
+	// Serve the embedded terminal page for local agents.
 	serveClaudeCodeTerminalPage(w, r)
 }
 

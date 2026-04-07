@@ -1234,11 +1234,6 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid sandbox type: must be opencode, openclaw, nanoclaw, or claudecode", http.StatusBadRequest)
 		return
 	}
-	if sandboxType == "claudecode" {
-		http.Error(w, "claudecode sandboxes must be created via local agent registration (agentserver-agent claudecode --code ...)", http.StatusBadRequest)
-		return
-	}
-
 	// Override resource values if user provided them, with validation.
 	if req.CPU != nil {
 		if *req.CPU <= 0 || *req.CPU > wd.MaxSandboxCPU {
@@ -1364,6 +1359,10 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		startOpts.NanoclawBridgeSecret = sbx.NanoclawBridgeSecret
 		startOpts.SandboxID = id
 		startOpts.AssistantName = sbx.MetadataString("assistant_name")
+	}
+	if sandboxType == "claudecode" {
+		startOpts.SandboxID = id
+		startOpts.WorkspaceID = wsID
 	}
 	// Priority: modelserver > BYOK > platform default
 	if msConn != nil {

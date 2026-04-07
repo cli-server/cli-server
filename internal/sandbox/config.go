@@ -27,6 +27,9 @@ type Config struct {
 	NanoclawBridgeBaseURL    string // agentserver internal URL for NanoClaw pods to call back (e.g. "http://agentserver:8080")
 	NanoclawModel            string // Claude Code model override (e.g. "claude-opus-4-6")
 	GeminiProxyBaseURL       string // Gemini proxy base URL without path (e.g. "http://llmproxy:8081")
+	ClaudeCodeImage          string
+	ClaudeCodeRuntimeClassName string
+	ClaudeCodePort           int    // default 7681 (ttyd)
 }
 
 // DefaultConfig returns a Config populated from environment variables with sensible defaults.
@@ -49,6 +52,9 @@ func DefaultConfig() Config {
 		NanoclawBridgeBaseURL:    os.Getenv("NANOCLAW_BRIDGE_BASE_URL"),
 		NanoclawModel:            os.Getenv("NANOCLAW_MODEL"),
 		GeminiProxyBaseURL:       os.Getenv("GOOGLE_GEMINI_BASE_URL"),
+		ClaudeCodeImage:          os.Getenv("CLAUDECODE_IMAGE"),
+		ClaudeCodeRuntimeClassName: os.Getenv("CLAUDECODE_RUNTIME_CLASS"),
+		ClaudeCodePort:           7681,
 	}
 }
 

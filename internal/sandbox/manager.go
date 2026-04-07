@@ -397,6 +397,31 @@ fs.writeFileSync(path, JSON.stringify(existing, null, 2));
 		if opts.OpenclawToken != "" {
 			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCLAW_GATEWAY_TOKEN", Value: opts.OpenclawToken})
 		}
+	case "claudecode":
+		if m.cfg.ClaudeCodeImage == "" {
+			return "", fmt.Errorf("CLAUDECODE_IMAGE not configured: set the environment variable to the claudecode container image (build with Dockerfile.claudecode)")
+		}
+		sandboxImage = m.cfg.ClaudeCodeImage
+		containerPort = m.cfg.ClaudeCodePort
+
+		// Claude Code uses Anthropic SDK which appends /v1/messages.
+		claudeProxyURL := strings.TrimSuffix(proxyBaseURL, "/v1")
+		containerEnv = append(containerEnv,
+			corev1.EnvVar{Name: "ANTHROPIC_BASE_URL", Value: claudeProxyURL},
+			corev1.EnvVar{Name: "ANTHROPIC_API_KEY", Value: opts.ProxyToken},
+		)
+
+		// MCP bridge config: agentserver URL + auth for discover_agents/delegate_task
+		agentserverURL := m.cfg.NanoclawBridgeBaseURL // reuse the internal agentserver URL
+		if agentserverURL == "" {
+			agentserverURL = "http://agentserver:8080"
+		}
+		containerEnv = append(containerEnv,
+			corev1.EnvVar{Name: "AGENTSERVER_URL", Value: agentserverURL},
+			corev1.EnvVar{Name: "AGENTSERVER_TOKEN", Value: opts.ProxyToken},
+			corev1.EnvVar{Name: "AGENTSERVER_WORKSPACE_ID", Value: opts.WorkspaceID},
+			corev1.EnvVar{Name: "AGENTSERVER_SANDBOX_ID", Value: opts.SandboxID},
+		)
 	case "nanoclaw":
 		if m.cfg.NanoclawImage == "" {
 			return "", fmt.Errorf("NANOCLAW_IMAGE not configured: set the environment variable to the nanoclaw container image (build with Dockerfile.nanoclaw)")
@@ -836,6 +861,10 @@ func (m *Manager) runtimeClassNameFor(sandboxType string) *string {
 	case "nanoclaw":
 		if m.cfg.NanoclawRuntimeClassName != "" {
 			return strPtr(m.cfg.NanoclawRuntimeClassName)
+		}
+	case "claudecode":
+		if m.cfg.ClaudeCodeRuntimeClassName != "" {
+			return strPtr(m.cfg.ClaudeCodeRuntimeClassName)
 		}
 	}
 	return m.runtimeClassName()
