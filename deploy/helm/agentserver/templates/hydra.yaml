@@ -78,9 +78,9 @@ spec:
             - name: URLS_SELF_ISSUER
               value: {{ printf "https://%s" .Values.platform.domain | quote }}
             - name: URLS_LOGIN
-              value: {{ printf "https://%s/oauth/hydra/login" .Values.platform.domain | quote }}
+              value: {{ printf "https://%s/api/oauth/login" .Values.platform.domain | quote }}
             - name: URLS_CONSENT
-              value: {{ printf "https://%s/oauth/hydra/consent" .Values.platform.domain | quote }}
+              value: {{ printf "https://%s/api/oauth/consent" .Values.platform.domain | quote }}
             - name: SECRETS_SYSTEM
               valueFrom:
                 secretKeyRef:

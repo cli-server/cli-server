@@ -862,7 +862,7 @@ export async function listMyWorkspaces(): Promise<Workspace[]> {
 }
 
 export async function submitOAuthLogin(loginChallenge: string): Promise<{ redirect_to: string }> {
-  const res = await fetch(`/oauth/hydra/login?login_challenge=${encodeURIComponent(loginChallenge)}`, {
+  const res = await fetch(`/api/oauth/login?login_challenge=${encodeURIComponent(loginChallenge)}`, {
     method: 'POST',
     credentials: 'include',
   })
@@ -875,7 +875,7 @@ export async function submitOAuthConsent(
   workspaceId: string,
   action: 'accept' | 'deny'
 ): Promise<{ redirect_to: string }> {
-  const res = await fetch(`/oauth/hydra/consent?consent_challenge=${encodeURIComponent(consentChallenge)}`, {
+  const res = await fetch(`/api/oauth/consent?consent_challenge=${encodeURIComponent(consentChallenge)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',

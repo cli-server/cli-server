@@ -170,10 +170,10 @@ func (s *Server) Router() http.Handler {
 
 	// Hydra login/consent provider endpoints (no auth required — Hydra redirects here).
 	if s.HydraClient != nil {
-		r.Get("/oauth/hydra/login", s.handleOAuthLogin)
-		r.Post("/oauth/hydra/login", s.handleOAuthLoginSubmit)
-		r.Get("/oauth/hydra/consent", s.handleOAuthConsent)
-		r.Post("/oauth/hydra/consent", s.handleOAuthConsentSubmit)
+		r.Get("/api/oauth/login", s.handleOAuthLogin)
+		r.Post("/api/oauth/login", s.handleOAuthLoginSubmit)
+		r.Get("/api/oauth/consent", s.handleOAuthConsent)
+		r.Post("/api/oauth/consent", s.handleOAuthConsentSubmit)
 	}
 
 	// Reverse proxy Hydra public endpoints so CLI only needs the agentserver URL.
