@@ -87,14 +87,12 @@ func RunLogin(opts LoginOptions) error {
 		fmt.Printf("Or enter code: %s at %s\n\n", deviceResp.UserCode, deviceResp.VerificationURI)
 	}
 
-	// 3. Try opening browser; fall back to QR code.
+	// 3. Always show QR code, and try opening browser unless skipped.
+	showQRCode(verifyURL)
 	if !opts.SkipOpenBrowser {
 		if err := browser.OpenURL(verifyURL); err != nil {
 			log.Printf("Could not open browser: %v", err)
-			showQRCode(verifyURL)
 		}
-	} else {
-		showQRCode(verifyURL)
 	}
 
 	// 4. Poll for token.
