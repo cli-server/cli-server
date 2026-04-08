@@ -158,7 +158,7 @@ func requestDeviceCode(serverURL string) (*DeviceAuthResponse, error) {
 		"client_id": {defaultClientID},
 		"scope":     {defaultScopes},
 	}
-	resp, err := http.PostForm(strings.TrimRight(serverURL, "/")+"/api/oauth/device/auth", form)
+	resp, err := http.PostForm(strings.TrimRight(serverURL, "/")+"/api/oauth2/device/auth", form)
 	if err != nil {
 		return nil, fmt.Errorf("request device code: %w", err)
 	}
@@ -175,7 +175,7 @@ func requestDeviceCode(serverURL string) (*DeviceAuthResponse, error) {
 }
 
 func pollForToken(serverURL string, deviceResp *DeviceAuthResponse) (*TokenResponse, error) {
-	tokenURL := strings.TrimRight(serverURL, "/") + "/api/oauth/token"
+	tokenURL := strings.TrimRight(serverURL, "/") + "/api/oauth2/token"
 	interval := time.Duration(deviceResp.Interval) * time.Second
 	if interval < 5*time.Second {
 		interval = 5 * time.Second

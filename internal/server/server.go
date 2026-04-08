@@ -170,17 +170,17 @@ func (s *Server) Router() http.Handler {
 
 	// Hydra login/consent provider endpoints (no auth required — Hydra redirects here).
 	if s.HydraClient != nil {
-		r.Get("/api/oauth/login", s.handleOAuthLogin)
-		r.Post("/api/oauth/login", s.handleOAuthLoginSubmit)
-		r.Get("/api/oauth/consent", s.handleOAuthConsent)
-		r.Post("/api/oauth/consent", s.handleOAuthConsentSubmit)
+		r.Get("/api/oauth2/login", s.handleOAuthLogin)
+		r.Post("/api/oauth2/login", s.handleOAuthLoginSubmit)
+		r.Get("/api/oauth2/consent", s.handleOAuthConsent)
+		r.Post("/api/oauth2/consent", s.handleOAuthConsentSubmit)
 	}
 
 	// Reverse proxy Hydra public endpoints so CLI only needs the agentserver URL.
-	// Rewrites /api/oauth/* → /oauth2/* on the Hydra side.
+	// Rewrites /api/oauth2/* → /oauth2/* on the Hydra side.
 	if s.HydraPublicURL != "" {
-		r.Post("/api/oauth/device/auth", s.hydraProxyRewrite("/oauth2/device/auth"))
-		r.Post("/api/oauth/token", s.hydraProxyRewrite("/oauth2/token"))
+		r.Post("/api/oauth2/device/auth", s.hydraProxyRewrite("/oauth2/device/auth"))
+		r.Post("/api/oauth2/token", s.hydraProxyRewrite("/oauth2/token"))
 	}
 
 	// Agent card registration (auth via proxy_token).

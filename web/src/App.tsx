@@ -273,8 +273,8 @@ export default function App() {
           path="/admin/*"
           element={<AdminPanel />}
         />
-        <Route path="/oauth/login" element={<OAuthLoginRoute />} />
-        <Route path="/oauth/consent" element={<OAuthConsentRoute />} />
+        <Route path="/oauth2/login" element={<OAuthLoginRoute />} />
+        <Route path="/oauth2/consent" element={<OAuthConsentRoute />} />
         <Route path="*" element={selectedWorkspaceId ? <Navigate to={`/w/${selectedWorkspaceId}`} replace /> : null} />
       </Routes>
     </div>
