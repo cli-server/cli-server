@@ -200,6 +200,18 @@ export default function App() {
     setSandboxes((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)))
   }, [])
 
+  // OAuth pages bypass the auth guard — they handle their own authentication.
+  if (location.pathname.startsWith('/oauth2/')) {
+    return (
+      <Routes>
+        <Route path="/oauth2/login" element={<OAuthLoginRoute />} />
+        <Route path="/oauth2/consent" element={<OAuthConsentRoute />} />
+        <Route path="/oauth2/device" element={<OAuthDeviceRoute />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    )
+  }
+
   if (authed === null) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -295,9 +307,6 @@ export default function App() {
           path="/admin/*"
           element={<AdminPanel />}
         />
-        <Route path="/oauth2/login" element={<OAuthLoginRoute />} />
-        <Route path="/oauth2/consent" element={<OAuthConsentRoute />} />
-        <Route path="/oauth2/device" element={<OAuthDeviceRoute />} />
         <Route path="*" element={selectedWorkspaceId ? <Navigate to={`/w/${selectedWorkspaceId}`} replace /> : null} />
       </Routes>
     </div>
