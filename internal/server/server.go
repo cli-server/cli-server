@@ -181,8 +181,11 @@ func (s *Server) Router() http.Handler {
 	if s.HydraPublicURL != "" {
 		r.Post("/api/oauth2/device/auth", s.hydraProxyRewrite("/oauth2/device/auth"))
 		r.Post("/api/oauth2/token", s.hydraProxyRewrite("/oauth2/token"))
-		r.Get("/api/oauth2/device/verify", s.hydraProxyRewrite("/oauth2/device/verify"))
-		r.Post("/api/oauth2/device/verify", s.hydraProxyRewrite("/oauth2/device/verify"))
+		// Hydra's verification_uri is always issuer + /oauth2/device/verify (hardcoded).
+		// Must proxy this path directly so the browser can reach Hydra.
+		hydraPassthrough := newReverseProxy(s.HydraPublicURL)
+		r.Get("/oauth2/device/verify", hydraPassthrough)
+		r.Post("/oauth2/device/verify", hydraPassthrough)
 	}
 
 	// Agent card registration (auth via proxy_token).

@@ -92,8 +92,6 @@ spec:
               value: {{ .Values.hydra.adminPort | quote }}
             - name: OAUTH2_DEVICE_AUTHORIZATION_TOKEN_POLLING_INTERVAL
               value: {{ .Values.hydra.deviceAuthTokenPollingInterval | quote }}
-            - name: URLS_DEVICE_VERIFICATION
-              value: {{ printf "https://%s/api/oauth2/device/verify" .Values.platform.domain | quote }}
             - name: LOG_LEVEL
               value: "info"
           ports:
