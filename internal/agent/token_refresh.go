@@ -26,6 +26,11 @@ func ensureValidToken(serverURL, credPath string) (string, error) {
 		return "", ErrNeedReLogin
 	}
 
+	// Credentials were issued for a different server — need re-login.
+	if creds.ServerURL != "" && creds.ServerURL != serverURL {
+		return "", ErrNeedReLogin
+	}
+
 	// Token still valid.
 	if creds.AccessToken != "" && time.Now().Before(creds.ExpiresAt) {
 		return creds.AccessToken, nil

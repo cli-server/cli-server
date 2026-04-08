@@ -58,7 +58,7 @@ func RunConnect(opts ConnectOptions) {
 		opts.Server = s.ServerURL
 		log.Printf("Resuming session (sandbox: %s)", session.SandboxID)
 	} else if opts.Continue {
-		s, err := FindLatestSession(cwd)
+		s, err := FindLatestSession(cwd, "opencode")
 		if err != nil {
 			log.Fatalf("No session to continue: %v", err)
 		}
@@ -179,6 +179,7 @@ func RunConnect(opts ConnectOptions) {
 		if opencodeProc != nil {
 			opencodeProc.Stop()
 		}
+		CleanupSession(session)
 		log.Fatalf("Agent error: %v", err)
 	}
 

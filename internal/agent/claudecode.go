@@ -60,7 +60,7 @@ func RunClaudeCode(opts ClaudeCodeOptions) {
 		opts.Server = s.ServerURL
 		log.Printf("Resuming session (sandbox: %s)", session.SandboxID)
 	} else if opts.Continue {
-		s, err := FindLatestSession(cwd)
+		s, err := FindLatestSession(cwd, "claudecode")
 		if err != nil {
 			log.Fatalf("No session to continue: %v", err)
 		}
@@ -203,6 +203,7 @@ func RunClaudeCode(opts ClaudeCodeOptions) {
 
 	log.Printf("Connecting to %s (Claude Code terminal agent)...", session.ServerURL)
 	if err := tunnelClient.Run(ctx); err != nil && ctx.Err() == nil {
+		CleanupSession(session)
 		log.Fatalf("Agent error: %v", err)
 	}
 

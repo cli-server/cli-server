@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -65,12 +66,14 @@ func LoadSession(sandboxID string) (*Session, error) {
 // CleanupSession clears the PID from the session file.
 func CleanupSession(session *Session) {
 	session.PID = 0
-	SaveSession(session)
+	if err := SaveSession(session); err != nil {
+		log.Printf("warning: failed to clean up session %s: %v", session.SandboxID, err)
+	}
 }
 
-// FindLatestSession finds the most recent inactive session for the given directory.
-// If dir is empty, matches any directory.
-func FindLatestSession(dir string) (*Session, error) {
+// FindLatestSession finds the most recent inactive session for the given directory and type.
+// If dir is empty, matches any directory. If sessionType is empty, matches any type.
+func FindLatestSession(dir, sessionType string) (*Session, error) {
 	sessions, err := ListSessions()
 	if err != nil {
 		return nil, err
@@ -83,6 +86,9 @@ func FindLatestSession(dir string) (*Session, error) {
 
 	for _, s := range sessions {
 		if dir != "" && s.Dir != dir {
+			continue
+		}
+		if sessionType != "" && s.Type != sessionType {
 			continue
 		}
 		if isProcessAlive(s.PID) {

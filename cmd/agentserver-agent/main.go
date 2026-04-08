@@ -112,7 +112,7 @@ var listCmd = &cobra.Command{
 				active = fmt.Sprintf("PID %d", s.PID)
 			}
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-				s.SandboxID[:8], s.Name, s.Type, s.WorkspaceID[:8], dir, active)
+				truncID(s.SandboxID, 8), s.Name, s.Type, truncID(s.WorkspaceID, 8), dir, active)
 		}
 		w.Flush()
 	},
@@ -351,6 +351,13 @@ func init() {
 	removeCmd.Flags().String("workspace", "", "Workspace ID of the agent to remove")
 	removeCmd.Flags().String("dir", "", "Directory of the agent to remove")
 	removeCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+}
+
+func truncID(id string, n int) string {
+	if len(id) < n {
+		return id
+	}
+	return id[:n]
 }
 
 func main() {
