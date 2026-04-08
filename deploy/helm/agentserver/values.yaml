@@ -128,7 +128,7 @@ hydra:
   enabled: false
   image:
     repository: oryd/hydra
-    tag: "v26.2.1"
+    tag: "v26.2.0"
     pullPolicy: IfNotPresent
   publicPort: 4444
   adminPort: 4445
