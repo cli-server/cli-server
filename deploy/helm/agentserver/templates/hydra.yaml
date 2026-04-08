@@ -157,16 +157,15 @@ spec:
           args:
             - |
               ENDPOINT="http://{{ .Release.Name }}-hydra-admin:{{ .Values.hydra.adminPort }}"
-              CLIENT_ARGS="--id agentserver-agent-cli \
-                --name Agentserver_Agent_CLI \
+              CLIENT_FLAGS="--name Agentserver_Agent_CLI \
                 --grant-type urn:ietf:params:oauth:grant-type:device_code \
                 --grant-type refresh_token \
                 --response-type code \
                 --scope openid --scope profile --scope agent:register \
                 --token-endpoint-auth-method none \
                 --audience https://{{ .Values.platform.domain }}"
-              hydra update oauth2-client agentserver-agent-cli --endpoint "$ENDPOINT" $CLIENT_ARGS 2>/dev/null || \
-              hydra create oauth2-client --endpoint "$ENDPOINT" $CLIENT_ARGS
+              hydra update oauth2-client agentserver-agent-cli --endpoint "$ENDPOINT" $CLIENT_FLAGS 2>/dev/null || \
+              hydra create oauth2-client --endpoint "$ENDPOINT" --id agentserver-agent-cli $CLIENT_FLAGS
 ---
 # --- Hydra Public Service ---
 apiVersion: v1
