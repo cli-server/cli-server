@@ -9,9 +9,13 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /agentserver ./cmd/agentserver-ag
 # Stage 2: Claude Code cloud sandbox
 FROM node:20-slim
 
-# ttyd: lightweight web terminal server
+# System dependencies (git, ca-certificates) + ttyd from GitHub releases
+# (ttyd is not in Debian bookworm default repos)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ttyd git ca-certificates && \
+    apt-get install -y --no-install-recommends git ca-certificates curl && \
+    curl -fsSL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -o /usr/local/bin/ttyd && \
+    chmod +x /usr/local/bin/ttyd && \
+    apt-get purge -y curl && apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
 # Claude Code CLI
