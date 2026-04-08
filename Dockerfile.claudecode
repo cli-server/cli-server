@@ -28,9 +28,11 @@ COPY --from=go-builder /agentserver /usr/local/bin/agentserver
 COPY claudecode-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Agent user (UID 1000, matches K8s init container expectations)
-RUN useradd -m -u 1000 -s /bin/bash agent
-USER agent
+# Agent user (UID 1000, matches K8s init container expectations).
+# node:20-slim already has a 'node' user at UID 1000 — reuse it with a login shell.
+RUN usermod -l agent -d /home/agent -m -s /bin/bash node 2>/dev/null || true && \
+    mkdir -p /home/agent && chown 1000:1000 /home/agent
+USER 1000
 WORKDIR /home/agent
 
 EXPOSE 7681
