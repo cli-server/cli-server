@@ -286,9 +286,6 @@ func (s *Server) Router() http.Handler {
 			r.Post("/api/sandboxes/{id}/weixin/qr-wait", imbridgeProxy)
 		}
 
-		// Agent registration code generation
-		r.Post("/api/workspaces/{wid}/agent-code", s.handleCreateAgentCode)
-
 		// Agent discovery
 		r.Get("/api/workspaces/{wid}/agents", s.handleListAgentCards)
 		r.Get("/api/agents/{sandboxId}", s.handleGetAgentCard)

@@ -1,51 +1,14 @@
 package server
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/agentserver/agentserver/internal/auth"
 	"github.com/agentserver/agentserver/internal/shortid"
 )
-
-// handleCreateAgentCode generates a one-time registration code for connecting a local agent.
-// DEPRECATED: This endpoint is being replaced by OAuth Device Flow.
-func (s *Server) handleCreateAgentCode(w http.ResponseWriter, r *http.Request) {
-	wsID := chi.URLParam(r, "wid")
-	if !s.requireWorkspaceRole(w, r, wsID, "owner", "maintainer", "developer") {
-		return
-	}
-
-	userID := auth.UserIDFromContext(r.Context())
-
-	// Generate a random 12-byte code (24 hex chars).
-	codeBytes := make([]byte, 12)
-	if _, err := rand.Read(codeBytes); err != nil {
-		http.Error(w, "failed to generate code", http.StatusInternalServerError)
-		return
-	}
-	code := hex.EncodeToString(codeBytes)
-	expiresAt := time.Now().Add(10 * time.Minute)
-
-	if err := s.DB.CreateAgentRegistrationCode(code, userID, wsID, expiresAt); err != nil {
-		log.Printf("failed to create agent registration code: %v", err)
-		http.Error(w, "failed to create code", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"code":       code,
-		"expires_at": expiresAt.Format(time.RFC3339),
-	})
-}
 
 // handleAgentRegister processes a CLI agent registration using an OAuth Bearer token.
 // The token must contain workspace_id and agent:register scope from the Hydra consent flow.
