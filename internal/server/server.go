@@ -1805,7 +1805,7 @@ func (s *Server) notifyIMBridgePollerRestore(sandboxID string) {
 func newReverseProxy(baseURL string) http.HandlerFunc {
 	target, err := url.Parse(baseURL)
 	if err != nil {
-		log.Fatalf("invalid imbridge URL %q: %v", baseURL, err)
+		log.Fatalf("invalid proxy target URL %q: %v", baseURL, err)
 	}
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {

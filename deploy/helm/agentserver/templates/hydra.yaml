@@ -12,6 +12,7 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   backoffLimit: 3
+  ttlSecondsAfterFinished: 300
   template:
     metadata:
       labels:
@@ -25,8 +26,14 @@ spec:
           args:
             - |
               until pg_isready -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }}; do sleep 2; done
-              PGPASSWORD={{ .Values.postgresql.auth.password }} psql -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} -tc "SELECT 1 FROM pg_database WHERE datname='{{ .Values.hydra.database.name }}'" | grep -q 1 || \
-              PGPASSWORD={{ .Values.postgresql.auth.password }} createdb -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} {{ .Values.hydra.database.name }}
+              PGPASSWORD="$PG_PASSWORD" psql -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} -tc "SELECT 1 FROM pg_database WHERE datname='{{ .Values.hydra.database.name }}'" | grep -q 1 || \
+              PGPASSWORD="$PG_PASSWORD" createdb -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} {{ .Values.hydra.database.name }}
+          env:
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-hydra-secret
+                  key: pg-password
       containers:
         - name: migrate
           image: {{ .Values.hydra.image.repository }}:{{ .Values.hydra.image.tag }}
@@ -34,7 +41,10 @@ spec:
           command: ["hydra", "migrate", "sql", "-e", "--yes"]
           env:
             - name: DSN
-              value: {{ include "agentserver.hydraDsn" . | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-hydra-secret
+                  key: dsn
 ---
 # --- Hydra OAuth2 client registration Job (Helm hook) ---
 apiVersion: batch/v1
@@ -49,6 +59,7 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   backoffLimit: 3
+  ttlSecondsAfterFinished: 300
   template:
     metadata:
       labels:
@@ -86,7 +97,8 @@ spec:
                 --token-endpoint-auth-method none \
                 --audience https://{{ .Values.platform.domain }}
 ---
-# --- Hydra Secret (system secret for encryption) ---
+# --- Hydra Secret (DSN + system secret) ---
+{{- $existingSecret := (lookup "v1" "Secret" .Release.Namespace (printf "%s-hydra-secret" .Release.Name)) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -95,8 +107,12 @@ metadata:
     app.kubernetes.io/component: hydra
 type: Opaque
 stringData:
+  dsn: {{ include "agentserver.hydraDsn" . | quote }}
+  pg-password: {{ .Values.postgresql.auth.password | quote }}
   {{- if .Values.hydra.secretsSystem }}
   secrets-system: {{ .Values.hydra.secretsSystem | quote }}
+  {{- else if and $existingSecret (index $existingSecret "data") (index $existingSecret.data "secrets-system") }}
+  secrets-system: {{ index $existingSecret.data "secrets-system" | b64dec | quote }}
   {{- else }}
   secrets-system: {{ randAlphaNum 32 | quote }}
   {{- end }}
@@ -125,7 +141,10 @@ spec:
           command: ["hydra", "serve", "all"]
           env:
             - name: DSN
-              value: {{ include "agentserver.hydraDsn" . | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-hydra-secret
+                  key: dsn
             - name: URLS_SELF_ISSUER
               value: {{ printf "https://%s" .Values.platform.domain | quote }}
             - name: URLS_LOGIN

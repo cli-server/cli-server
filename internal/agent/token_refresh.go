@@ -72,8 +72,8 @@ func ensureValidCredentials(entry *RegistryEntry, credPath, regPath string, ping
 	return nil
 }
 
-func refreshAccessToken(hydraPublicURL, refreshToken string) (*TokenResponse, error) {
-	tokenURL := strings.TrimRight(hydraPublicURL, "/") + "/oauth2/token"
+func refreshAccessToken(serverURL, refreshToken string) (*TokenResponse, error) {
+	tokenURL := strings.TrimRight(serverURL, "/") + "/oauth2/token"
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"client_id":     {defaultClientID},

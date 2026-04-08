@@ -45,7 +45,7 @@ var connectCmd = &cobra.Command{
 	Short: "Connect local opencode to agentserver",
 	Long: `Establish a WebSocket tunnel between a local opencode instance and agentserver.
 
-On first run, provide --server and --hydra-url to authenticate and register.
+On first run, provide --server to authenticate and register via OAuth.
 On subsequent runs, the saved credentials will be used automatically.
 
 By default, opencode serve is started automatically on --opencode-port (4096).
@@ -179,7 +179,7 @@ var claudecodeCmd = &cobra.Command{
 via WebSocket tunnel. Users can access the terminal through the web browser at
 claude-{id}.{domain}.
 
-On first run, provide --server and --hydra-url to authenticate and register.
+On first run, provide --server to authenticate and register via OAuth.
 On subsequent runs, saved credentials are used automatically.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		agent.RunClaudeCode(agent.ClaudeCodeOptions{

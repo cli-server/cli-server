@@ -15,7 +15,7 @@ func TestSaveAndLoadCredentials(t *testing.T) {
 		AccessToken:  "test-access-token",
 		RefreshToken: "test-refresh-token",
 		ExpiresAt:    time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
-			Scopes:       []string{"openid", "profile", "agent:register"},
+		Scopes:       []string{"openid", "profile", "agent:register"},
 	}
 
 	if err := SaveCredentials(path, creds); err != nil {
@@ -63,7 +63,7 @@ func TestSaveCredentials_CreatesDir(t *testing.T) {
 		AccessToken:  "tok",
 		RefreshToken: "ref",
 		ExpiresAt:    time.Now(),
-		}
+	}
 
 	if err := SaveCredentials(nested, creds); err != nil {
 		t.Fatalf("SaveCredentials: %v", err)
