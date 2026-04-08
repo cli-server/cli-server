@@ -192,3 +192,31 @@ func (s *Server) handleOAuthConsentSubmit(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"redirect_to": redirect})
 }
+
+// handleOAuthDeviceAccept accepts a device challenge after the user confirms the user_code.
+func (s *Server) handleOAuthDeviceAccept(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeviceChallenge string `json:"device_challenge"`
+		UserCode        string `json:"user_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.DeviceChallenge == "" || req.UserCode == "" {
+		http.Error(w, "device_challenge and user_code are required", http.StatusBadRequest)
+		return
+	}
+
+	redirect, err := s.HydraClient.AcceptDeviceChallenge(req.DeviceChallenge, auth.AcceptDeviceBody{
+		UserCode: req.UserCode,
+	})
+	if err != nil {
+		log.Printf("oauth device accept: %v", err)
+		http.Error(w, "failed to accept device challenge", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"redirect_to": redirect})
+}

@@ -174,6 +174,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/oauth2/login", s.handleOAuthLoginSubmit)
 		r.Get("/api/oauth2/consent", s.handleOAuthConsent)
 		r.Post("/api/oauth2/consent", s.handleOAuthConsentSubmit)
+		r.Post("/api/oauth2/device/accept", s.handleOAuthDeviceAccept)
 	}
 
 	// Reverse proxy Hydra public endpoints so CLI only needs the agentserver URL.
@@ -181,8 +182,9 @@ func (s *Server) Router() http.Handler {
 	if s.HydraPublicURL != "" {
 		r.Post("/api/oauth2/device/auth", s.hydraProxyRewrite("/oauth2/device/auth"))
 		r.Post("/api/oauth2/token", s.hydraProxyRewrite("/oauth2/token"))
-		// Hydra's verification_uri is always issuer + /oauth2/device/verify (hardcoded).
-		// Must proxy this path directly so the browser can reach Hydra.
+		// Hydra's verification_uri is always issuer + /oauth2/device/verify (hardcoded
+		// in fositex/config.go:240). This is the entry point for the browser flow —
+		// Hydra processes user_code then redirects to URLS_DEVICE_VERIFICATION.
 		hydraPassthrough := newReverseProxy(s.HydraPublicURL)
 		r.Get("/oauth2/device/verify", hydraPassthrough)
 		r.Post("/oauth2/device/verify", hydraPassthrough)

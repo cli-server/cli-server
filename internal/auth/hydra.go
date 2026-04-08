@@ -139,6 +139,16 @@ func (h *HydraClient) RejectConsent(challenge string, body RejectBody) (string, 
 	return h.putJSON("/admin/oauth2/auth/requests/consent/reject", "consent_challenge", challenge, body)
 }
 
+// --- Device Flow ---
+
+type AcceptDeviceBody struct {
+	UserCode string `json:"user_code"`
+}
+
+func (h *HydraClient) AcceptDeviceChallenge(challenge string, body AcceptDeviceBody) (string, error) {
+	return h.putJSON("/admin/oauth2/auth/requests/device/accept", "device_challenge", challenge, body)
+}
+
 // --- Token Introspection ---
 
 func (h *HydraClient) IntrospectToken(token string) (*IntrospectionResult, error) {

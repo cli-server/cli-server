@@ -14,6 +14,7 @@ import {
 } from './lib/api'
 import { Login } from './components/Login'
 import { OAuthConsent } from './components/OAuthConsent'
+import { OAuthDevice } from './components/OAuthDevice'
 import { OAuthLogin } from './components/OAuthLogin'
 import { TopBar } from './components/TopBar'
 import { SandboxList } from './components/SandboxList'
@@ -67,6 +68,14 @@ function OAuthLoginRoute() {
   const challenge = searchParams.get('login_challenge') ?? ''
   if (!challenge) return <div>Missing login_challenge</div>
   return <OAuthLogin challenge={challenge} />
+}
+
+function OAuthDeviceRoute() {
+  const [searchParams] = useSearchParams()
+  const challenge = searchParams.get('device_challenge') ?? ''
+  const userCode = searchParams.get('user_code') ?? ''
+  if (!challenge) return <div>Missing device_challenge</div>
+  return <OAuthDevice challenge={challenge} userCode={userCode} />
 }
 
 function OAuthConsentRoute() {
@@ -275,6 +284,7 @@ export default function App() {
         />
         <Route path="/oauth2/login" element={<OAuthLoginRoute />} />
         <Route path="/oauth2/consent" element={<OAuthConsentRoute />} />
+        <Route path="/oauth2/device" element={<OAuthDeviceRoute />} />
         <Route path="*" element={selectedWorkspaceId ? <Navigate to={`/w/${selectedWorkspaceId}`} replace /> : null} />
       </Routes>
     </div>
