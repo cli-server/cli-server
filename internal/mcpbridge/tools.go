@@ -163,7 +163,7 @@ func (b *Bridge) HandleTool(name string, args json.RawMessage) (*ToolResult, err
 // --- Tool Handlers ---
 
 func (b *Bridge) handleDiscoverAgents(args json.RawMessage) (*ToolResult, error) {
-	url := fmt.Sprintf("%s/api/workspaces/%s/agents", b.config.ServerURL, b.config.WorkspaceID)
+	url := fmt.Sprintf("%s/api/agent/discovery/agents", b.config.ServerURL)
 	body, err := b.apiGet(url)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Failed to discover agents: %v", err)), nil
@@ -198,7 +198,7 @@ func (b *Bridge) handleDelegateTask(args json.RawMessage) (*ToolResult, error) {
 		reqBody["skill"] = params.Skill
 	}
 
-	url := fmt.Sprintf("%s/api/workspaces/%s/tasks", b.config.ServerURL, b.config.WorkspaceID)
+	url := fmt.Sprintf("%s/api/agent/tasks", b.config.ServerURL)
 	respBody, err := b.apiPost(url, reqBody)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Failed to delegate task: %v", err)), nil
@@ -222,7 +222,7 @@ func (b *Bridge) handleCheckTask(args json.RawMessage) (*ToolResult, error) {
 		return errorResult("Invalid arguments: " + err.Error()), nil
 	}
 
-	url := fmt.Sprintf("%s/api/tasks/%s", b.config.ServerURL, params.TaskID)
+	url := fmt.Sprintf("%s/api/agent/tasks/%s", b.config.ServerURL, params.TaskID)
 	body, err := b.apiGet(url)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Failed to check task: %v", err)), nil

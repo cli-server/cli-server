@@ -16,8 +16,10 @@ import (
 // handleCreateTask creates a new delegated task.
 // POST /api/workspaces/{wid}/tasks
 func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
-	wid := chi.URLParam(r, "wid")
+	s.handleCreateTaskForWorkspace(w, r, chi.URLParam(r, "wid"))
+}
 
+func (s *Server) handleCreateTaskForWorkspace(w http.ResponseWriter, r *http.Request, wid string) {
 	var req struct {
 		TargetID        string   `json:"target_id"`
 		Skill           string   `json:"skill,omitempty"`

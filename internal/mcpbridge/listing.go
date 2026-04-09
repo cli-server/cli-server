@@ -77,7 +77,7 @@ func (l *AgentListing) Start(ctx context.Context) {
 
 // Refresh fetches the latest agent list from the server.
 func (l *AgentListing) Refresh() error {
-	url := fmt.Sprintf("%s/api/workspaces/%s/agents", l.serverURL, l.workspaceID)
+	url := fmt.Sprintf("%s/api/agent/discovery/agents", l.serverURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err

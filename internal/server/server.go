@@ -201,6 +201,13 @@ func (s *Server) Router() http.Handler {
 	r.Post("/api/agent/mailbox/send", s.handleSendMessage)
 	r.Get("/api/agent/mailbox/inbox", s.handleReadInbox)
 
+	// Agent-facing discovery and task routes (auth via proxy_token).
+	// These mirror the cookie-auth routes below but accept Bearer token
+	// so MCP bridge inside sandbox pods can call them.
+	r.Get("/api/agent/discovery/agents", s.handleAgentDiscoverAgents)
+	r.Post("/api/agent/tasks", s.handleAgentCreateTask)
+	r.Get("/api/agent/tasks/{id}", s.handleAgentGetTask)
+
 	// Auth endpoints (no auth required)
 	if s.PasswordAuthEnabled {
 		r.Post("/api/auth/login", s.handleLogin)
