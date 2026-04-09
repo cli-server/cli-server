@@ -160,22 +160,28 @@ func (m *TerminalMux) readLoop() {
 		}
 		data := buf[:n]
 
+		// Buffer and snapshot the active stream under the lock,
+		// but do the actual Write outside to avoid blocking Attach().
 		m.mu.Lock()
-		// Append to replay buffer, cap at max size.
 		m.buf = append(m.buf, data...)
 		if len(m.buf) > replayBufferSize {
 			m.buf = m.buf[len(m.buf)-replayBufferSize:]
 		}
-		// Forward to active stream.
-		if m.active != nil {
+		s := m.active
+		m.mu.Unlock()
+
+		if s != nil {
 			frame := make([]byte, 1+n)
 			frame[0] = 0x00
 			copy(frame[1:], data)
-			if _, err := m.active.Write(frame); err != nil {
-				m.active = nil // stream broken, detach
+			if _, err := s.Write(frame); err != nil {
+				m.mu.Lock()
+				if m.active == s {
+					m.active = nil
+				}
+				m.mu.Unlock()
 			}
 		}
-		m.mu.Unlock()
 	}
 }
 
@@ -189,14 +195,21 @@ func (m *TerminalMux) Attach(stream net.Conn) {
 	}
 	m.active = stream
 
-	// Replay buffered output.
+	// Snapshot buffer for replay outside the lock.
+	var replay []byte
 	if len(m.buf) > 0 {
-		frame := make([]byte, 1+len(m.buf))
-		frame[0] = 0x00
-		copy(frame[1:], m.buf)
-		stream.Write(frame)
+		replay = make([]byte, len(m.buf))
+		copy(replay, m.buf)
 	}
 	m.mu.Unlock()
+
+	// Replay buffered output (outside lock to avoid blocking readLoop).
+	if len(replay) > 0 {
+		frame := make([]byte, 1+len(replay))
+		frame[0] = 0x00
+		copy(frame[1:], replay)
+		stream.Write(frame)
+	}
 
 	// Read input from stream → PTY (blocks until stream closes).
 	inputBuf := make([]byte, 4096)
