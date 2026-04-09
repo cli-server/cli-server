@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Login } from './Login'
-import { submitOAuthLogin } from '../lib/api'
+import { checkAuth, submitOAuthLogin } from '../lib/api'
 
 const PENDING_LOGIN_CHALLENGE_KEY = 'agentserver_pending_login_challenge'
 
@@ -10,11 +10,27 @@ interface OAuthLoginProps {
 
 export function OAuthLogin({ challenge }: OAuthLoginProps) {
   const [error, setError] = useState('')
+  const [autoSubmitting, setAutoSubmitting] = useState(false)
 
   // Persist challenge in sessionStorage so it survives OIDC redirects.
-  // Written synchronously (not in useEffect) to ensure it's saved before
-  // the user can click an OIDC link that navigates away.
   sessionStorage.setItem(PENDING_LOGIN_CHALLENGE_KEY, challenge)
+
+  // If the user is already authenticated, auto-submit the challenge.
+  useEffect(() => {
+    checkAuth().then(async (ok) => {
+      if (ok) {
+        setAutoSubmitting(true)
+        try {
+          sessionStorage.removeItem(PENDING_LOGIN_CHALLENGE_KEY)
+          const { redirect_to } = await submitOAuthLogin(challenge)
+          window.location.href = redirect_to
+        } catch {
+          setAutoSubmitting(false)
+          setError('Failed to complete authorization. Please try again.')
+        }
+      }
+    })
+  }, [challenge])
 
   const handleLoginSuccess = async () => {
     try {
@@ -24,6 +40,14 @@ export function OAuthLogin({ challenge }: OAuthLoginProps) {
     } catch {
       setError('Failed to complete OAuth login. Please try again.')
     }
+  }
+
+  if (autoSubmitting) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <span className="text-[var(--muted-foreground)]">Authorizing...</span>
+      </div>
+    )
   }
 
   return (

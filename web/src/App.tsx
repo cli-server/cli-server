@@ -17,6 +17,8 @@ import { Login } from './components/Login'
 import { OAuthConsent } from './components/OAuthConsent'
 import { OAuthDevice } from './components/OAuthDevice'
 import { OAuthLogin, PENDING_LOGIN_CHALLENGE_KEY } from './components/OAuthLogin'
+
+const PENDING_CONSENT_CHALLENGE_KEY = 'agentserver_pending_consent_challenge'
 import { TopBar } from './components/TopBar'
 import { SandboxList } from './components/SandboxList'
 import { SandboxDetail } from './components/SandboxDetail'
@@ -111,17 +113,24 @@ export default function App() {
     checkAuth().then(async (ok) => {
       setAuthed(ok)
       if (ok) {
-        // After OIDC login redirect, complete any pending OAuth login challenge.
-        const pendingChallenge = sessionStorage.getItem(PENDING_LOGIN_CHALLENGE_KEY)
-        if (pendingChallenge) {
+        // After OIDC login redirect, complete any pending OAuth challenge.
+        const pendingLogin = sessionStorage.getItem(PENDING_LOGIN_CHALLENGE_KEY)
+        if (pendingLogin) {
           sessionStorage.removeItem(PENDING_LOGIN_CHALLENGE_KEY)
           try {
-            const { redirect_to } = await submitOAuthLogin(pendingChallenge)
+            const { redirect_to } = await submitOAuthLogin(pendingLogin)
             window.location.href = redirect_to
             return
           } catch {
             // Challenge expired or invalid, continue to normal app.
           }
+        }
+        const pendingConsent = sessionStorage.getItem(PENDING_CONSENT_CHALLENGE_KEY)
+        if (pendingConsent) {
+          sessionStorage.removeItem(PENDING_CONSENT_CHALLENGE_KEY)
+          // Redirect back to the consent page with the challenge.
+          window.location.href = `/oauth2/consent?consent_challenge=${encodeURIComponent(pendingConsent)}`
+          return
         }
         listWorkspaces().then((ws) => {
           setWorkspaces(ws)
@@ -218,6 +227,15 @@ export default function App() {
   }
 
   if (!authed) {
+    // If landing on /oauth2/consent without auth (e.g. session expired),
+    // save the challenge so it survives OIDC redirects.
+    if (location.pathname === '/oauth2/consent') {
+      const params = new URLSearchParams(location.search)
+      const challenge = params.get('consent_challenge')
+      if (challenge) {
+        sessionStorage.setItem(PENDING_CONSENT_CHALLENGE_KEY, challenge)
+      }
+    }
     return (
       <Login
         onSuccess={() => {
