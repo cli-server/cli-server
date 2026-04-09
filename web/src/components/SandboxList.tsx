@@ -81,7 +81,7 @@ export function SandboxList({
 
   const handleCreateSandbox = async (
     name: string,
-    type: 'opencode' | 'nanoclaw',
+    type: 'opencode' | 'nanoclaw' | 'claudecode',
     cpu?: number,
     memory?: number,
     idleTimeout?: number,
@@ -212,6 +212,10 @@ export function SandboxList({
               ) : sbx.type === 'openclaw' ? (
                 <span className="shrink-0 rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-medium text-purple-400">
                   claw
+                </span>
+              ) : sbx.type === 'claudecode' ? (
+                <span className="shrink-0 rounded bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-medium text-orange-400">
+                  claude
                 </span>
               ) : (
                 <span className="shrink-0 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-medium text-blue-400">

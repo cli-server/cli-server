@@ -1337,6 +1337,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	case "nanoclaw":
 		// NanoClaw uses a bridge secret instead of openclaw/opencode tokens.
 		// The bridge secret is stored separately after sandbox creation.
+	case "claudecode":
+		// Claude Code only uses proxyToken (as ANTHROPIC_API_KEY).
 	default: // "opencode"
 		opencodeToken = generatePassword()
 	}

@@ -5,13 +5,13 @@ import { getWorkspaceDefaults, type WorkspaceSandboxDefaults } from '../lib/api'
 interface CreateSandboxModalProps {
   workspaceId: string
   onClose: () => void
-  onCreate: (name: string, type: 'opencode' | 'nanoclaw', cpu?: number, memory?: number, idleTimeout?: number, metadata?: Record<string, unknown>) => void
+  onCreate: (name: string, type: 'opencode' | 'nanoclaw' | 'claudecode', cpu?: number, memory?: number, idleTimeout?: number, metadata?: Record<string, unknown>) => void
   creating: boolean
 }
 
 export function CreateSandboxModal({ workspaceId, onClose, onCreate, creating }: CreateSandboxModalProps) {
   const [name, setName] = useState('New Sandbox')
-  const [sandboxType, setSandboxType] = useState<'opencode' | 'nanoclaw'>('opencode')
+  const [sandboxType, setSandboxType] = useState<'opencode' | 'nanoclaw' | 'claudecode'>('opencode')
   const [defaults, setDefaults] = useState<WorkspaceSandboxDefaults | null>(null)
   const [loadingDefaults, setLoadingDefaults] = useState(true)
 
@@ -100,7 +100,7 @@ export function CreateSandboxModal({ workspaceId, onClose, onCreate, creating }:
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
-        className="w-full max-w-sm rounded-lg border border-[var(--border)] bg-[var(--card)] p-6 shadow-xl"
+        className="w-full max-w-md rounded-lg border border-[var(--border)] bg-[var(--card)] p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -148,6 +148,17 @@ export function CreateSandboxModal({ workspaceId, onClose, onCreate, creating }:
                 }`}
               >
                 NanoClaw
+              </button>
+              <button
+                type="button"
+                onClick={() => setSandboxType('claudecode')}
+                className={`flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
+                  sandboxType === 'claudecode'
+                    ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
+                    : 'border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] hover:bg-[var(--secondary)]'
+                }`}
+              >
+                Claude Code
               </button>
             </div>
           </div>
