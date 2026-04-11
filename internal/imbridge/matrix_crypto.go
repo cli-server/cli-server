@@ -348,6 +348,7 @@ func (cc *MatrixCryptoClient) fetchReplyContent(ctx context.Context, mach *crypt
 	// Decrypt if the event is encrypted.
 	if evt.Type == event.EventEncrypted {
 		if parseErr := evt.Content.ParseRaw(evt.Type); parseErr != nil {
+			log.Printf("matrix: parse encrypted reply event %s failed: %v", eventID, parseErr)
 			return
 		}
 		decrypted, decErr := mach.DecryptMegolmEvent(ctx, evt)
@@ -358,11 +359,17 @@ func (cc *MatrixCryptoClient) fetchReplyContent(ctx context.Context, mach *crypt
 		evt = decrypted
 	}
 
-	if err := evt.Content.ParseRaw(evt.Type); err != nil {
-		return
+	// Decrypted events already have Content.Parsed set by DecryptMegolmEvent;
+	// only ParseRaw when this is a plaintext event we fetched unparsed.
+	if evt.Content.Parsed == nil {
+		if err := evt.Content.ParseRaw(evt.Type); err != nil {
+			log.Printf("matrix: parse reply event %s failed: %v", eventID, err)
+			return
+		}
 	}
 	msgContent := evt.Content.AsMessage()
 	if msgContent == nil {
+		log.Printf("matrix: reply event %s has no message content", eventID)
 		return
 	}
 
