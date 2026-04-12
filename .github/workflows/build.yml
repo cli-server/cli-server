@@ -25,6 +25,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install libolm
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libolm-dev
+
       - name: Vet
         run: go vet ./...
 

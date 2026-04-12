@@ -11,6 +11,8 @@ variables:
 test:
   stage: test
   image: golang:1.26-trixie
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends libolm-dev
   script:
     - go vet ./...
     - go test ./... -count=1 -timeout 5m
