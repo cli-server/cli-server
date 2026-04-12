@@ -15,8 +15,8 @@ RUN apt-get update && \
     curl -fsSL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -o /usr/local/bin/ttyd && \
     chmod +x /usr/local/bin/ttyd && \
     curl -fsSL https://claude.ai/install.sh | bash && \
-    cp /root/.claude/bin/claude /usr/local/bin/claude && \
-    rm -rf /root/.claude && \
+    cp /root/.local/bin/claude /usr/local/bin/claude && \
+    rm -rf /root/.local/bin/claude && \
     apt-get purge -y curl && apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
