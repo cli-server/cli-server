@@ -109,7 +109,8 @@ func (b *Bridge) Tools() []ToolDef {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"task_id": map[string]any{"type": "string", "description": "The task ID returned by delegate_task"},
+					"task_id":        map[string]any{"type": "string", "description": "The task ID returned by delegate_task"},
+					"include_output": map[string]any{"type": "boolean", "description": "If true, include the full task output from session events (may be long). Default: false."},
 				},
 				"required": []string{"task_id"},
 			},
@@ -216,31 +217,36 @@ func (b *Bridge) handleDelegateTask(args json.RawMessage) (*ToolResult, error) {
 
 func (b *Bridge) handleCheckTask(args json.RawMessage) (*ToolResult, error) {
 	var params struct {
-		TaskID string `json:"task_id"`
+		TaskID        string `json:"task_id"`
+		IncludeOutput bool   `json:"include_output"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return errorResult("Invalid arguments: " + err.Error()), nil
 	}
 
 	url := fmt.Sprintf("%s/api/agent/tasks/%s", b.config.ServerURL, params.TaskID)
+	if params.IncludeOutput {
+		url += "?include_output=true"
+	}
 	body, err := b.apiGet(url)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Failed to check task: %v", err)), nil
 	}
 
-	// Extract key fields for a readable summary
 	var task map[string]any
 	json.Unmarshal(body, &task)
 
 	status, _ := task["status"].(string)
 	summary := fmt.Sprintf("Task %s: %s", params.TaskID, status)
 
-	if result, ok := task["result"]; ok && result != nil {
-		resultJSON, _ := json.MarshalIndent(result, "", "  ")
-		summary += "\n\nResult:\n" + string(resultJSON)
+	if result, ok := task["result"].(string); ok && result != "" {
+		summary += "\n\nResult:\n" + result
 	}
 	if reason, ok := task["failure_reason"].(string); ok && reason != "" {
 		summary += "\n\nFailure reason: " + reason
+	}
+	if output, ok := task["output"].(string); ok && output != "" {
+		summary += "\n\nFull output:\n" + output
 	}
 
 	return textResult(summary), nil
