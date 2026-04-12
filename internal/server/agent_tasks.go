@@ -204,7 +204,9 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Query().Get("include_output") == "true" && task.SessionID.Valid {
 		events, err := s.DB.GetAgentSessionEventsSince(task.SessionID.String, 0, 500)
-		if err == nil && len(events) > 0 {
+		if err != nil {
+			log.Printf("get task output events: %v", err)
+		} else if len(events) > 0 {
 			resp["output"] = extractTaskOutput(events)
 		}
 	}

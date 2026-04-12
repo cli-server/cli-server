@@ -52,6 +52,16 @@ func TestExtractTaskOutput_Mixed(t *testing.T) {
 	}
 }
 
+func TestExtractTaskOutput_ToolResultArrayContent(t *testing.T) {
+	events := []db.AgentSessionEvent{
+		makeEvent(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":[{"type":"text","text":"line one"},{"type":"text","text":"line two"}]}]}}`),
+	}
+	got := extractTaskOutput(events)
+	if !strings.Contains(got, "line one") || !strings.Contains(got, "line two") {
+		t.Errorf("expected both lines from array content, got %q", got)
+	}
+}
+
 func TestExtractTaskOutput_Empty(t *testing.T) {
 	got := extractTaskOutput(nil)
 	if got != "" {
