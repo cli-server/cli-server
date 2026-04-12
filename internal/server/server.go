@@ -1397,6 +1397,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	if sandboxType == "nanoclaw" {
 		startOpts.NanoclawBridgeSecret = sbx.NanoclawBridgeSecret
 		startOpts.SandboxID = id
+		startOpts.WorkspaceID = wsID
 		startOpts.AssistantName = sbx.MetadataString("assistant_name")
 	}
 	if sandboxType == "claudecode" {
