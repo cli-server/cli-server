@@ -451,6 +451,17 @@ fs.writeFileSync(path, JSON.stringify(existing, null, 2));
 		if m.cfg.NanoclawModel != "" {
 			containerEnv = append(containerEnv, corev1.EnvVar{Name: "ANTHROPIC_MODEL", Value: m.cfg.NanoclawModel})
 		}
+		// MCP bridge config: agentserver URL + auth for discover_agents/delegate_task
+		agentserverURL := m.cfg.AgentServerInternalURL
+		if agentserverURL == "" {
+			agentserverURL = "http://agentserver:8080"
+		}
+		containerEnv = append(containerEnv,
+			corev1.EnvVar{Name: "AGENTSERVER_URL", Value: agentserverURL},
+			corev1.EnvVar{Name: "AGENTSERVER_TOKEN", Value: opts.ProxyToken},
+			corev1.EnvVar{Name: "AGENTSERVER_WORKSPACE_ID", Value: opts.WorkspaceID},
+			corev1.EnvVar{Name: "AGENTSERVER_SANDBOX_ID", Value: opts.SandboxID},
+		)
 	default: // "opencode"
 		if opts.OpencodeToken != "" {
 			containerEnv = append(containerEnv, corev1.EnvVar{Name: "OPENCODE_SERVER_PASSWORD", Value: opts.OpencodeToken})

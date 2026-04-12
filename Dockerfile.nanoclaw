@@ -1,4 +1,13 @@
 ARG NANOCLAW_VERSION=v1.2.42
+
+# Stage 0: Build agentserver Go binary (for mcp-server subcommand)
+FROM golang:1.26-alpine AS go-builder
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /agentserver ./cmd/agentserver-agent
+
 FROM node:20-slim AS builder
 
 WORKDIR /app
@@ -19,6 +28,9 @@ WORKDIR /app
 
 # Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
+
+# agentserver binary (mcp-server subcommand for agent discovery + delegation)
+COPY --from=go-builder /agentserver /usr/local/bin/agentserver
 
 # Copy built NanoClaw
 COPY --from=builder /app /app
