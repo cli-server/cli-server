@@ -289,8 +289,11 @@ func (s *Server) handleUpdateTaskStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	taskID := chi.URLParam(r, "id")
 	var req struct {
-		Status        string `json:"status"`
-		FailureReason string `json:"failure_reason,omitempty"`
+		Status        string          `json:"status"`
+		FailureReason string          `json:"failure_reason,omitempty"`
+		Result        json.RawMessage `json:"result,omitempty"`
+		TotalCostUSD  *float64        `json:"total_cost_usd,omitempty"`
+		NumTurns      int             `json:"num_turns,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -304,9 +307,12 @@ func (s *Server) handleUpdateTaskStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if req.Status == "failed" && req.FailureReason != "" {
+	switch {
+	case req.Status == "failed" && req.FailureReason != "":
 		s.DB.FailAgentTask(taskID, req.FailureReason)
-	} else {
+	case req.Status == "completed" && len(req.Result) > 0:
+		s.DB.UpdateAgentTaskResult(taskID, req.Result, req.TotalCostUSD, req.NumTurns)
+	default:
 		s.DB.UpdateAgentTaskStatus(taskID, req.Status)
 	}
 
