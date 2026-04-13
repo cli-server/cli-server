@@ -84,6 +84,21 @@ func (db *DB) DeleteAgentCard(sandboxID string) error {
 	return err
 }
 
+// UpsertAgentCardFromCapabilities creates or updates an agent card from capability data.
+func (db *DB) UpsertAgentCardFromCapabilities(sandboxID, workspaceID, displayName string, cardJSON json.RawMessage) error {
+	_, err := db.Exec(
+		`INSERT INTO agent_cards (sandbox_id, workspace_id, agent_type, display_name, card_json, agent_status, version)
+		 VALUES ($1, $2, 'claudecode', $3, $4, 'available', 1)
+		 ON CONFLICT (sandbox_id) DO UPDATE SET
+		   card_json = EXCLUDED.card_json,
+		   agent_status = 'available',
+		   version = agent_cards.version + 1,
+		   updated_at = NOW()`,
+		sandboxID, workspaceID, displayName, cardJSON,
+	)
+	return err
+}
+
 // MarkStaleAgentCardsOffline marks agents as offline if their sandbox heartbeat is stale.
 func (db *DB) MarkStaleAgentCardsOffline(threshold time.Duration) (int64, error) {
 	result, err := db.Exec(
