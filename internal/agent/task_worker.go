@@ -174,41 +174,6 @@ func RunTaskWorker(ctx context.Context, opts TaskWorkerOptions) {
 	}
 }
 
-// RegisterDefaultCard registers a default agent card for a claudecode agent.
-func RegisterDefaultCard(serverURL, proxyToken, displayName string) error {
-	card := map[string]any{
-		"display_name": displayName,
-		"description":  "Claude Code agent with full coding, terminal, and search capabilities",
-		"agent_type":   "claudecode",
-		"card": map[string]any{
-			"skills": []map[string]string{
-				{"name": "code-editing", "description": "Read, write, and edit source code"},
-				{"name": "code-review", "description": "Review code for bugs and best practices"},
-				{"name": "terminal", "description": "Execute shell commands"},
-				{"name": "code-search", "description": "Search and navigate codebases"},
-			},
-			"tags": []string{"code", "terminal", "search"},
-		},
-	}
-	body, _ := json.Marshal(card)
-	req, err := http.NewRequest("POST", serverURL+"/api/agent/discovery/cards", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+proxyToken)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("register card: HTTP %d", resp.StatusCode)
-	}
-	return nil
-}
-
 type pollTask struct {
 	ID            string  `json:"task_id"`
 	SessionID     string  `json:"session_id"`

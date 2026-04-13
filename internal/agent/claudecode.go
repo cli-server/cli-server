@@ -136,13 +136,6 @@ func RunClaudeCode(opts ClaudeCodeOptions) {
 		cancel()
 	}()
 
-	// Auto-register agent card.
-	if err := RegisterDefaultCard(session.ServerURL, session.TunnelToken, session.Name); err != nil {
-		log.Printf("Warning: failed to register agent card: %v (will retry on reconnect)", err)
-	} else {
-		log.Printf("Agent card registered: %s", session.Name)
-	}
-
 	// Inject MCP bridge config.
 	if err := injectMCPConfig(session.ServerURL, session.TunnelToken, session.WorkspaceID, session.SandboxID, opts.WorkDir); err != nil {
 		log.Printf("Warning: failed to inject MCP config: %v", err)
