@@ -63,6 +63,17 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		if err := s.DB.UpsertAgentInfo(&info); err != nil {
 			log.Printf("tunnel %s: failed to upsert agent info: %v", sandboxID, err)
 		}
+
+		// If capabilities present, build and upsert agent card.
+		var parsed struct {
+			Capabilities *capabilitiesPayload `json:"capabilities"`
+		}
+		if err := json.Unmarshal(data, &parsed); err == nil && parsed.Capabilities != nil {
+			cardJSON := buildCardJSON(parsed.Capabilities, &info)
+			if err := s.DB.UpsertAgentCardFromCapabilities(sandboxID, sbx.WorkspaceID, sbx.Name, cardJSON); err != nil {
+				log.Printf("tunnel %s: failed to upsert agent card from capabilities: %v", sandboxID, err)
+			}
+		}
 	}
 
 	log.Printf("tunnel connected: sandbox %s", sandboxID)
