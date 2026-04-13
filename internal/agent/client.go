@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agentserver/agentserver/internal/tunnel"
@@ -21,7 +22,10 @@ type Client struct {
 	SandboxID   string
 	TunnelToken string
 	Workdir     string
-	BackendType string // "claudecode"
+	BackendType        string // "claudecode"
+	cachedCapabilities *AgentCapabilities
+	capabilitiesMu     sync.Mutex
+	lastProbeTime      time.Time
 }
 
 // NewClient creates a new agent tunnel client.
@@ -156,6 +160,24 @@ func (c *Client) sendAgentInfo(session *yamux.Session) {
 	defer stream.Close()
 
 	info := collectAgentInfo("", c.Workdir)
+
+	// Attach capabilities (probe outside lock to avoid blocking heartbeats).
+	c.capabilitiesMu.Lock()
+	needsProbe := c.cachedCapabilities == nil || time.Since(c.lastProbeTime) > 1*time.Hour
+	c.capabilitiesMu.Unlock()
+
+	if needsProbe {
+		caps := ProbeCapabilities(context.Background())
+		c.capabilitiesMu.Lock()
+		c.cachedCapabilities = caps
+		c.lastProbeTime = time.Now()
+		c.capabilitiesMu.Unlock()
+	}
+
+	c.capabilitiesMu.Lock()
+	info.Capabilities = c.cachedCapabilities
+	c.capabilitiesMu.Unlock()
+
 	data, err := json.Marshal(info)
 	if err != nil {
 		return

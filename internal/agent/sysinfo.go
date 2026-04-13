@@ -43,6 +43,7 @@ type AgentInfoData struct {
 	CPUInfo         *cpuInfoDetail        `json:"cpu_info,omitempty"`
 	MemoryInfo      *mem.VirtualMemoryStat `json:"memory_info,omitempty"`
 	DiskInfo        *disk.UsageStat       `json:"disk_info,omitempty"`
+	Capabilities    *AgentCapabilities     `json:"capabilities,omitempty"`
 }
 
 func collectAgentInfo(opencodeURL string, workdir string) *AgentInfoData {
