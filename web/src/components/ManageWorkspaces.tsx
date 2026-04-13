@@ -1,3 +1,4 @@
+import { useSearchParams } from 'react-router-dom'
 import { type Workspace } from '../lib/api'
 import { WorkspaceDetail } from './WorkspaceDetail'
 import { FolderOpen } from 'lucide-react'
@@ -10,6 +11,11 @@ interface ManageWorkspacesProps {
 }
 
 export function ManageWorkspaces({ workspaces, selectedWorkspaceId, onSelectWorkspace, onRenameWorkspace }: ManageWorkspacesProps) {
+  const [searchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const validTabs = ['overview', 'members', 'traces', 'settings']
+  const initialTab = (tabParam && validTabs.includes(tabParam)) ? tabParam as 'overview' | 'members' | 'traces' | 'settings' : undefined
+
   const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
 
   return (
@@ -41,7 +47,7 @@ export function ManageWorkspaces({ workspaces, selectedWorkspaceId, onSelectWork
       {/* Detail panel */}
       <div className="flex-1 overflow-hidden">
         {selectedWorkspace ? (
-          <WorkspaceDetail workspace={selectedWorkspace} onRename={onRenameWorkspace} />
+          <WorkspaceDetail workspace={selectedWorkspace} onRename={onRenameWorkspace} initialTab={initialTab} />
         ) : (
           <div className="flex items-center justify-center h-full">
             <span className="text-[var(--muted-foreground)]">Select a workspace</span>

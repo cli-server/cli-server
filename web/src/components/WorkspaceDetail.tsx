@@ -54,10 +54,11 @@ type Tab = 'overview' | 'members' | 'traces' | 'settings'
 interface WorkspaceDetailProps {
   workspace: Workspace
   onRename?: (id: string, name: string) => void
+  initialTab?: Tab
 }
 
-export function WorkspaceDetail({ workspace, onRename }: WorkspaceDetailProps) {
-  const [tab, setTab] = useState<Tab>('overview')
+export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDetailProps) {
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'overview')
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [sbxQuota, setSbxQuota] = useState<{ current: number; max: number } | null>(null)
   const [defaults, setDefaults] = useState<WorkspaceSandboxDefaults | null>(null)
@@ -69,7 +70,7 @@ export function WorkspaceDetail({ workspace, onRename }: WorkspaceDetailProps) {
   const [editName, setEditName] = useState(workspace.name)
 
   useEffect(() => {
-    setTab('overview')
+    setTab(initialTab ?? 'overview')
     setMembers([])
     setSbxQuota(null)
     setDefaults(null)
@@ -88,7 +89,7 @@ export function WorkspaceDetail({ workspace, onRename }: WorkspaceDetailProps) {
       setTraces(r.traces || [])
       setTracesTotal(r.total || 0)
     }).catch(() => {})
-  }, [workspace.id])
+  }, [workspace.id, initialTab])
 
   useEffect(() => {
     if (tracesPage === 0) return
