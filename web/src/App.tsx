@@ -24,6 +24,7 @@ import { TopBar } from './components/TopBar'
 import { SandboxList } from './components/SandboxList'
 import { SandboxDetail } from './components/SandboxDetail'
 import { ManageWorkspaces } from './components/ManageWorkspaces'
+import { WorkspaceEmptyState } from './components/WorkspaceEmptyState'
 import { AdminPanel } from './components/AdminPanel'
 
 export interface UserInfo {
@@ -273,9 +274,7 @@ export default function App() {
       <span className="text-[var(--muted-foreground)]">Creating sandbox...</span>
     </div>
   ) : (
-    <div className="flex items-center justify-center h-full">
-      <span className="text-[var(--muted-foreground)]">Select or create a sandbox</span>
-    </div>
+    <WorkspaceEmptyState workspaceId={selectedWorkspaceId!} />
   )
 
   const sandboxLayout = (content: React.ReactNode) => (
