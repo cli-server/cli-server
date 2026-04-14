@@ -13,8 +13,8 @@ interface ManageWorkspacesProps {
 export function ManageWorkspaces({ workspaces, selectedWorkspaceId, onSelectWorkspace, onRenameWorkspace }: ManageWorkspacesProps) {
   const [searchParams] = useSearchParams()
   const tabParam = searchParams.get('tab')
-  const validTabs: Tab[] = ['overview', 'members', 'traces', 'credentials', 'settings']
-  const initialTab = (tabParam && validTabs.includes(tabParam)) ? tabParam as Tab : undefined
+  const validTabs = new Set<string>(['overview', 'members', 'traces', 'credentials', 'settings'])
+  const initialTab = (tabParam && validTabs.has(tabParam)) ? tabParam as Tab : undefined
 
   const selectedWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId)
 
