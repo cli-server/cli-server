@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -11,7 +12,8 @@ import (
 )
 
 // LoadKeyFromEnv reads a 32-byte AES-256 key from the named environment variable.
-// Accepts standard base64, URL-safe base64, hex, or raw 32 bytes.
+// Accepts hex (64 chars), standard/URL-safe base64 (44 chars), or any passphrase
+// (derived to 32 bytes via SHA-256).
 func LoadKeyFromEnv(envVar string) ([]byte, error) {
 	raw := os.Getenv(envVar)
 	if raw == "" {
@@ -31,7 +33,9 @@ func LoadKeyFromEnv(envVar string) ([]byte, error) {
 		return b, nil
 	}
 
-	return nil, fmt.Errorf("%s: expected 32-byte AES-256 key encoded as 64-char hex or 44-char base64; got %d characters", envVar, len(raw))
+	// Fallback: derive a 32-byte key from arbitrary passphrase via SHA-256.
+	h := sha256.Sum256([]byte(raw))
+	return h[:], nil
 }
 
 // Encrypt encrypts plaintext with AES-GCM-256.

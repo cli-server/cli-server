@@ -88,40 +88,46 @@ func TestLoadKeyFromEnv(t *testing.T) {
 	tests := []struct {
 		name    string
 		value   string
-		wantErr bool
+		wantKey []byte // nil means expect error
 	}{
-		{"hex", hex.EncodeToString(key), false},
-		{"base64", base64.StdEncoding.EncodeToString(key), false},
-		{"url-safe base64", base64.URLEncoding.EncodeToString(key), false},
-		{"too short", "abc", true},
-		{"empty", "", true},
+		{"hex", hex.EncodeToString(key), key},
+		{"base64", base64.StdEncoding.EncodeToString(key), key},
+		{"url-safe base64", base64.URLEncoding.EncodeToString(key), key},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.value == "" {
-				t.Setenv(envVar, "")
-				// Unset to test missing.
-				// t.Setenv sets it, so we need a different approach for "missing".
-			} else {
-				t.Setenv(envVar, tt.value)
-			}
+			t.Setenv(envVar, tt.value)
 
 			got, err := LoadKeyFromEnv(envVar)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error")
-				}
-				return
-			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if !bytes.Equal(got, key) {
+			if !bytes.Equal(got, tt.wantKey) {
 				t.Fatal("key mismatch")
 			}
 		})
 	}
+
+	// Passphrase fallback: arbitrary string is derived via SHA-256.
+	t.Run("passphrase", func(t *testing.T) {
+		passphrase := "my-secret-password-from-pulumi"
+		t.Setenv(envVar, passphrase)
+
+		got, err := LoadKeyFromEnv(envVar)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 32 {
+			t.Fatalf("expected 32-byte key, got %d bytes", len(got))
+		}
+		// Same passphrase must produce the same key.
+		t.Setenv(envVar, passphrase)
+		got2, _ := LoadKeyFromEnv(envVar)
+		if !bytes.Equal(got, got2) {
+			t.Fatal("passphrase derivation not deterministic")
+		}
+	})
 }
 
 func TestLoadKeyFromEnvMissing(t *testing.T) {
