@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -72,6 +73,10 @@ type Server struct {
 	// Credential proxy
 	EncryptionKey    []byte // AES-256 key for credential_bindings auth_blob
 	CredproxyPublicURL string // URL sandboxes use to reach credentialproxy
+
+	// In-memory pending device code flows (OIDC credential creation).
+	deviceFlows   map[string]*pendingDeviceFlow
+	deviceFlowsMu sync.Mutex
 }
 
 func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore *sbxstore.Store, processManager process.Manager, driveManager storage.DriveManager, nsMgr *namespace.Manager, tunnelReg *tunnel.Registry, staticFS fs.FS, passwordAuthEnabled bool) *Server {
@@ -114,10 +119,13 @@ func New(a *auth.Auth, oidcMgr *auth.OIDCManager, database *db.DB, sandboxStore 
 		OpenclawSubdomainPrefix:   openclawPrefix,
 		ClaudeCodeSubdomainPrefix: claudecodePrefix,
 		PasswordAuthEnabled:       passwordAuthEnabled,
+		deviceFlows:               make(map[string]*pendingDeviceFlow),
 	}
 	if s.OIDC != nil {
 		s.OIDC.OnUserCreated = s.createDefaultWorkspace
 	}
+	// Background sweep for expired device code flows (OIDC).
+	go s.sweepExpiredDeviceFlows()
 	return s
 }
 
@@ -296,6 +304,7 @@ func (s *Server) Router() http.Handler {
 		r.Patch("/api/workspaces/{id}/credentials/{kind}/{bindingId}", s.handlePatchCredentialBinding)
 		r.Delete("/api/workspaces/{id}/credentials/{kind}/{bindingId}", s.handleDeleteCredentialBinding)
 		r.Post("/api/workspaces/{id}/credentials/{kind}/{bindingId}/set-default", s.handleSetDefaultCredentialBinding)
+		r.Post("/api/workspaces/{id}/credentials/{kind}/{bindingId}/device-complete", s.handleDeviceCodeComplete)
 
 		// IM routes: proxy to standalone imbridge service.
 		if s.IMBridgeURL != "" {
@@ -1220,6 +1229,7 @@ func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
 	resp := make([]sandboxResponse, len(sandboxes))
 	for i, sbx := range sandboxes {
 		resp[i] = s.toSandboxResponse(r, sbx, token)
+		s.attachIMBindings(&resp[i])
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
