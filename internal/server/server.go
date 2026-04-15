@@ -572,6 +572,7 @@ type sandboxResponse struct {
 	OpencodeURL     string  `json:"opencode_url,omitempty"`
 	OpenclawURL     string  `json:"openclaw_url,omitempty"`
 	ClaudeCodeURL   string  `json:"claudecode_url,omitempty"`
+	CustomURL       string  `json:"custom_url,omitempty"`
 	CreatedAt       string  `json:"created_at"`
 	LastActivityAt  *string `json:"last_activity_at"`
 	PausedAt        *string `json:"paused_at"`
@@ -640,6 +641,10 @@ func (s *Server) toSandboxResponse(r *http.Request, sbx *sbxstore.Sandbox, authT
 			// NanoClaw has no Web UI — no URL to generate
 		case "claudecode":
 			resp.ClaudeCodeURL = "https://" + s.ClaudeCodeSubdomainPrefix + "-" + subID + "." + domain + "/auth?token=" + authToken
+		case "custom":
+			// Custom agents use the opencode subdomain prefix (code-{id}.domain)
+			// but skip SPA fallback in the proxy handler.
+			resp.CustomURL = "https://" + s.OpencodeSubdomainPrefix + "-" + subID + "." + domain
 		default: // "opencode"
 			resp.OpencodeURL = "https://" + s.OpencodeSubdomainPrefix + "-" + subID + "." + domain + "/auth?token=" + authToken
 		}
