@@ -205,7 +205,11 @@ export function SandboxList({
             >
               <StatusDot status={sbx.status} />
               <span className="flex-1 truncate">{sbx.name}</span>
-              {sbx.is_local ? (
+              {sbx.type === 'custom' ? (
+                <span className="shrink-0 rounded bg-cyan-500/15 px-1.5 py-0.5 text-[10px] font-medium text-cyan-400">
+                  custom
+                </span>
+              ) : sbx.is_local ? (
                 <span className="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
                   local
                 </span>

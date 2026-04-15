@@ -49,6 +49,7 @@ export interface Sandbox {
   opencode_url?: string
   openclaw_url?: string
   claudecode_url?: string
+  custom_url?: string
   created_at: string
   last_activity_at: string | null
   paused_at: string | null
@@ -488,17 +489,28 @@ export async function listCredentialBindings(workspaceId: string, kind: string):
   return res.json()
 }
 
+export interface DeviceCodeResponse {
+  id: string
+  status: 'pending_device_code'
+  verification_uri: string
+  user_code: string
+  expires_in: number
+}
+
 export async function createCredentialBinding(
   workspaceId: string,
   kind: string,
   displayName: string,
   config: string,
-): Promise<CredentialBinding> {
+): Promise<CredentialBinding | DeviceCodeResponse> {
   const res = await fetch(`/api/workspaces/${workspaceId}/credentials/${kind}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ display_name: displayName, config }),
   })
+  if (res.status === 202) {
+    return res.json() as Promise<DeviceCodeResponse>
+  }
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || 'Failed to create credential binding')
@@ -526,6 +538,23 @@ export async function patchCredentialBinding(workspaceId: string, kind: string, 
     body: JSON.stringify({ display_name: displayName }),
   })
   if (!res.ok) throw new Error('Failed to update credential binding')
+}
+
+export async function pollDeviceCodeComplete(
+  workspaceId: string,
+  kind: string,
+  bindingId: string,
+  signal?: AbortSignal,
+): Promise<CredentialBinding> {
+  const res = await fetch(
+    `/api/workspaces/${workspaceId}/credentials/${kind}/${bindingId}/device-complete`,
+    { method: 'POST', signal },
+  )
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Device code authorization failed')
+  }
+  return res.json()
 }
 
 // Workspace-level WeChat QR login

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Clock,
   Users,
@@ -37,7 +37,9 @@ import {
   createCredentialBinding,
   deleteCredentialBinding,
   setDefaultCredentialBinding,
+  pollDeviceCodeComplete,
   type CredentialBinding,
+  type DeviceCodeResponse,
   type Workspace,
   type WorkspaceMember,
   type WorkspaceSandboxDefaults,
@@ -894,9 +896,11 @@ function CredentialsTab({ workspaceId }: { workspaceId: string }) {
                     <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${
                       b.auth_type === 'bearer'
                         ? 'bg-blue-500/10 text-blue-400'
+                        : b.auth_type === 'oidc'
+                        ? 'bg-emerald-500/10 text-emerald-400'
                         : 'bg-purple-500/10 text-purple-400'
                     }`}>
-                      {b.auth_type === 'bearer' ? 'Token' : 'Client Cert'}
+                      {b.auth_type === 'bearer' ? 'Token' : b.auth_type === 'oidc' ? 'OIDC' : 'Client Cert'}
                     </span>
                     <span className="text-[11px] text-[var(--muted-foreground)] truncate">{b.server_url}</span>
                   </div>
@@ -960,8 +964,15 @@ function AddKubeconfigModal({ workspaceId, onClose, onCreated }: {
 }) {
   const [displayName, setDisplayName] = useState('')
   const [config, setConfig] = useState('')
-  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [status, setStatus] = useState<'idle' | 'loading' | 'error' | 'device_code'>('idle')
   const [error, setError] = useState('')
+  const [deviceCode, setDeviceCode] = useState<DeviceCodeResponse | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+
+  // Abort any in-flight device code poll on unmount.
+  useEffect(() => {
+    return () => { abortRef.current?.abort() }
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -970,8 +981,23 @@ function AddKubeconfigModal({ workspaceId, onClose, onCreated }: {
     setStatus('loading')
     setError('')
     try {
-      await createCredentialBinding(workspaceId, 'k8s', displayName.trim(), config.trim())
-      onCreated()
+      const result = await createCredentialBinding(workspaceId, 'k8s', displayName.trim(), config.trim())
+      if ('status' in result && result.status === 'pending_device_code') {
+        setDeviceCode(result)
+        setStatus('device_code')
+        // Start long-polling for device code completion with abort support.
+        const controller = new AbortController()
+        abortRef.current = controller
+        pollDeviceCodeComplete(workspaceId, 'k8s', result.id, controller.signal)
+          .then(() => onCreated())
+          .catch((err) => {
+            if (err instanceof DOMException && err.name === 'AbortError') return
+            setError(err instanceof Error ? err.message : 'Authorization failed')
+            setStatus('error')
+          })
+      } else {
+        onCreated()
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add credential')
       setStatus('error')
@@ -993,44 +1019,76 @@ function AddKubeconfigModal({ workspaceId, onClose, onCreated }: {
           <h2 className="text-lg font-semibold text-[var(--foreground)]">Add Kubeconfig</h2>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <label className="block text-xs font-medium text-[var(--muted-foreground)] mb-1">Display Name</label>
-          <input
-            type="text"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="e.g. production-cluster"
-            autoFocus
-            disabled={status === 'loading'}
-            className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] disabled:opacity-50"
-          />
+        {status === 'device_code' && deviceCode ? (
+          <div className="flex flex-col items-center gap-4 py-4">
+            <p className="text-sm text-[var(--foreground)] text-center">
+              Your OIDC provider requires authorization. Visit the URL below and enter the code:
+            </p>
+            <a
+              href={deviceCode.verification_uri}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-blue-400 hover:underline break-all"
+            >
+              {deviceCode.verification_uri}
+            </a>
+            <div className="flex items-center gap-2">
+              <code className="text-2xl font-bold font-mono tracking-widest text-[var(--foreground)] bg-[var(--background)] border border-[var(--border)] rounded-lg px-4 py-2">
+                {deviceCode.user_code}
+              </code>
+              <button
+                onClick={() => navigator.clipboard?.writeText(deviceCode.user_code)}
+                className="text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                title="Copy code"
+              >
+                Copy
+              </button>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-[var(--muted-foreground)]">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--muted-foreground)] border-t-transparent" />
+              Waiting for authorization...
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit}>
+            <label className="block text-xs font-medium text-[var(--muted-foreground)] mb-1">Display Name</label>
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="e.g. production-cluster"
+              autoFocus
+              disabled={status === 'loading'}
+              className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] disabled:opacity-50"
+            />
 
-          <label className="block text-xs font-medium text-[var(--muted-foreground)] mb-1 mt-3">Kubeconfig YAML</label>
-          <textarea
-            value={config}
-            onChange={(e) => setConfig(e.target.value)}
-            placeholder="Paste your kubeconfig YAML here..."
-            rows={10}
-            disabled={status === 'loading'}
-            className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] disabled:opacity-50 resize-y"
-          />
+            <label className="block text-xs font-medium text-[var(--muted-foreground)] mb-1 mt-3">Kubeconfig YAML</label>
+            <textarea
+              value={config}
+              onChange={(e) => setConfig(e.target.value)}
+              placeholder="Paste your kubeconfig YAML here..."
+              rows={10}
+              disabled={status === 'loading'}
+              className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)] disabled:opacity-50 resize-y"
+            />
 
-          <p className="mt-2 text-[11px] text-[var(--muted-foreground)]">
-            Supported auth types: static bearer token or client certificate. Create a dedicated ServiceAccount with limited RBAC for best security.
-          </p>
+            <p className="mt-2 text-[11px] text-[var(--muted-foreground)]">
+              Supported auth types: static bearer token, client certificate, or OIDC (kubelogin exec plugin).
+            </p>
 
-          {error && (
-            <p className="mt-2 text-xs text-red-400">{error}</p>
-          )}
+            {error && (
+              <p className="mt-2 text-xs text-red-400">{error}</p>
+            )}
 
-          <button
-            type="submit"
-            disabled={!displayName.trim() || !config.trim() || status === 'loading'}
-            className="mt-4 w-full inline-flex items-center justify-center gap-2 rounded-md bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {status === 'loading' ? 'Validating...' : 'Add Cluster'}
-          </button>
-        </form>
+            <button
+              type="submit"
+              disabled={!displayName.trim() || !config.trim() || status === 'loading'}
+              className="mt-4 w-full inline-flex items-center justify-center gap-2 rounded-md bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {status === 'loading' ? 'Validating...' : 'Add Cluster'}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   )

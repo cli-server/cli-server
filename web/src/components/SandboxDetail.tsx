@@ -182,7 +182,8 @@ export function SandboxDetail({ sandbox, onPause, onResume, onDelete, onRename }
   const isOpenClaw = sandbox.type === 'openclaw'
   const isNanoClaw = sandbox.type === 'nanoclaw'
   const isClaudeCode = sandbox.type === 'claudecode'
-  const sandboxUrl = isOpenClaw ? sandbox.openclaw_url : isClaudeCode ? sandbox.claudecode_url : isNanoClaw ? null : sandbox.opencode_url
+  const isCustom = sandbox.type === 'custom'
+  const sandboxUrl = isCustom ? sandbox.custom_url : isOpenClaw ? sandbox.openclaw_url : isClaudeCode ? sandbox.claudecode_url : isNanoClaw ? null : sandbox.opencode_url
 
   const totalRequests = usageData ? usageData.reduce((s, u) => s + u.request_count, 0) : 0
   const totalInput = usageData ? usageData.reduce((s, u) => s + u.input_tokens, 0) : 0
@@ -432,7 +433,8 @@ function OverviewTab({ sandbox, imBindings, usageData, totals, workspaceChannels
   const isOpenClaw = sandbox.type === 'openclaw'
   const isNanoClaw = sandbox.type === 'nanoclaw'
   const isClaudeCode = sandbox.type === 'claudecode'
-  const sandboxUrl = isOpenClaw ? sandbox.openclaw_url : isClaudeCode ? sandbox.claudecode_url : isNanoClaw ? null : sandbox.opencode_url
+  const isCustom = sandbox.type === 'custom'
+  const sandboxUrl = isCustom ? sandbox.custom_url : isOpenClaw ? sandbox.openclaw_url : isClaudeCode ? sandbox.claudecode_url : isNanoClaw ? null : sandbox.opencode_url
   const fallbackLabel = isOpenClaw ? 'OpenClaw' : isClaudeCode ? 'Claude Code' : 'OpenCode'
 
   return (
