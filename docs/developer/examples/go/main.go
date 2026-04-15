@@ -50,7 +50,7 @@ func main() {
 			w.Header().Set("Content-Type", "text/html")
 			fmt.Fprintf(w, "<h1>Hello from Example Agent!</h1><p>Path: %s</p>", r.URL.Path)
 		}),
-		Task: func(task *agentsdk.Task) error {
+		Task: func(ctx context.Context, task *agentsdk.Task) error {
 			log.Printf("Task: %s - %s", task.Skill, task.Prompt)
 			return task.Complete(ctx, agentsdk.TaskResult{Output: "done"})
 		},

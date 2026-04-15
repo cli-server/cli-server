@@ -109,7 +109,7 @@ func (c *Client) taskPollLoop(ctx context.Context, handler TaskHandler, interval
 		}
 
 		// Execute the handler.
-		if err := handler(task); err != nil {
+		if err := handler(ctx, task); err != nil {
 			log.Printf("agentsdk: task %s handler failed: %v", task.ID, err)
 			if failErr := task.Fail(ctx, err.Error()); failErr != nil {
 				log.Printf("agentsdk: failed to report task failure: %v", failErr)

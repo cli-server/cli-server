@@ -150,8 +150,8 @@ func (s *Server) proxyViaTunnel(w http.ResponseWriter, r *http.Request, sbx *sbx
 		}
 	}
 
-	// Inject opencode Basic Auth.
-	if sbx.OpencodeToken != "" {
+	// Inject opencode Basic Auth (only for opencode type sandboxes).
+	if sbx.Type == "opencode" && sbx.OpencodeToken != "" {
 		cred := base64.StdEncoding.EncodeToString([]byte("opencode:" + sbx.OpencodeToken))
 		headers["Authorization"] = "Basic " + cred
 	}

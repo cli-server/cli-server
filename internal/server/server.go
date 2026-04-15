@@ -644,7 +644,7 @@ func (s *Server) toSandboxResponse(r *http.Request, sbx *sbxstore.Sandbox, authT
 		case "custom":
 			// Custom agents use the opencode subdomain prefix (code-{id}.domain)
 			// but skip SPA fallback in the proxy handler.
-			resp.CustomURL = "https://" + s.OpencodeSubdomainPrefix + "-" + subID + "." + domain
+			resp.CustomURL = "https://" + s.OpencodeSubdomainPrefix + "-" + subID + "." + domain + "/auth?token=" + authToken
 		default: // "opencode"
 			resp.OpencodeURL = "https://" + s.OpencodeSubdomainPrefix + "-" + subID + "." + domain + "/auth?token=" + authToken
 		}

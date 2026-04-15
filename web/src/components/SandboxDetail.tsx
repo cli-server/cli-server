@@ -435,7 +435,7 @@ function OverviewTab({ sandbox, imBindings, usageData, totals, workspaceChannels
   const isClaudeCode = sandbox.type === 'claudecode'
   const isCustom = sandbox.type === 'custom'
   const sandboxUrl = isCustom ? sandbox.custom_url : isOpenClaw ? sandbox.openclaw_url : isClaudeCode ? sandbox.claudecode_url : isNanoClaw ? null : sandbox.opencode_url
-  const fallbackLabel = isOpenClaw ? 'OpenClaw' : isClaudeCode ? 'Claude Code' : 'OpenCode'
+  const fallbackLabel = isCustom ? 'Custom Agent' : isOpenClaw ? 'OpenClaw' : isClaudeCode ? 'Claude Code' : 'OpenCode'
 
   return (
     <div className="flex flex-col gap-6 max-w-3xl">

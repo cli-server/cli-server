@@ -48,7 +48,7 @@
 //			HTTP: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 //				fmt.Fprintf(w, "Hello from custom agent!")
 //			}),
-//			Task: func(task *agentsdk.Task) error {
+//			Task: func(ctx context.Context, task *agentsdk.Task) error {
 //				result := agentsdk.TaskResult{Output: "done"}
 //				return task.Complete(ctx, result)
 //			},

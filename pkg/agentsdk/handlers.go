@@ -45,12 +45,16 @@ func handleHTTPStreamWithMeta(stream net.Conn, metaBytes []byte, handler http.Ha
 		reqURL = &url.URL{Path: meta.Path}
 	}
 	req := &http.Request{
-		Method:     meta.Method,
-		URL:        reqURL,
-		RequestURI: meta.Path,
-		Header:     make(http.Header),
-		Body:       io.NopCloser(bytes.NewReader(reqBody)),
-		Host:       meta.Headers["Host"],
+		Method:        meta.Method,
+		URL:           reqURL,
+		RequestURI:    meta.Path,
+		Header:        make(http.Header),
+		Body:          io.NopCloser(bytes.NewReader(reqBody)),
+		ContentLength: int64(len(reqBody)),
+		Host:          meta.Headers["Host"],
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
 	}
 	for k, v := range meta.Headers {
 		req.Header.Set(k, v)

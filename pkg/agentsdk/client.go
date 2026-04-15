@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -236,7 +237,7 @@ func (c *Client) sendHeartbeat(session *yamux.Session) {
 	hostname, _ := os.Hostname()
 	info := map[string]interface{}{
 		"hostname":      hostname,
-		"os":            "linux",
+		"os":            runtime.GOOS,
 		"agent_version": "agentsdk/1.0",
 	}
 	data, err := json.Marshal(info)

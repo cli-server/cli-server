@@ -247,11 +247,13 @@ The server opens this stream type to establish an interactive terminal session. 
 
 The **agent opens** this stream type toward the server every 20 seconds. Control streams serve as both a keepalive and a metadata refresh.
 
-Send the header immediately followed by JSON metadata, then close the stream:
+Send the header with **empty metadata** (metadata_length=0), followed by the agent info JSON as the stream body, then close the stream:
 
 ```
-[header: type=0x03, metadata_length=N][JSON metadata]
+[header: type=0x03, metadata_length=0][agent info JSON body]
 ```
+
+Note: Unlike HTTP streams which put structured data in the metadata field, control streams put the agent info in the stream body. The server reads the body after discarding the empty metadata.
 
 **Minimal required fields**:
 

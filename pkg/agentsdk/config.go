@@ -1,6 +1,7 @@
 package agentsdk
 
 import (
+	"context"
 	"net/http"
 	"time"
 )
@@ -29,8 +30,9 @@ type Handlers struct {
 	OnDisconnect func(error)  // Called when tunnel disconnected
 }
 
-// TaskHandler processes an assigned task.
-type TaskHandler func(task *Task) error
+// TaskHandler processes an assigned task. The context is cancelled when the
+// tunnel connection is lost or the agent is shutting down.
+type TaskHandler func(ctx context.Context, task *Task) error
 
 // Task represents an assigned task.
 type Task struct {
