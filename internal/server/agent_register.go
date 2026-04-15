@@ -77,8 +77,8 @@ func (s *Server) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	if sandboxType == "" {
 		sandboxType = "opencode"
 	}
-	if sandboxType != "opencode" && sandboxType != "claudecode" {
-		http.Error(w, "invalid type: must be opencode or claudecode", http.StatusBadRequest)
+	if sandboxType != "opencode" && sandboxType != "claudecode" && sandboxType != "custom" {
+		http.Error(w, "invalid type: must be opencode, claudecode, or custom", http.StatusBadRequest)
 		return
 	}
 
