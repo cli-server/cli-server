@@ -74,5 +74,19 @@ services:
       - postgres
       - server
 
+  executor-registry:
+    build:
+      context: .
+      dockerfile: Dockerfile.executor-registry
+    ports:
+      - "8084:8084"
+    environment:
+      EXECREG_DATABASE_URL: "postgres://agentserver:agentserver@postgres:5432/agentserver?sslmode=disable"
+      EXECREG_PORT: "8084"
+      EXECREG_LOG_LEVEL: "info"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
 volumes:
   pgdata:
