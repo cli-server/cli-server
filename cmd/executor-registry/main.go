@@ -18,9 +18,13 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	// Store initialization will be added in Task 2
-	// For now, pass nil (server handles nil store gracefully for /healthz)
-	srv := executorregistry.NewServer(cfg, nil)
+	store, err := executorregistry.NewStore(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("store: %v", err)
+	}
+	defer store.Close()
+
+	srv := executorregistry.NewServer(cfg, store)
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: srv.Routes(),
