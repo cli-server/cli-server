@@ -456,6 +456,9 @@ Full tool set exposed by the MCP server:
 | `workspace_write` | `path`, `content` | Write file to workspace context (skills, instructions, memory) |
 | `workspace_read` | `path` | Read file from workspace context |
 | `workspace_ls` | `path` | List workspace context directory |
+| `send_message` | `text`, `sender?` | Send text message to user via IM |
+| `send_image` | `source`, `format?`, `caption?` | Send image to user via IM (source: base64, URL, or executor file path) |
+| `send_file` | `source`, `filename`, `caption?` | Send file to user via IM (source: base64, URL, or executor file path) |
 | `create_scheduled_task` | `cron`, `prompt`, `recurring` | Create scheduled task on agentserver |
 | `list_scheduled_tasks` | | List workspace scheduled tasks |
 | `cancel_scheduled_task` | `task_id` | Cancel a scheduled task |
@@ -469,6 +472,7 @@ Not all MCP tools route to sandboxproxy. The Tool Router classifies tools by des
 | **Executor tools** (`remote_*`) | sandboxproxy → executor | `remote_bash`, `remote_read`, `remote_edit`, `remote_write`, `remote_glob`, `remote_grep`, `remote_ls` |
 | **Workspace tools** | cc-broker local filesystem | `workspace_write`, `workspace_read`, `workspace_ls` |
 | **Discovery tools** | executor-registry | `list_executors` |
+| **IM tools** | cc-broker → agentserver → imbridge | `send_message`, `send_image`, `send_file` |
 | **Scheduling tools** | agentserver | `create_scheduled_task`, `list_scheduled_tasks`, `cancel_scheduled_task` |
 | **User interaction** | cc-broker → agentserver → IM | `AskUserQuestion` (Section 16.1) |
 
@@ -1731,6 +1735,136 @@ scheduled_tasks (
 | Stateless compatibility | Broken (worker exits per turn) | Fully compatible |
 | Visibility | Only within current CC session | Workspace-level; visible to all sessions and Web UI |
 | Management | CC-internal only | agentserver API; extensible to Web UI, admin tools |
+
+### 16.5 IM Tools — Sending Messages, Images, and Files
+
+CC needs to proactively send content to users beyond text replies (which flow through the bridge SSE → agentserver → imbridge automatically). For rich media (images, files) and out-of-band messages, the Tool Router exposes IM tools inspired by nanoclaw's proven `send_message` / `send_image` MCP interface.
+
+**MCP tool definitions:**
+
+```json
+[
+  {
+    "name": "send_message",
+    "description": "Send a text message to the user in the current conversation. Use for progress updates, notifications, or multi-part responses.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string", "description": "Message text to send" },
+        "sender": { "type": "string", "description": "Optional role/identity name (e.g., 'Researcher', 'Designer')" }
+      },
+      "required": ["text"]
+    }
+  },
+  {
+    "name": "send_image",
+    "description": "Send an image to the user in the current conversation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Image source. One of: (1) base64-encoded image data, (2) publicly accessible URL, (3) executor file path in format 'executor_id:/path/to/image.png'"
+        },
+        "format": { "type": "string", "enum": ["png", "jpeg", "gif", "webp"], "default": "png" },
+        "caption": { "type": "string", "description": "Optional caption text" }
+      },
+      "required": ["source"]
+    }
+  },
+  {
+    "name": "send_file",
+    "description": "Send a file to the user in the current conversation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "File source. One of: (1) base64-encoded file content, (2) publicly accessible URL, (3) executor file path in format 'executor_id:/path/to/file.pdf'"
+        },
+        "filename": { "type": "string", "description": "Display filename with extension (e.g., 'report.pdf')" },
+        "caption": { "type": "string", "description": "Optional caption text" }
+      },
+      "required": ["source", "filename"]
+    }
+  }
+]
+```
+
+**Source resolution** — the Tool Router handles three source types transparently:
+
+```go
+func (r *ToolRouter) resolveMediaSource(ctx context.Context, source string) ([]byte, error) {
+    // 1. Executor file path: "executor_id:/path/to/file"
+    if parts := strings.SplitN(source, ":", 2); len(parts) == 2 {
+        if _, err := r.executorRegistry.GetExecutor(ctx, parts[0]); err == nil {
+            result, _ := r.sandboxProxy.Execute(ctx, ExecuteRequest{
+                ExecutorID: parts[0],
+                Tool:       "Read",
+                Arguments:  json.RawMessage(fmt.Sprintf(`{"file_path":"%s"}`, parts[1])),
+            })
+            return base64.StdEncoding.DecodeString(result.Output)
+        }
+    }
+    // 2. URL
+    if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
+        resp, _ := http.Get(source)
+        return io.ReadAll(resp.Body)
+    }
+    // 3. Base64
+    return base64.StdEncoding.DecodeString(source)
+}
+```
+
+**Routing**: Tool Router → cc-broker SSE event → agentserver → imbridge → IM platform
+
+```go
+// cc-broker handles IM tools
+case "send_message":
+    r.bridge.PublishIMEvent(ctx, sessionID, IMEvent{
+        Type: "text",
+        Text: req.Arguments["text"],
+        Sender: req.Arguments["sender"],
+    })
+
+case "send_image":
+    data, _ := r.resolveMediaSource(ctx, req.Arguments["source"])
+    r.bridge.PublishIMEvent(ctx, sessionID, IMEvent{
+        Type:    "image",
+        Data:    base64.StdEncoding.EncodeToString(data),
+        Format:  req.Arguments["format"],
+        Caption: req.Arguments["caption"],
+    })
+
+case "send_file":
+    data, _ := r.resolveMediaSource(ctx, req.Arguments["source"])
+    r.bridge.PublishIMEvent(ctx, sessionID, IMEvent{
+        Type:     "file",
+        Data:     base64.StdEncoding.EncodeToString(data),
+        Filename: req.Arguments["filename"],
+        Caption:  req.Arguments["caption"],
+    })
+```
+
+**Example — generating and sending an image:**
+
+```
+User: "用 nano banana pro 画一只猫"
+
+CC Turn 1: remote_bash(executor="agt_dev",
+    "curl -s -X POST https://api.nanobananapro.com/v1/generate \
+     -d '{\"prompt\":\"一只可爱的猫\"}' -o /tmp/cat.png && echo done")
+
+CC Turn 2: send_image(source="agt_dev:/tmp/cat.png", format="png", caption="一只可爱的猫")
+  → Tool Router resolves "agt_dev:/tmp/cat.png":
+    remote_read(executor="agt_dev", file_path="/tmp/cat.png") → base64
+  → cc-broker → agentserver → imbridge → 微信
+  ← 用户收到图片
+
+CC Turn 3: "图片已生成并发送！"
+```
+
+Note: `send_image` with executor file path (`agt_dev:/tmp/cat.png`) is a convenience — CC can also do `remote_read` first and pass base64 directly. The Tool Router resolves both transparently.
 
 ## 17. Feature Coverage Audit
 
