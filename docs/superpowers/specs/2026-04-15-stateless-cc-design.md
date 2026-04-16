@@ -62,8 +62,10 @@ imbridge ──► agentserver ──► cc-broker ─────────�
                 │               │
                 │          ┌────┴────┐
                 │          │         │
-                │     FUSE client  Tool Router
-                │     (内嵌)       MCP Server
+                │     OpenViking   Tool Router
+                │     REST client  MCP Server
+                │     (download/   
+                │      upload)     
                 │          │
                 │          │ HTTP
                 │          ▼
@@ -83,7 +85,7 @@ imbridge ──► agentserver ──► cc-broker ─────────�
 | Service | Responsibilities | Does NOT handle |
 |---------|-----------------|-----------------|
 | **agentserver** | User auth, workspace/session CRUD, IM inbound routing, event log persistence, bridge SSE to frontend | CC execution, executor connectivity |
-| **cc-broker** | CC worker management, bridge API (context SSE + event persistence), Tool Router MCP Server, calling sandboxproxy for tool execution, FUSE client (embedded) for OpenViking mount/unmount | Tunnel management, business logic, executor lifecycle, context storage |
+| **cc-broker** | CC worker management, bridge API (context SSE + event persistence), Tool Router MCP Server, calling sandboxproxy for tool execution, OpenViking download/upload for workspace context | Tunnel management, business logic, executor lifecycle |
 | **sandboxproxy** | Tunnel management (WebSocket), sandbox HTTP connectivity, unified tool execution API | Business logic, CC reasoning, executor registration |
 | **executor-registry** | Executor registration (OAuth), heartbeat, capability storage, capability probe triggering | Tunnel management, tool execution |
 | **OpenViking** | Persistent context storage (CLAUDE.md, Memory, Settings, Skills); serves FUSE client requests via HTTP; pluggable storage backend (S3/KV/SQLite) | CC execution, business logic |
@@ -105,9 +107,7 @@ sandboxproxy ──► executor-registry (query executor info, validate tunnel t
 cc-broker ◄── agentserver (ProcessTurn via SSE)
 cc-broker ──► sandboxproxy (tool execution)
 cc-broker ──► executor-registry (query executors, write back capabilities)
-cc-broker ──► OpenViking (FUSE client HTTP: read/write context files)
-
-OpenViking ◄── cc-broker (FUSE client reads/writes)
+cc-broker ──► OpenViking (REST API: download context before CC, upload changes after CC)
 
 agentserver ──► cc-broker (ProcessTurn)
 agentserver ──► executor-registry (register sandbox, query executors)
@@ -1065,12 +1065,12 @@ The `agentserver-agent` binary simplifies significantly:
 | Worker management | Per-turn process spawning | CC exits after each turn; `--bare` minimizes cold start; no stale process state |
 | Turn serialization | Per-session lock | Prevents concurrent turn processing race conditions |
 | Permission model | Workspace isolation | Session can only access executors in its own workspace |
-| Side effect management | OpenViking FUSE mount | CC reads/writes files natively; FUSE transparently persists to shared storage |
-| CLAUDE.md | Native discovery via FUSE | Full feature support (@include, frontmatter, rules); synced from executor |
-| Auto-Memory | Native read/write via FUSE | CC manages MEMORY.md natively; OpenViking persists across workers |
-| Settings/Permissions | Pre-configured in OpenViking | bypassPermissions; shared across workers; no interactive dialogs |
-| Skills | Native discovery via FUSE | Mounted at `.claude/skills/`; CC discovers natively |
-| `--bare` flag | Not needed | OpenViking provides full `.claude/` structure; only truly incompatible features disabled via env vars |
+| Side effect management | OpenViking download-run-upload | Download context before CC; CC reads/writes real filesystem; upload changes after CC exits |
+| CLAUDE.md | Native discovery via downloaded files | Full feature support (@include, frontmatter, rules); synced from executor to OpenViking |
+| Auto-Memory | Native read/write on local filesystem | Downloaded before CC; CC manages MEMORY.md natively; uploaded after CC exits |
+| Settings/Permissions | Pre-configured in OpenViking, downloaded | bypassPermissions via CLI flags; shared across workers |
+| Skills | Native discovery via downloaded files | Downloaded to `.claude/skills/`; CC discovers natively |
+| `--bare` flag | Not needed | Downloaded files provide full `.claude/` structure; only truly incompatible features disabled via env vars |
 
 ## 12. New Components Summary
 
@@ -1082,7 +1082,7 @@ The `agentserver-agent` binary simplifies significantly:
 | Tool Executor Agent | In sandbox images + agentserver-agent binary | Lightweight HTTP handler for tool execution |
 | IM inbound endpoint | agentserver addition | `POST /api/workspaces/{wid}/im/inbound` |
 | Schema migrations | agentserver DB | `sandbox_id` nullable, `external_id` column, `source` column |
-| OpenViking integration | cc-broker | FUSE mount/unmount per worker; workspace context tree management |
+| OpenViking integration | cc-broker | REST API download/upload per worker; workspace context tree management |
 | Workspace context in OpenViking | OpenViking | `viking://workspace/{wid}/` tree: claude-home, project, skills, memory |
 
 ## 13. Schema Migrations
@@ -1111,59 +1111,59 @@ See Section 8.4 for full schema.
 
 ## 14. Migration Path
 
-1. **Phase 0**: OpenViking FUSE development — implement write persistence, scoped URI mounting, concurrent access support
-2. **Phase 1**: Schema migrations (sandbox_id nullable, external_id, executor tables, scheduled_tasks)
-3. **Phase 2**: Build executor-registry + sandboxproxy as standalone services
-4. **Phase 3**: Build cc-broker with bridge API, Tool Router MCP Server (with `remote_` prefixed tools), and worker management
-5. **Phase 4**: Add IM inbound endpoint to agentserver, rewire imbridge, add scheduled task service
-6. **Phase 5**: Modify agentserver-agent to register with executor-registry and connect tunnel to sandboxproxy
-7. **Phase 6**: Integration testing — validate CC with `--sdk-url` + `--tools "WebSearch,WebFetch"` + MCP + FUSE end-to-end
-8. **Phase 7**: Deprecate per-agent CC instances, route all reasoning through cc-broker
+1. **Phase 1**: Schema migrations (sandbox_id nullable, external_id, executor tables, scheduled_tasks)
+2. **Phase 2**: Build executor-registry + sandboxproxy as standalone services
+3. **Phase 3**: Build cc-broker with bridge API, Tool Router MCP Server (with `remote_` prefixed tools), OpenViking download/upload integration, and worker management
+4. **Phase 4**: Add IM inbound endpoint to agentserver, rewire imbridge, add scheduled task service
+5. **Phase 5**: Modify agentserver-agent to register with executor-registry and connect tunnel to sandboxproxy
+6. **Phase 6**: Integration testing — validate CC with `--sdk-url` + `--tools "WebSearch,WebFetch"` + MCP end-to-end
+7. **Phase 7**: Deprecate per-agent CC instances, route all reasoning through cc-broker
 
-## 15. Side Effect Management (via OpenViking FUSE)
+## 15. Side Effect Management (OpenViking Download-Run-Upload)
 
 CC produces side effects beyond conversation messages and tool calls: CLAUDE.md discovery, auto-memory read/write, settings, skills, plans, session transcripts, etc. In the stateless design, CC workers have no persistent local filesystem.
 
-**Solution**: Use [OpenViking](/root/OpenViking) as the context layer. OpenViking provides a FUSE filesystem that maps `viking://` URIs to pluggable storage backends (S3, KV, SQLite). By FUSE-mounting OpenViking at CC's config directory and `cwd`, CC reads and writes files normally while OpenViking transparently persists them to shared storage.
+**Solution**: Use [OpenViking](/root/OpenViking) as the persistent context store, with a **download-run-upload** pattern:
+1. **Before CC starts**: Download workspace context from OpenViking REST API to a local temp directory
+2. **During CC run**: CC reads/writes files on the real local filesystem (zero overhead, full compatibility)
+3. **After CC exits**: Diff changed files and upload back to OpenViking via REST API
 
-**Prerequisite**: OpenViking's current FUSE implementation is a prototype — the `release()` method does not persist writes back to the storage backend. Before this design can be implemented, OpenViking FUSE needs the following development:
-1. **Write persistence**: `release()` must write modified file contents back to OpenViking service via HTTP
-2. **Scoped URI mounting**: Support mounting arbitrary `viking://workspace/{wid}/...` URI scopes, not just predefined `MountScope` enum values
-3. **Concurrent access**: Validate that multiple FUSE mount processes accessing the same workspace data don't corrupt state
+This approach aligns with OpenViking's design philosophy: **reads via filesystem (or download), writes via API**. OpenViking's FUSE mount is designed for read-only access; writes go through the REST API which triggers semantic processing (vectorization, L0/L1 summary generation, relation graph updates).
 
 ### 15.1 Architecture
 
 ```
+                    ① Download (before CC starts)
+                    OpenViking REST API → local temp dir
+                    GET viking://workspace/{wid}/claude-home/*
+                    GET viking://workspace/{wid}/project/*
+
 CC Worker process
   │
-  │  normal file I/O (CC is unaware of FUSE)
+  │  normal file I/O on real local filesystem
+  │  (zero overhead, full POSIX compatibility)
   ▼
-FUSE mount (OpenViking)
-  ├── $HOME/.claude/              ← viking://workspace/{wid}/claude-home/
-  │   ├── settings.json           ← bypassPermissions, pre-configured
-  │   ├── CLAUDE.md               ← workspace-level instructions
-  │   ├── projects/{hash}/
-  │   │   └── memory/
-  │   │       └── MEMORY.md       ← CC auto-memory (read/write, persisted)
-  │   └── skills/                 ← user-level skills
+Local temp directory
+  ├── claude-config/              ← CLAUDE_CONFIG_DIR
+  │   ├── settings.json
+  │   ├── CLAUDE.md
+  │   ├── skills/
+  │   └── projects/ws_{wid}/memory/
+  │       └── MEMORY.md           ← CC reads/writes natively
   │
-  └── {cwd}/                      ← viking://workspace/{wid}/project/
-      ├── CLAUDE.md               ← project-level instructions (synced from executor)
-      ├── CLAUDE.local.md         ← local instructions
+  └── project/                    ← cwd
+      ├── CLAUDE.md
       └── .claude/
-          ├── CLAUDE.md           ← alternative project instructions
-          ├── rules/*.md          ← project rules
-          ├── settings.json       ← project-level settings
-          └── skills/             ← project-level skills
-  │
-  ▼
-OpenViking Service
-  │
-  ▼
-Storage Backend (S3 / KV / SQLite)
+          ├── rules/*.md
+          ├── settings.json
+          └── skills/
+
+                    ② Upload (after CC exits)
+                    Diff changed files → OpenViking REST API
+                    POST /api/v1/content/write (for each modified file)
 ```
 
-### 15.2 Why OpenViking
+### 15.2 Why Download-Run-Upload
 
 | Approach | Problem |
 |----------|---------|
@@ -1171,22 +1171,23 @@ Storage Backend (S3 / KV / SQLite)
 | DB + MCP tools for memory | CC can't use native auto-memory; adds complexity |
 | Physical shared filesystem (NFS/PVC) | Infrastructure dependency; not cloud-native |
 | Ephemeral `$HOME` with no persistence | Memory, settings, plans all lost on worker exit |
-| **OpenViking FUSE mount** | **CC fully unaware; all native features work; storage is pluggable** |
+| OpenViking FUSE mount | FUSE is read-only by design; writes don't persist (FUSE `release()` doesn't write back to storage — this is intentional, as OpenViking writes need semantic processing that can't fit in POSIX sync I/O) |
+| **Download-Run-Upload** | **Real filesystem (zero overhead); full CC compatibility; writes go through OpenViking REST API (semantic processing intact)** |
 
 ### 15.3 Side Effect Classification
 
-| Side Effect | Strategy | How OpenViking Handles It |
-|-------------|----------|---------------------------|
-| CLAUDE.md | **Native discovery** | Mounted at `{cwd}/CLAUDE.md` and `$HOME/.claude/CLAUDE.md`; CC discovers natively with full feature support |
-| Auto-Memory | **Native read/write** | CC writes to `$HOME/.claude/projects/{hash}/memory/MEMORY.md`; FUSE persists to OpenViking backend |
-| Settings | **Pre-configured** | `settings.json` with `bypassPermissions` served from OpenViking; shared across workers |
-| Skills | **Native discovery** | Mounted at `{cwd}/.claude/skills/`; CC discovers and loads natively |
-| Plans | **Native read/write** | CC writes to `$HOME/.claude/plans/`; FUSE persists to OpenViking |
+| Side Effect | Strategy | How It Works |
+|-------------|----------|--------------|
+| CLAUDE.md | **Download** | Downloaded from OpenViking to local temp dir; CC discovers natively with full feature support (@include, frontmatter, rules) |
+| Auto-Memory | **Download + Upload** | Downloaded before CC starts; CC writes MEMORY.md natively to local filesystem; uploaded back to OpenViking after CC exits |
+| Settings | **Download** | Pre-configured `settings.json` downloaded from OpenViking; read-only during CC run |
+| Skills | **Download** | Downloaded to `{cwd}/.claude/skills/`; CC discovers and loads natively |
+| Plans | **Download + Upload** | Downloaded before; CC writes plans locally; uploaded after |
 | Session transcript | **Disable** | `--no-session-persistence`; bridge event log is source of truth |
 | Cron/Scheduled tasks (built-in) | **Replace** | MCP `create_scheduled_task` → agentserver scheduler (Section 16.4) |
-| Worktrees | **Disable** | No local git repo; not exposed in MCP tool set |
+| Worktrees | **Remote** | No local git repo; remote worktree via `remote_bash` + `git worktree` on executor |
 | Git internal ops | **Graceful fail** | No repo in cwd; all git goes through tool calls to executors |
-| Telemetry | **Accept** | No env var to disable; CC may send telemetry to Anthropic (accepted risk for managed environment) |
+| Telemetry | **Accept** | No env var to disable; CC may send telemetry to Anthropic (accepted risk) |
 | File attribution | **Disable** | `CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING=1` |
 | Keychain/OAuth | **Skip** | `ANTHROPIC_API_KEY` env var only |
 
@@ -1196,27 +1197,27 @@ Each workspace has a persistent context tree in OpenViking:
 
 ```
 viking://workspace/{workspace_id}/
-  ├── claude-home/                    # → mounted as $HOME/.claude/
-  │   ├── settings.json               # bypassPermissions + workspace config
+  ├── claude-home/                    # → downloaded to CLAUDE_CONFIG_DIR
+  │   ├── settings.json               # workspace config
   │   ├── CLAUDE.md                   # workspace-level global instructions
-  │   ├── rules/                      # workspace-level rules
+  │   ├── rules/
   │   │   └── *.md
-  │   ├── skills/                     # workspace-level skills
+  │   ├── skills/
   │   │   └── {skill-name}/
   │   │       └── skill.md
   │   └── projects/
-  │       └── {hash}/
+  │       └── ws_{workspace_id}/
   │           └── memory/
-  │               ├── MEMORY.md       # auto-memory index (CC reads/writes)
+  │               ├── MEMORY.md       # auto-memory index
   │               └── *.md            # memory entries
   │
-  └── project/                        # → mounted as CC's cwd
+  └── project/                        # → downloaded to cwd
       ├── CLAUDE.md                   # project instructions (synced from executor)
       ├── CLAUDE.local.md
       └── .claude/
           ├── CLAUDE.md
           ├── rules/*.md
-          ├── settings.json           # project-level settings
+          ├── settings.json
           └── skills/
               └── {skill-name}/
                   └── skill.md
@@ -1239,12 +1240,11 @@ func (b *CCBroker) syncProjectInstructions(ctx context.Context, workspaceID, exe
         Arguments:  json.RawMessage(`{"file_path":"CLAUDE.md"}`),
     })
 
-    // Write to OpenViking
+    // Write to OpenViking via REST API
     b.viking.Write(ctx, fmt.Sprintf("viking://workspace/%s/project/CLAUDE.md", workspaceID),
         claudeMD.Output)
 
     // Also sync .claude/rules/*.md, .claude/CLAUDE.md, etc.
-    // ...
     return nil
 }
 ```
@@ -1264,77 +1264,73 @@ The `settings.json` in OpenViking is pre-configured per workspace:
 }
 ```
 
-Key settings:
 - `permissions.allow`: Whitelist MCP tools (supplementary to `--permission-mode bypassPermissions` CLI flag)
 - `CLAUDE_CODE_AUTO_COMPACT_WINDOW=165000`: Set via env var at worker spawn (from nanoclaw's production config)
 - `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0`: Auto-memory **enabled** — CC natively manages MEMORY.md
 - `bypassPermissions`: Set via CLI flag `--permission-mode bypassPermissions` (cannot be set in settings.json)
 
-### 15.7 Worker FUSE Mount Lifecycle
+### 15.7 Worker Lifecycle
 
 ```go
 func (b *CCBroker) spawnWorker(ctx context.Context, sessionID, workspaceID string) (*CCWorker, error) {
-    // 1. Create ephemeral mount points
+    // 1. Create local temp directory
     mountBase, _ := os.MkdirTemp("", "cc-worker-")
     claudeDir := filepath.Join(mountBase, "claude-config")
     projectDir := filepath.Join(mountBase, "project")
     os.MkdirAll(claudeDir, 0755)
     os.MkdirAll(projectDir, 0755)
 
-    // 2. FUSE mount OpenViking at both paths
-    homeMountID, _ := b.viking.Mount(ctx, MountConfig{
-        MountPoint: claudeDir,
-        Scope:      fmt.Sprintf("viking://workspace/%s/claude-home/", workspaceID),
-        ReadOnly:   false,  // CC needs to write auto-memory
-    })
-    projectMountID, _ := b.viking.Mount(ctx, MountConfig{
-        MountPoint: projectDir,
-        Scope:      fmt.Sprintf("viking://workspace/%s/project/", workspaceID),
-        ReadOnly:   true,   // project instructions are read-only for CC
-    })
+    // 2. Download workspace context from OpenViking
+    b.viking.Download(ctx, fmt.Sprintf("viking://workspace/%s/claude-home/", workspaceID), claudeDir)
+    b.viking.Download(ctx, fmt.Sprintf("viking://workspace/%s/project/", workspaceID), projectDir)
 
     // 3. Deterministic auto-memory path (must be consistent across workers)
-    //    Without this, CC computes path from cwd which varies per worker.
-    autoMemPath := filepath.Join(claudeDir, "projects", 
+    autoMemPath := filepath.Join(claudeDir, "projects",
         fmt.Sprintf("ws_%s", workspaceID), "memory")
     os.MkdirAll(autoMemPath, 0755)
 
-    // 4. Spawn CC worker
+    // 4. Take file snapshot (for diff after CC exits)
+    snapshot := takeFileSnapshot(claudeDir)
+
+    // 5. Spawn CC worker
     bridgeURL := fmt.Sprintf("http://localhost:%d/v1/sessions/%s", b.bridgePort, sessionID)
     mcpConfigPath := b.writeMCPConfig(sessionID, workspaceID)
 
     cmd := exec.CommandContext(ctx, "claude",
-        "--print",                                  // required for --sdk-url
+        "--print",
         "--sdk-url", bridgeURL,
         "--tools", "WebSearch,WebFetch",
         "--mcp-config", mcpConfigPath,
-        "--permission-mode", "bypassPermissions",   // no interactive permission dialogs
-        "--dangerously-skip-permissions",            // confirm bypass
+        "--permission-mode", "bypassPermissions",
+        "--dangerously-skip-permissions",
         "--no-session-persistence",
     )
     cmd.Dir = projectDir
     cmd.Env = []string{
-        // Config directory: use CLAUDE_CONFIG_DIR (more precise than HOME override)
         "CLAUDE_CONFIG_DIR=" + claudeDir,
-        // Auto-memory path: deterministic across workers for same workspace
         "CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=" + autoMemPath,
-        // API key
         "ANTHROPIC_API_KEY=" + b.apiKey,
-        // Feature controls
         "CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING=1",
         "CLAUDE_CODE_AUTO_COMPACT_WINDOW=165000",
-        // Standard env
-        "HOME=" + mountBase,   // fallback for non-CC programs
+        "HOME=" + mountBase,
         "PATH=" + os.Getenv("PATH"),
         "TERM=xterm-256color",
     }
     cmd.Start()
 
-    // 5. Cleanup on exit: unmount FUSE, remove temp dirs
+    // 6. After exit: diff + upload changes + cleanup
     go func() {
         cmd.Wait()
-        b.viking.Unmount(ctx, homeMountID)
-        b.viking.Unmount(ctx, projectMountID)
+
+        // Find modified files and upload back to OpenViking
+        changes := diffSnapshot(claudeDir, snapshot)
+        for _, changed := range changes {
+            content, _ := os.ReadFile(changed.Path)
+            b.viking.Write(ctx,
+                fmt.Sprintf("viking://workspace/%s/claude-home/%s", workspaceID, changed.RelPath),
+                content)
+        }
+
         os.RemoveAll(mountBase)
         os.Remove(mcpConfigPath)
     }()
@@ -1349,37 +1345,38 @@ func (b *CCBroker) spawnWorker(ctx context.Context, sessionID, workspaceID strin
 }
 ```
 
-Key changes from naive approach:
-- **`CLAUDE_CONFIG_DIR`** instead of `HOME` override — more precise, only affects CC's config directory resolution
+Key design choices:
+- **`CLAUDE_CONFIG_DIR`** instead of `HOME` override — more precise, only affects CC's config directory
 - **`CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`** — ensures all workers for the same workspace use the same auto-memory path, regardless of cwd
 - **`--print`** — required for `--sdk-url` to work from CLI
-- **`--permission-mode bypassPermissions --dangerously-skip-permissions`** — CLI flags instead of settings.json (settings.json does not support `permissions.mode`)
-- **No `CLAUDE_CODE_DISABLE_ANALYTICS`** — this env var does not exist in CC; telemetry cannot be disabled via env var (accepted risk)
-- **No `--bare`** — not needed; OpenViking provides full `.claude/` structure; native features (skills, auto-memory, CLAUDE.md) work correctly
+- **`--permission-mode bypassPermissions --dangerously-skip-permissions`** — CLI flags (settings.json does not support `permissions.mode`)
+- **No `--bare`** — not needed; downloaded files provide full `.claude/` structure; native features work
+- **Snapshot + diff + upload** — only modified files are uploaded, minimizing OpenViking API calls
 
-### 15.8 Features Preserved (vs. Previous Design)
+### 15.8 Subagent Context Consistency
 
-| Feature | Previous Design (ephemeral $HOME) | New Design (OpenViking FUSE) |
-|---------|----------------------------------|------------------------------|
-| CLAUDE.md | Injected via `--append-system-prompt` (loses @include, frontmatter, rules) | Native discovery (full feature support) |
-| Auto-Memory | Disabled; externalized to DB + MCP tools | Enabled; CC reads/writes MEMORY.md natively; FUSE persists |
-| Skills | Disabled via `--bare` | Enabled; CC discovers from `.claude/skills/` |
-| Settings | Generated temp file | Persistent in OpenViking; shared across workers |
-| Plans | Stored as session events only | CC writes to `$HOME/.claude/plans/`; persisted via FUSE |
-| `--bare` flag | Required | Not needed; all native features work |
+Subagents are same-process async generators (not separate OS processes). They share the same local temp directory:
+
+```
+CC Worker 进程（single process, single filesystem）
+  ├─ Main agent       ──┐
+  ├─ Subagent A        ──┼── share the same /tmp/cc-worker-xxx/ directory
+  └─ Subagent B        ──┘    local file writes are immediately visible to all
+                              upload happens AFTER all agents complete
+```
+
+No context inconsistency between subagents within a single turn. Cross-turn consistency is guaranteed by the download-upload cycle: the next worker downloads the latest state (including changes from the previous turn).
 
 ### 15.9 Remaining Disabled Features
 
-These are disabled via env vars because they are **structurally incompatible** with stateless per-turn workers, not because of filesystem concerns:
-
 | Feature | Reason | Mechanism |
 |---------|--------|-----------|
-| Session transcript | Bridge event log is source of truth; local JSONL is redundant | `--no-session-persistence` |
-| File attribution | No local files to track; tool calls execute on remote executors | `CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING=1` |
-| Telemetry | No env var to disable in current CC version | Accepted risk; CC may send telemetry to Anthropic |
-| Cron (built-in) | Worker exits per turn; built-in cronScheduler non-functional | Replaced by `create_scheduled_task` MCP tool (Section 16.4) |
-| Worktrees (built-in) | No local git repo | Remote worktree via `remote_bash` + `git worktree` on executor (Section 16.3) |
-| Keychain/OAuth | Managed environment; API key via env var | `ANTHROPIC_API_KEY` env var |
+| Session transcript | Bridge event log is source of truth | `--no-session-persistence` |
+| File attribution | No local files to track; tools execute on remote executors | `CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING=1` |
+| Telemetry | No env var to disable in current CC version | Accepted risk |
+| Cron (built-in) | Worker exits per turn; built-in cronScheduler non-functional | Replaced by MCP `create_scheduled_task` (Section 16.4) |
+| Worktrees (built-in) | No local git repo | Remote worktree via `remote_bash` + `git worktree` (Section 16.3) |
+| Keychain/OAuth | Managed environment | `ANTHROPIC_API_KEY` env var |
 
 ## 16. User Interaction in Headless Mode
 
