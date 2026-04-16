@@ -46,35 +46,19 @@ claude --print \
 用户(微信/Web/API)
   │
   ▼
-imbridge ──► agentserver ──► cc-broker ──────────► sandboxproxy
-             (用户业务)  HTTP (推理编排)     HTTP   (连接/执行)
-                │               │                    │    │
-                │               │                 tunnel  HTTP
-                │               │                    │    │
-                │               │                    ▼    ▼
-                │               │                Local   Sandbox
-                │               │                Agent   (K8s/Docker)
-                │               │                  │
-                │               │                  │ 注册/心跳
-                │               │                  ▼
-                │               │            executor-registry
-                │               │            (executor 生命周期)
+imbridge ──► agentserver ──► cc-broker ──► executor-registry
+             (用户业务)  HTTP (推理编排) HTTP (executor 管理 + tool 执行)
+                │               │              │         │
+                │               │           tunnel      HTTP
+                │               │              │         │
+                │               │              ▼         ▼
+                │               │          Local Agent  Sandbox
+                │               │                      (K8s/Docker)
                 │               │
-                │          ┌────┴────┐
-                │          │         │
-                │     OpenViking   Tool Router
-                │     REST client  MCP Server
-                │     (download/   
-                │      upload)     
-                │          │
-                │          │ HTTP
-                │          ▼
-                │      OpenViking
-                │   (context 持久化)
-                │          │
-                │          ▼
-                │    Storage Backend
-                │    (S3 / KV / SQLite)
+                │               └──► OpenViking (context 持久化)
+                │
+                ├──► nanoclaw (现有流程保留)
+                │      ↕ NanoClaw Pod
                 │
             PostgreSQL
          (共享 event log)
@@ -84,33 +68,32 @@ imbridge ──► agentserver ──► cc-broker ─────────�
 
 | Service | Responsibilities | Does NOT handle |
 |---------|-----------------|-----------------|
-| **agentserver** | User auth, workspace/session CRUD, IM inbound routing, event log persistence, bridge SSE to frontend | CC execution, executor connectivity |
-| **cc-broker** | CC worker management, bridge API (context SSE + event persistence), Tool Router MCP Server, calling sandboxproxy for tool execution, OpenViking download/upload for workspace context | Tunnel management, business logic, executor lifecycle |
-| **sandboxproxy** | Tunnel management (WebSocket), sandbox HTTP connectivity, unified tool execution API | Business logic, CC reasoning, executor registration |
-| **executor-registry** | Executor registration (OAuth), heartbeat, capability storage, capability probe triggering | Tunnel management, tool execution |
+| **agentserver** | User auth, workspace/session CRUD, IM inbound routing, event log persistence, bridge SSE to frontend, nanoclaw pod management (existing) | CC execution, executor connectivity |
+| **cc-broker** | CC worker management, bridge API (context SSE + event persistence), Tool Router MCP Server, calling executor-registry for tool execution, OpenViking download/upload for workspace context | Tunnel management, business logic, executor lifecycle |
+| **executor-registry** | Executor registration (OAuth), heartbeat, capability storage, capability probe triggering, tunnel management (WebSocket), unified tool execution API (`/api/execute`) | CC reasoning, business logic |
 | **OpenViking** | Persistent context storage (CLAUDE.md, Memory, Settings, Skills); REST API for download/upload; pluggable storage backend (S3/KV/SQLite) | CC execution, business logic |
 | **imbridge** | IM platform long-polling (WeChat/Telegram/Matrix), message forwarding to agentserver, outbound replies | Session management, CC execution |
+| **nanoclaw** | Existing agent orchestration in NanoClaw pods (preserved during and after migration) | Stateless CC sessions |
+
+Note: **executor-registry** (existing component) is a reverse proxy for cloud sandboxes and local agents. It is NOT used in the stateless CC architecture — executor-registry handles executor connectivity directly. executor-registry continues to serve its existing role for non-stateless-CC use cases.
 
 ### 2.3 Inter-Service Communication
 
 All inter-service communication uses **HTTP**. Streaming responses (cc-broker → agentserver) use **SSE** (Server-Sent Events), consistent with the existing bridge SSE pattern.
 
 ```
-executor-registry ◄── local agent (register, heartbeat)
+executor-registry ◄── local agent (register, heartbeat, tunnel WebSocket)
 executor-registry ◄── agentserver (register sandbox, query executors)
-executor-registry ◄── cc-broker (write back probe results, query executors)
-
-sandboxproxy ◄── local agent (tunnel WebSocket)
-sandboxproxy ◄── cc-broker (tool execution)
-sandboxproxy ──► executor-registry (query executor info, validate tunnel token)
+executor-registry ◄── cc-broker (tool execution, query executors, write back capabilities)
 
 cc-broker ◄── agentserver (ProcessTurn via SSE)
-cc-broker ──► sandboxproxy (tool execution)
+cc-broker ──► executor-registry (tool execution via /api/execute)
 cc-broker ──► executor-registry (query executors, write back capabilities)
 cc-broker ──► OpenViking (REST API: download context before CC, upload changes after CC)
 
 agentserver ──► cc-broker (ProcessTurn)
 agentserver ──► executor-registry (register sandbox, query executors)
+agentserver ──► nanoclaw pods (existing flow, preserved)
 ```
 
 ## 3. Message Ingestion Flow
@@ -137,7 +120,7 @@ WeChat user sends message
   → agentserver resolves/creates session
   → HTTP POST to cc-broker (SSE streaming response)
   → cc-broker assigns CC worker, processes turn
-  → Tool calls routed via sandboxproxy to executors
+  → Tool calls routed via executor-registry to executors
   → Streaming results back to agentserver
   → agentserver persists events, replies via imbridge
   → imbridge → WeChat reply
@@ -352,7 +335,7 @@ CC's built-in auto-compaction remains functional. Compaction data is stored in `
 
 ### 5.1 Architecture
 
-The Tool Router MCP Server runs inside cc-broker. It exposes the same tool interfaces as CC's built-in tools, but routes actual execution to remote executors via sandboxproxy.
+The Tool Router MCP Server runs inside cc-broker. It exposes the same tool interfaces as CC's built-in tools, but routes actual execution to remote executors via executor-registry.
 
 ```
 CC Worker
@@ -361,9 +344,9 @@ CC Worker
 Tool Router MCP Server (in cc-broker)
   │
   ├─ list_executors                → query executor-registry
-  ├─ remote_bash(executor_id, ...) → POST sandboxproxy /api/execute
-  ├─ remote_edit(executor_id, ...) → POST sandboxproxy /api/execute
-  ├─ remote_read(executor_id, ...) → POST sandboxproxy /api/execute
+  ├─ remote_bash(executor_id, ...) → POST executor-registry /api/execute
+  ├─ remote_edit(executor_id, ...) → POST executor-registry /api/execute
+  ├─ remote_read(executor_id, ...) → POST executor-registry /api/execute
   └─ ...
 ```
 
@@ -465,11 +448,11 @@ Full tool set exposed by the MCP server:
 
 ### 5.3 Tool Routing Classification
 
-Not all MCP tools route to sandboxproxy. The Tool Router classifies tools by destination:
+Not all MCP tools route to executor-registry. The Tool Router classifies tools by destination:
 
 | Tool Category | Destination | Examples |
 |---------------|-------------|----------|
-| **Executor tools** (`remote_*`) | sandboxproxy → executor | `remote_bash`, `remote_read`, `remote_edit`, `remote_write`, `remote_glob`, `remote_grep`, `remote_ls` |
+| **Executor tools** (`remote_*`) | executor-registry → executor | `remote_bash`, `remote_read`, `remote_edit`, `remote_write`, `remote_glob`, `remote_grep`, `remote_ls` |
 | **Workspace tools** | cc-broker local filesystem | `workspace_write`, `workspace_read`, `workspace_ls` |
 | **Discovery tools** | executor-registry | `list_executors` |
 | **IM tools** | cc-broker → agentserver → imbridge | `send_message`, `send_image`, `send_file` |
@@ -504,7 +487,7 @@ func (r *ToolRouter) HandleToolCall(ctx context.Context, req MCPToolCallRequest)
         return errorResult("Executor %s is %s", executorID, executor.Status), nil
     }
 
-    // 4. Dispatch via sandboxproxy (strip executor_id from tool args)
+    // 4. Dispatch via executor-registry (strip executor_id from tool args)
     toolArgs := stripExecutorID(req.Arguments)
     result, err := r.sandboxProxy.Execute(ctx, ExecuteRequest{
         ExecutorID: executorID,
@@ -525,11 +508,11 @@ CC Turn 1: list_executors
   ← [Dev Machine Agent (go, node, git), Test Sandbox (docker, k8s)]
 
 CC Turn 2: remote_read(executor_id="agt_dev", file_path="~/app/deploy.sh")
-  → Tool Router → sandboxproxy → tunnel → dev machine
+  → Tool Router → executor-registry → tunnel → dev machine
   ← file content
 
 CC Turn 3: remote_bash(executor_id="sbx_test", command="bash deploy.sh")
-  → Tool Router → sandboxproxy → HTTP → test sandbox pod
+  → Tool Router → executor-registry → HTTP → test sandbox pod
   ← deployment output
 
 CC Turn 4: Reply "部署完成，以下是输出..."
@@ -661,115 +644,11 @@ cc-broker-3  ←─┘
 
 CC workers are ephemeral — spawned per turn, exit after completion. No process pool or sticky sessions needed.
 
-## 7. Sandbox Proxy
+## 7. Executor Registry
 
-### 7.1 API
+Executor-registry is the **central authority** for all executors. It handles registration, heartbeat, capability management, tunnel connectivity, AND tool execution routing. cc-broker's Tool Router calls executor-registry's `/api/execute` endpoint — it never connects to executors directly.
 
-```go
-// POST /api/execute — Unified tool execution
-type ExecuteRequest struct {
-    ExecutorID string          `json:"executor_id"`
-    Tool       string          `json:"tool"`
-    Arguments  json.RawMessage `json:"arguments"`
-    Timeout    time.Duration   `json:"timeout"`
-}
-
-type ExecuteResponse struct {
-    Output   string `json:"output"`
-    ExitCode int    `json:"exit_code"`
-}
-
-// GET /api/executors/{id}/status — Check executor connectivity
-type ExecutorStatus struct {
-    ExecutorID string `json:"executor_id"`
-    Connected  bool   `json:"connected"`
-}
-```
-
-### 7.2 Routing Logic
-
-sandboxproxy determines how to reach each executor:
-
-```go
-func (p *SandboxProxy) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResponse, error) {
-    executor, _ := p.executorRegistry.GetExecutor(ctx, req.ExecutorID)
-
-    switch executor.Type {
-    case "sandbox":
-        // Direct HTTP to sandbox pod
-        return p.execViaPodHTTP(ctx, executor.PodIP, req)
-
-    case "local_agent":
-        // Push via tunnel
-        tunnel, ok := p.tunnelRegistry.Get(req.ExecutorID)
-        if !ok {
-            return ExecuteResponse{}, fmt.Errorf("executor %s not connected", req.ExecutorID)
-        }
-        return p.execViaTunnel(ctx, tunnel, req)
-    }
-}
-```
-
-### 7.3 Tunnel Management
-
-Local agents establish WebSocket tunnels to sandboxproxy (moved from agentserver):
-
-```go
-// WebSocket endpoint for local agent tunnel
-// WS /api/tunnel/{executor_id}?token={tunnel_token}
-func (p *SandboxProxy) handleTunnel(w http.ResponseWriter, r *http.Request) {
-    executorID := chi.URLParam(r, "executor_id")
-    token := r.URL.Query().Get("token")
-
-    // Validate tunnel token via executor-registry
-    valid, _ := p.executorRegistry.ValidateTunnelToken(r.Context(), executorID, token)
-    if !valid {
-        http.Error(w, "unauthorized", 401)
-        return
-    }
-
-    // Upgrade to WebSocket + yamux
-    conn, _ := upgrader.Upgrade(w, r, nil)
-    session, _ := yamux.Server(conn, yamux.DefaultConfig())
-    p.tunnelRegistry.Register(executorID, &Tunnel{Session: session})
-}
-```
-
-### 7.4 Tool Executor Agent
-
-Both sandboxes and local agents run a lightweight **Tool Executor Agent** — a minimal HTTP server that receives tool call requests and executes them locally:
-
-```go
-// Runs inside sandbox pod or on local agent machine
-func handleToolExecute(w http.ResponseWriter, r *http.Request) {
-    var req ToolCallRequest
-    json.NewDecoder(r.Body).Decode(&req)
-
-    var result ToolCallResult
-    switch req.Tool {
-    case "Bash":
-        result = executeBash(req.Arguments)
-    case "Read":
-        result = executeRead(req.Arguments)
-    case "Edit":
-        result = executeEdit(req.Arguments)
-    case "Write":
-        result = executeWrite(req.Arguments)
-    case "Glob":
-        result = executeGlob(req.Arguments)
-    case "Grep":
-        result = executeGrep(req.Arguments)
-    case "LS":
-        result = executeLS(req.Arguments)
-    }
-
-    json.NewEncoder(w).Encode(result)
-}
-```
-
-## 8. Executor Registry
-
-### 8.1 API
+### 7.1 Registration API
 
 ```go
 // Local agent registration (OAuth Device Flow)
@@ -781,7 +660,7 @@ type RegisterRequest struct {
 }
 type RegisterResponse struct {
     ExecutorID    string `json:"executor_id"`
-    TunnelToken   string `json:"tunnel_token"`   // for connecting to sandboxproxy
+    TunnelToken   string `json:"tunnel_token"`   // for connecting to executor-registry
     RegistryToken string `json:"registry_token"` // for subsequent heartbeats
 }
 
@@ -809,11 +688,24 @@ type RegisterSandboxRequest struct {
 // Update capabilities (called by cc-broker after probe)
 // PUT /api/executors/{id}/capabilities
 
-// Validate tunnel token (called by sandboxproxy)
+// Validate tunnel token (internal)
 // POST /api/executors/validate-tunnel-token
+
+// Tool execution (called by cc-broker Tool Router)
+// POST /api/execute
+type ExecuteRequest struct {
+    ExecutorID string          `json:"executor_id"`
+    Tool       string          `json:"tool"`
+    Arguments  json.RawMessage `json:"arguments"`
+    Timeout    time.Duration   `json:"timeout"`
+}
+type ExecuteResponse struct {
+    Output   string `json:"output"`
+    ExitCode int    `json:"exit_code"`
+}
 ```
 
-### 8.2 Executor Capability Model
+### 7.2 Executor Capability Model
 
 ```go
 type ExecutorCapability struct {
@@ -837,7 +729,80 @@ type ResourceInfo struct {
 }
 ```
 
-### 8.3 CC-Driven Capability Probing
+### 7.3 Tool Execution Routing
+
+Executor-registry determines how to reach each executor and routes tool calls:
+
+```go
+func (r *ExecutorRegistry) Execute(ctx context.Context, req ExecuteRequest) (ExecuteResponse, error) {
+    executor, _ := r.db.GetExecutor(ctx, req.ExecutorID)
+
+    switch executor.Type {
+    case "sandbox":
+        // Direct HTTP to sandbox pod
+        return r.execViaPodHTTP(ctx, executor.PodIP, req)
+
+    case "local_agent":
+        // Push via tunnel (managed by executor-registry)
+        tunnel, ok := r.tunnelRegistry.Get(req.ExecutorID)
+        if !ok {
+            return ExecuteResponse{}, fmt.Errorf("executor %s not connected", req.ExecutorID)
+        }
+        return r.execViaTunnel(ctx, tunnel, req)
+    }
+}
+```
+
+### 7.4 Tunnel Management
+
+Local agents establish WebSocket tunnels directly to executor-registry:
+
+```go
+// WS /api/tunnel/{executor_id}?token={tunnel_token}
+func (r *ExecutorRegistry) handleTunnel(w http.ResponseWriter, req *http.Request) {
+    executorID := chi.URLParam(req, "executor_id")
+    token := req.URL.Query().Get("token")
+
+    // Validate tunnel token
+    valid, _ := r.validateTunnelToken(req.Context(), executorID, token)
+    if !valid {
+        http.Error(w, "unauthorized", 401)
+        return
+    }
+
+    // Upgrade to WebSocket + yamux
+    conn, _ := upgrader.Upgrade(w, req, nil)
+    session, _ := yamux.Server(conn, yamux.DefaultConfig())
+    r.tunnelRegistry.Register(executorID, &Tunnel{Session: session})
+}
+```
+
+### 7.5 Tool Executor Agent
+
+Both sandboxes and local agents run a lightweight **Tool Executor Agent** — a minimal HTTP server that receives tool call requests and executes them locally:
+
+```go
+// Runs inside sandbox pod or on local agent machine
+func handleToolExecute(w http.ResponseWriter, r *http.Request) {
+    var req ToolCallRequest
+    json.NewDecoder(r.Body).Decode(&req)
+
+    var result ToolCallResult
+    switch req.Tool {
+    case "Bash":
+        result = executeBash(req.Arguments)
+    case "Read":
+        result = executeRead(req.Arguments)
+    case "Edit":
+        result = executeEdit(req.Arguments)
+    // ... Write, Glob, Grep, LS
+    }
+
+    json.NewEncoder(w).Encode(result)
+}
+```
+
+### 7.6 CC-Driven Capability Probing
 
 When a new executor registers, executor-registry triggers a capability probe via cc-broker:
 
@@ -858,7 +823,7 @@ func (s *Registry) triggerCapabilityProbe(ctx context.Context, executor Executor
     })
     // cc-broker will:
     // 1. Start a CC worker with the probe prompt
-    // 2. CC runs commands on the executor via sandboxproxy
+    // 2. CC runs commands on the executor via executor-registry
     // 3. CC outputs structured capability report
     // 4. cc-broker writes results back via PUT /api/executors/{id}/capabilities
 }
@@ -888,7 +853,7 @@ After probing, output a JSON block:
 
 User-declared capabilities (e.g., "has VPN access" — things CC can't probe) are configured via agent config file and merged with probe results, with user declarations taking priority.
 
-### 8.4 Database
+### 7.7 Database
 
 ```sql
 executors (
@@ -920,9 +885,9 @@ executor_heartbeats (
 );
 ```
 
-## 9. Local Agent Lifecycle
+## 8. Local Agent Lifecycle
 
-### 9.1 Startup Flow
+### 8.1 Startup Flow
 
 ```
 agentserver-agent binary starts
@@ -931,8 +896,8 @@ agentserver-agent binary starts
   │     POST /api/executors/register (OAuth token)
   │     ← executor_id, tunnel_token, registry_token
   │
-  ├─ 2. Establish tunnel to sandboxproxy
-  │     WS /api/tunnel/{executor_id}?token={tunnel_token}
+  ├─ 2. Establish tunnel to executor-registry (not sandboxproxy)
+  │     WS executor-registry /api/tunnel/{executor_id}?token={tunnel_token}
   │     (persistent connection, receives tool call requests)
   │
   ├─ 3. Start tool executor HTTP handler (on tunnel)
@@ -943,19 +908,19 @@ agentserver-agent binary starts
         Reports: status, basic system info
 ```
 
-### 9.2 Agent Binary Changes
+### 8.2 Agent Binary Changes
 
 The `agentserver-agent` binary simplifies significantly:
 
 | Before (current) | After (new) |
 |-------------------|-------------|
 | Register with agentserver | Register with executor-registry |
-| Establish tunnel to agentserver | Establish tunnel to sandboxproxy |
+| Establish tunnel to agentserver | Establish tunnel to executor-registry |
 | Poll for tasks | Receive tool calls via tunnel (push) |
 | Start CC subprocess for each task | No CC — just execute tool calls locally |
 | Run full agent loop | Simple tool executor |
 
-## 10. End-to-End Example
+## 9. End-to-End Example
 
 ### Scenario: User asks to train a model
 
@@ -983,19 +948,19 @@ The `agentserver-agent` binary simplifies significantly:
      ← [Dev Machine Agent, GPU Sandbox]
 
    Turn 2: remote_read(executor_id="agt_dev", file_path="~/projects/ml/train.py")
-     → Tool Router → sandboxproxy → tunnel → Dev Machine
+     → Tool Router → executor-registry → tunnel → Dev Machine
      ← file content (train.py)
 
    Turn 3: remote_read(executor_id="agt_dev", file_path="~/projects/ml/requirements.txt")
-     → Tool Router → sandboxproxy → tunnel → Dev Machine
+     → Tool Router → executor-registry → tunnel → Dev Machine
      ← file content (requirements.txt)
 
    Turn 4: remote_bash(executor_id="sbx_gpu", command="pip install -r /tmp/requirements.txt")
-     → Tool Router → sandboxproxy → HTTP → GPU Sandbox
+     → Tool Router → executor-registry → HTTP → GPU Sandbox
      ← pip install output
 
    Turn 5: remote_bash(executor_id="sbx_gpu", command="python /tmp/train.py --epochs 10")
-     → Tool Router → sandboxproxy → HTTP → GPU Sandbox
+     → Tool Router → executor-registry → HTTP → GPU Sandbox
      ← training output (loss, accuracy, etc.)
 
    Turn 6: CC replies "模型训练完成！最终 accuracy: 95.2%，模型已保存在 GPU sandbox 的 /workspace/model.pt"
@@ -1010,7 +975,7 @@ The `agentserver-agent` binary simplifies significantly:
 ⑧ User receives reply in WeChat
 ```
 
-## 11. Key Design Decisions
+## 10. Key Design Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -1022,7 +987,7 @@ The `agentserver-agent` binary simplifies significantly:
 | Tool routing | MCP Server (`remote_` prefix) + `--tools "WebSearch,WebFetch"` | Preserve CC's native web tools; executor-bound tools via MCP with `remote_` prefix to avoid deny rule collision |
 | Executor selection | CC (LLM) decides | LLM understands executor capabilities, makes intelligent routing |
 | Capability discovery | CC-driven probing | Flexible, no agent binary updates needed |
-| Service split | 5 services | agentserver, cc-broker, sandboxproxy, executor-registry, OpenViking; clean separation, independent scaling |
+| Service split | 4 new services + nanoclaw (preserved) | agentserver, cc-broker, executor-registry, OpenViking; nanoclaw preserved for existing flows |
 | Inter-service protocol | HTTP + SSE | Consistent with existing codebase, no new dependencies |
 | Worker management | Per-turn process spawning | CC exits after each turn; `--bare` minimizes cold start; no stale process state |
 | Turn serialization | Per-session lock | Prevents concurrent turn processing race conditions |
@@ -1034,20 +999,19 @@ The `agentserver-agent` binary simplifies significantly:
 | Skills | Native discovery via downloaded files | Downloaded to `.claude/skills/`; CC discovers natively |
 | `--bare` flag | Not needed | Downloaded files provide full `.claude/` structure; only truly incompatible features disabled via env vars |
 
-## 12. New Components Summary
+## 11. New Components Summary
 
 | Component | Location | Scope |
 |-----------|----------|-------|
 | cc-broker service | New Go service | Core: bridge API, CC worker management, Tool Router MCP |
-| sandboxproxy service | New Go service (or extract from agentserver) | Tunnel management, unified tool execution API |
-| executor-registry service | New Go service | Executor registration, heartbeat, capability storage |
+| executor-registry service | New Go service | Registration, heartbeat, capabilities, tunnel management, tool execution routing |
 | Tool Executor Agent | In sandbox images + agentserver-agent binary | Lightweight HTTP handler for tool execution |
 | IM inbound endpoint | agentserver addition | `POST /api/workspaces/{wid}/im/inbound` |
 | Schema migrations | agentserver DB | `sandbox_id` nullable, `external_id` column, `source` column |
 | OpenViking integration | cc-broker | REST API download/upload per worker; workspace context tree management |
 | Workspace context in OpenViking | OpenViking | `viking://workspace/{wid}/` tree: claude-home, project, skills, memory |
 
-## 13. Schema Migrations
+## 12. Schema Migrations
 
 ### 13.1 `agent_sessions.sandbox_id` → Nullable
 
@@ -1081,25 +1045,25 @@ ALTER TABLE agent_sessions ADD COLUMN source TEXT DEFAULT 'agent';
 
 See Section 8.4 for full schema.
 
-## 14. Migration Path
+## 13. Migration Path
 
 **Key principle: existing NanoClaw-based agents and stateless CC coexist during migration.** No big-bang switchover — each phase is independently deployable and backward-compatible.
 
 1. **Phase 1**: Schema migrations (sandbox_id nullable, external_id, executor tables, scheduled_tasks). Go code updates for nullable SandboxID. **Backward-compatible**: existing code continues working with non-null sandbox_id rows.
 
-2. **Phase 2**: Build executor-registry + sandboxproxy as standalone services. **No impact on existing**: these are new services with no existing dependencies.
+2. **Phase 2**: Build executor-registry + executor-registry as standalone services. **No impact on existing**: these are new services with no existing dependencies.
 
 3. **Phase 3**: Build cc-broker with bridge API, Tool Router MCP Server (with `remote_` prefixed tools), OpenViking download/upload integration, and worker management. **No impact on existing**: cc-broker is a new service.
 
 4. **Phase 4**: Add IM inbound endpoint to agentserver (`POST /api/workspaces/{wid}/im/inbound`). **Incremental imbridge routing**: add a per-channel flag (`routing_mode: "nanoclaw" | "stateless"`) to `workspace_im_channels` table. Channels with `routing_mode="nanoclaw"` continue forwarding to NanoClaw pods via existing `forwardToNanoClaw`. New channels or migrated channels use `routing_mode="stateless"` to forward to agentserver's inbound endpoint. Both paths coexist.
 
-5. **Phase 5**: Modify agentserver-agent to register with executor-registry and connect tunnel to sandboxproxy. **Dual-registration transition**: during migration, agents register with BOTH agentserver (legacy) and executor-registry (new). Tunnel connects to sandboxproxy while legacy HTTP proxy remains functional. Once all traffic is confirmed on sandboxproxy, remove legacy tunnel endpoint from agentserver.
+5. **Phase 5**: Modify agentserver-agent to register with executor-registry and connect tunnel to executor-registry. **Dual-registration transition**: during migration, agents register with BOTH agentserver (legacy) and executor-registry (new). Tunnel connects to executor-registry while legacy HTTP proxy remains functional. Once all traffic is confirmed on executor-registry, remove legacy tunnel endpoint from agentserver.
 
 6. **Phase 6**: Integration testing — validate CC with `--sdk-url` + `--tools "WebSearch,WebFetch"` + MCP end-to-end.
 
 7. **Phase 7**: Deprecate per-agent CC instances, route all reasoning through cc-broker. Remove legacy NanoClaw forwarding from imbridge. Remove legacy tunnel endpoint from agentserver.
 
-## 15. Side Effect Management (OpenViking Download-Run-Upload)
+## 14. Side Effect Management (OpenViking Download-Run-Upload)
 
 CC produces side effects beyond conversation messages and tool calls: CLAUDE.md discovery, auto-memory read/write, settings, skills, plans, session transcripts, etc. In the stateless design, CC workers have no persistent local filesystem.
 
@@ -1213,7 +1177,7 @@ CLAUDE.md and project rules are synced from executors to OpenViking. This happen
 
 ```go
 func (b *CCBroker) syncProjectInstructions(ctx context.Context, workspaceID, executorID string) error {
-    // Read CLAUDE.md from executor via sandboxproxy
+    // Read CLAUDE.md from executor via executor-registry
     claudeMD, _ := b.sandboxProxy.Execute(ctx, ExecuteRequest{
         ExecutorID: executorID,
         Tool:       "Read",
@@ -1276,7 +1240,7 @@ The Tool Router exposes workspace context tools for this purpose:
 ]
 ```
 
-These tools are handled directly by cc-broker (not routed to sandboxproxy or any executor). They read/write the CC worker's local temp directory:
+These tools are handled directly by cc-broker (not routed to executor-registry or any executor). They read/write the CC worker's local temp directory:
 
 ```go
 func (r *ToolRouter) HandleToolCall(ctx context.Context, req MCPToolCallRequest) (MCPToolResult, error) {
@@ -1456,7 +1420,7 @@ No context inconsistency between subagents within a single turn. Cross-turn cons
 | Worktrees (built-in) | No local git repo | Remote worktree via `remote_bash` + `git worktree` (Section 16.3) |
 | Keychain/OAuth | Managed environment | `ANTHROPIC_API_KEY` env var |
 
-## 16. User Interaction in Headless Mode
+## 15. User Interaction in Headless Mode
 
 ### 16.1 AskUserQuestion — Async via IM Bridge
 
@@ -1603,7 +1567,7 @@ CC: "每天早上 9 点检查部署状态"
   ▼
 Tool Router MCP Server
   │
-  │ scheduling tool → route to agentserver (not sandboxproxy)
+  │ scheduling tool → route to agentserver (not executor-registry)
   ▼
 agentserver Scheduler Service
   │
@@ -1827,7 +1791,7 @@ CC Turn 3: "图片已生成并发送！"
 
 Note: `send_image` with executor file path (`agt_dev:/tmp/cat.png`) is a convenience — CC can also do `remote_read` first and pass base64 directly. The Tool Router resolves both transparently.
 
-## 17. Feature Coverage Audit
+## 16. Feature Coverage Audit
 
 Comprehensive audit of all CC features against the stateless design:
 
@@ -1875,38 +1839,38 @@ Comprehensive audit of all CC features against the stateless design:
 | RemoteTrigger | Requires OAuth to claude.ai | Not applicable for managed agents |
 | Keychain/OAuth | Managed environment | `ANTHROPIC_API_KEY` env var |
 
-## 18. Known Risks and Mitigations
+## 17. Known Risks and Mitigations
 
-### 18.1 MCP Tool Naming Collision (Resolved)
+### 17.1 MCP Tool Naming Collision (Resolved)
 
 When `--tools "WebSearch,WebFetch"` disables most built-in tools, CC generates deny rules for the disabled tools. These deny rules also filter MCP tools matched by name. Additionally, allow rules in settings.json **cannot override** deny rules (deny is checked first in the permission evaluation order).
 
 **Resolution**: All MCP tools use `remote_` prefix to avoid collision: `remote_bash`, `remote_read`, `remote_edit`, `remote_write`, `remote_glob`, `remote_grep`, `remote_ls`. This ensures they are not caught by CC's deny rules for built-in tools.
 
-### 18.2 Token Security
+### 17.2 Token Security
 
-Executor `tunnel_token` and `registry_token` should be hashed at rest (SHA-256) in the executor-registry database. Raw tokens are returned only once at registration time. sandboxproxy validates tunnel tokens by hashing the presented token and comparing against the stored hash.
+Executor `tunnel_token` and `registry_token` should be hashed at rest (SHA-256) in the executor-registry database. Raw tokens are returned only once at registration time. executor-registry validates tunnel tokens by hashing the presented token and comparing against the stored hash.
 
-### 18.3 Long-Running Tool Calls
+### 17.3 Long-Running Tool Calls
 
-Tool calls like model training may run for extended periods. The sandboxproxy `/api/execute` endpoint supports a configurable timeout per request. For commands expected to run longer than the timeout:
+Tool calls like model training may run for extended periods. The executor-registry `/api/execute` endpoint supports a configurable timeout per request. For commands expected to run longer than the timeout:
 
 - The Tool Executor Agent should support an **async execution mode**: return a task ID immediately, provide a poll endpoint for status/output
 - The Tool Router MCP Server exposes a corresponding `poll_task(executor_id, task_id)` tool for CC to check progress
 - This is a Phase 2 enhancement; Phase 1 uses synchronous execution with a generous default timeout (10 minutes)
 
-### 18.4 SSE Replay Limit
+### 17.4 SSE Replay Limit
 
 The existing bridge implementation has `sseReplayLimit = 1000` events. Sessions with more than 1000 events before compaction will lose early events on replay. Mitigations:
 - `CLAUDE_CODE_AUTO_COMPACT_WINDOW=165000` triggers compaction before sessions grow too large
 - cc-broker's bridge implementation should increase the replay limit or implement pagination
 - Compaction reduces event count by summarizing old messages
 
-### 18.5 Executor List Injection
+### 17.5 Executor List Injection
 
 The `list_executors` tool call costs a turn. As an optimization, the executor list can be injected into the CC system prompt via `--append-system-prompt` so CC always has current executor info without an explicit tool call. This can be implemented in cc-broker when constructing the CC worker startup command.
 
-## 19. Related Work
+## 18. Related Work
 
 - **InfiAgent** (arXiv, Jan 2026): File system as authoritative state record; agents reconstruct context from externalized state snapshots
 - **"Externalization in LLM Agents"** (arXiv, Apr 2026): Unified review of memory/skills/protocols externalization; introduces "harness engineering" concept
