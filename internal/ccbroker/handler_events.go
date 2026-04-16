@@ -35,7 +35,11 @@ func (s *Server) handleWorkerEventStream(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 1. Replay persisted events from DB.
+	// 1. Subscribe FIRST (before replay) to capture events during replay.
+	sub := s.sse.Subscribe(sessionID)
+	defer s.sse.Unsubscribe(sessionID, sub)
+
+	// 2. Replay persisted events from DB.
 	events, err := s.store.GetEventsSince(r.Context(), sessionID, fromSeq, 1000)
 	if err != nil {
 		s.logger.Error("replay events failed", "error", err)
@@ -58,11 +62,7 @@ func (s *Server) handleWorkerEventStream(w http.ResponseWriter, r *http.Request)
 		lastSeq = evt.ID
 	}
 
-	// 2. Subscribe to live events via SSE broker.
-	sub := s.sse.Subscribe(sessionID)
-	defer s.sse.Unsubscribe(sessionID, sub)
-
-	// 3. Stream loop: live events + keepalive.
+	// 3. Stream loop: live events + keepalive (lastSeq guard filters already-replayed events).
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
 
@@ -70,10 +70,7 @@ func (s *Server) handleWorkerEventStream(w http.ResponseWriter, r *http.Request)
 		select {
 		case <-r.Context().Done():
 			return
-		case evt, ok := <-sub.Ch:
-			if !ok {
-				return // subscriber closed (backpressure)
-			}
+		case evt := <-sub.Ch:
 			if evt.SequenceNum <= lastSeq {
 				continue // already replayed
 			}
@@ -158,14 +155,18 @@ func (s *Server) handleWorkerEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Publish to SSE subscribers.
-	for i, ins := range inserted {
+	// Build eventID → payload map for correct lookup
+	payloadByID := make(map[string]json.RawMessage, len(inputs))
+	for _, inp := range inputs {
+		payloadByID[inp.EventID] = inp.Payload
+	}
+	for _, ins := range inserted {
 		s.sse.Publish(sessionID, &StreamClientEvent{
 			EventID:     ins.EventID,
 			SequenceNum: ins.SeqNum,
 			EventType:   "client_event",
 			Source:      "worker",
-			Payload:     inputs[i].Payload,
+			Payload:     payloadByID[ins.EventID],
 			CreatedAt:   time.Now().Format(time.RFC3339Nano),
 		})
 	}

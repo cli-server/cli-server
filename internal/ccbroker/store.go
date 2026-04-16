@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -113,7 +114,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 		`SELECT id, workspace_id, title, status, epoch, external_id, source, created_at
 		 FROM agent_sessions WHERE id = $1`, id,
 	).Scan(&sess.ID, &sess.WorkspaceID, &sess.Title, &sess.Status, &sess.Epoch, &externalID, &sess.Source, &sess.CreatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -132,7 +133,7 @@ func (s *Store) BumpSessionEpoch(ctx context.Context, id string) (int, error) {
 		`UPDATE agent_sessions SET epoch = epoch + 1, updated_at = NOW()
 		 WHERE id = $1 RETURNING epoch`, id,
 	).Scan(&epoch)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("session not found: %s", id)
 	}
 	if err != nil {
@@ -147,7 +148,7 @@ func (s *Store) GetSessionEpoch(ctx context.Context, sessionID string) (int, err
 	err := s.QueryRowContext(ctx,
 		`SELECT epoch FROM agent_sessions WHERE id = $1`, sessionID,
 	).Scan(&epoch)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("session not found: %s", sessionID)
 	}
 	if err != nil {
@@ -180,7 +181,7 @@ func (s *Store) InsertEvents(ctx context.Context, sessionID string, epoch int, e
 	for _, e := range events {
 		var seqNum int64
 		err := stmt.QueryRowContext(ctx, sessionID, e.EventID, epoch, e.Payload, e.Ephemeral).Scan(&seqNum)
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			continue // duplicate event_id — skip
 		}
 		if err != nil {

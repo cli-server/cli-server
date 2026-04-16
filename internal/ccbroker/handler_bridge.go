@@ -55,7 +55,7 @@ func (s *Server) handleBridge(w http.ResponseWriter, r *http.Request) {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	if fwd := r.Header.Get("X-Forwarded-Proto"); fwd != "" {
+	if fwd := r.Header.Get("X-Forwarded-Proto"); fwd == "https" || fwd == "http" {
 		scheme = fwd
 	}
 	apiBaseURL := fmt.Sprintf("%s://%s/v1/sessions/%s", scheme, r.Host, sessionID)
