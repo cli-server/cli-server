@@ -88,5 +88,20 @@ services:
       - postgres
     restart: unless-stopped
 
+  cc-broker:
+    build:
+      context: .
+      dockerfile: Dockerfile.cc-broker
+    environment:
+      CCBROKER_DATABASE_URL: "postgres://agentserver:agentserver@postgres:5432/agentserver?sslmode=disable"
+      CCBROKER_PORT: "8085"
+      CCBROKER_JWT_SECRET: "dev-secret-change-in-production-32chars"
+      CCBROKER_LOG_LEVEL: "info"
+    ports:
+      - "8085:8085"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
 volumes:
   pgdata:

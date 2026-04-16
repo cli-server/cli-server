@@ -1,0 +1,15 @@
+# Build Go binary
+FROM golang:1.26-trixie AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o cc-broker ./cmd/cc-broker
+
+# Runtime image (minimal — no Docker CLI, no frontend)
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/cc-broker /usr/local/bin/cc-broker
+EXPOSE 8085
+ENTRYPOINT ["cc-broker"]
