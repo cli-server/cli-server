@@ -26,8 +26,10 @@ func main() {
 
 	srv := ccbroker.NewServer(cfg, store)
 	httpServer := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: srv.Routes(),
+		Addr:              ":" + cfg.Port,
+		Handler:           srv.Routes(),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {

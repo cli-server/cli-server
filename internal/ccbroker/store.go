@@ -318,3 +318,8 @@ func (s *Store) UpdateWorkerHeartbeat(ctx context.Context, sessionID string, epo
 	}
 	return nil
 }
+
+// Close closes the underlying database connection.
+func (s *Store) Close() error {
+	return s.DB.Close()
+}

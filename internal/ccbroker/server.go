@@ -1,12 +1,14 @@
 package ccbroker
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -78,9 +80,14 @@ func (s *Server) CreateMCPServer(sessionID, workspaceID, workspaceDir string) (*
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 
-	go http.Serve(listener, mcpSrv) //nolint:errcheck
+	httpSrv := &http.Server{Handler: mcpSrv}
+	go httpSrv.Serve(listener) //nolint:errcheck
 
-	closer := func() { listener.Close() }
+	closer := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		httpSrv.Shutdown(ctx)
+	}
 	return mcpSrv, port, closer, nil
 }
 

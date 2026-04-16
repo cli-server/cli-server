@@ -135,7 +135,7 @@ func (r *ToolRouter) routeToWorkspace(ctx context.Context, toolName string, args
 		}
 		fullPath := filepath.Join(r.workspaceDir, filepath.Clean(path))
 		// Security: ensure path doesn't escape workspaceDir.
-		if !strings.HasPrefix(fullPath, r.workspaceDir) {
+		if !strings.HasPrefix(fullPath, r.workspaceDir+string(os.PathSeparator)) && fullPath != r.workspaceDir {
 			return textError("path escapes workspace directory"), nil
 		}
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
@@ -152,7 +152,7 @@ func (r *ToolRouter) routeToWorkspace(ctx context.Context, toolName string, args
 			return textError("path is required"), nil
 		}
 		fullPath := filepath.Join(r.workspaceDir, filepath.Clean(path))
-		if !strings.HasPrefix(fullPath, r.workspaceDir) {
+		if !strings.HasPrefix(fullPath, r.workspaceDir+string(os.PathSeparator)) && fullPath != r.workspaceDir {
 			return textError("path escapes workspace directory"), nil
 		}
 		data, err := os.ReadFile(fullPath)
@@ -164,7 +164,7 @@ func (r *ToolRouter) routeToWorkspace(ctx context.Context, toolName string, args
 	case "workspace_ls":
 		path, _ := args["path"].(string)
 		fullPath := filepath.Join(r.workspaceDir, filepath.Clean(path))
-		if !strings.HasPrefix(fullPath, r.workspaceDir) {
+		if !strings.HasPrefix(fullPath, r.workspaceDir+string(os.PathSeparator)) && fullPath != r.workspaceDir {
 			return textError("path escapes workspace directory"), nil
 		}
 		entries, err := os.ReadDir(fullPath)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type contextKey string
@@ -46,6 +48,12 @@ func (s *Server) workerAuthMiddleware(next http.Handler) http.Handler {
 		claims, err := ValidateWorkerJWT(s.config.JWTSecret, token)
 		if err != nil {
 			http.Error(w, "unauthorized: "+err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		urlSessionID := chi.URLParam(r, "sessionId")
+		if urlSessionID != "" && urlSessionID != claims.SessionID {
+			http.Error(w, "forbidden: session mismatch", http.StatusForbidden)
 			return
 		}
 
