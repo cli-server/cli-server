@@ -34,5 +34,8 @@ func (s *Server) Routes() http.Handler {
 		w.Write([]byte("ok"))
 	})
 
+	r.Post("/api/executors/register", s.handleRegister)
+	r.Post("/api/executors/sandbox", s.handleRegisterSandbox)
+
 	return r
 }
