@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -12,7 +13,7 @@ import (
 // AgentSession represents a bridge session.
 type AgentSession struct {
 	ID          string
-	SandboxID   string
+	SandboxID   *string
 	WorkspaceID string
 	Title       string
 	Status      string
@@ -47,7 +48,7 @@ type AgentSessionWorker struct {
 	RegisteredAt          time.Time
 }
 
-func (db *DB) CreateAgentSession(id, sandboxID, workspaceID, title string, tags []string) error {
+func (db *DB) CreateAgentSession(id string, sandboxID *string, workspaceID, title string, tags []string) error {
 	if tags == nil {
 		tags = []string{}
 	}
@@ -62,16 +63,18 @@ func (db *DB) CreateAgentSession(id, sandboxID, workspaceID, title string, tags 
 func (db *DB) GetAgentSession(id string) (*AgentSession, error) {
 	s := &AgentSession{}
 	var tags pq.StringArray
+	var sandboxID *string
 	err := db.QueryRow(
 		`SELECT id, sandbox_id, workspace_id, title, status, epoch, tags, created_at, updated_at, archived_at
 		 FROM agent_sessions WHERE id = $1`, id,
-	).Scan(&s.ID, &s.SandboxID, &s.WorkspaceID, &s.Title, &s.Status, &s.Epoch, &tags, &s.CreatedAt, &s.UpdatedAt, &s.ArchivedAt)
+	).Scan(&s.ID, &sandboxID, &s.WorkspaceID, &s.Title, &s.Status, &s.Epoch, &tags, &s.CreatedAt, &s.UpdatedAt, &s.ArchivedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	s.SandboxID = sandboxID
 	s.Tags = tags
 	return s, nil
 }
@@ -299,4 +302,34 @@ func (db *DB) GetAgentSessionInternalEventsSince(sessionID string, sinceID int64
 		result = append(result, e)
 	}
 	return result, rows.Err()
+}
+
+// GetSessionByExternalID looks up a session by workspace and external ID.
+func (db *DB) GetSessionByExternalID(ctx context.Context, workspaceID, externalID string) (*AgentSession, error) {
+	s := &AgentSession{}
+	var tags pq.StringArray
+	var sandboxID *string
+	err := db.QueryRowContext(ctx,
+		`SELECT id, sandbox_id, workspace_id, title, status, epoch, tags, created_at, updated_at, archived_at
+		 FROM agent_sessions WHERE workspace_id = $1 AND external_id = $2`,
+		workspaceID, externalID,
+	).Scan(&s.ID, &sandboxID, &s.WorkspaceID, &s.Title, &s.Status, &s.Epoch, &tags, &s.CreatedAt, &s.UpdatedAt, &s.ArchivedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.SandboxID = sandboxID
+	s.Tags = tags
+	return s, nil
+}
+
+// SetSessionExternalID sets the external_id for a session.
+func (db *DB) SetSessionExternalID(ctx context.Context, sessionID, externalID string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE agent_sessions SET external_id = $1 WHERE id = $2`,
+		externalID, sessionID,
+	)
+	return err
 }

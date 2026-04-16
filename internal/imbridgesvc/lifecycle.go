@@ -30,8 +30,10 @@ func (s *Server) RestorePollers() {
 					BotToken:  ch.BotToken,
 					BaseURL:   ch.BaseURL,
 				},
-				ChannelID: ch.ID,
-				Cursor:    ch.Cursor,
+				ChannelID:   ch.ID,
+				Cursor:      ch.Cursor,
+				WorkspaceID: ch.WorkspaceID,
+				RoutingMode: ch.RoutingMode,
 			})
 			restored++
 		}
@@ -60,8 +62,10 @@ func (s *Server) restorePollerForSandbox(sandboxID string) {
 			BotToken:  ch.BotToken,
 			BaseURL:   ch.BaseURL,
 		},
-		ChannelID: ch.ID,
-		Cursor:    ch.Cursor,
+		ChannelID:   ch.ID,
+		Cursor:      ch.Cursor,
+		WorkspaceID: ch.WorkspaceID,
+		RoutingMode: ch.RoutingMode,
 	})
 }
 

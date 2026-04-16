@@ -305,8 +305,9 @@ func (s *Server) saveWeixinCredentials(ctx context.Context, sandboxID string, re
 				BotToken:  result.Token,
 				BaseURL:   baseURL,
 			},
-			ChannelID: channelID,
-			Cursor:    "",
+			ChannelID:   channelID,
+			Cursor:      "",
+			WorkspaceID: sbx.WorkspaceID,
 		})
 		return nil
 	}
@@ -419,8 +420,9 @@ func (s *Server) handleIMTelegramConfigure(w http.ResponseWriter, r *http.Reques
 			BotToken:  req.BotToken,
 			BaseURL:   tgBaseURL,
 		},
-		ChannelID: channelID,
-		Cursor:    "",
+		ChannelID:   channelID,
+		Cursor:      "",
+		WorkspaceID: sbx.WorkspaceID,
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -545,8 +547,9 @@ func (s *Server) handleIMMatrixConfigure(w http.ResponseWriter, r *http.Request)
 			BotToken:  req.AccessToken,
 			BaseURL:   req.HomeserverURL,
 		},
-		ChannelID: channelID,
-		Cursor:    "",
+		ChannelID:   channelID,
+		Cursor:      "",
+		WorkspaceID: sbx.WorkspaceID,
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -847,6 +850,7 @@ func (s *Server) handleWorkspaceWeixinQRWait(w http.ResponseWriter, r *http.Requ
 			Provider:    provider,
 			Credentials: imbridge.Credentials{ChannelID: channelID, BotID: accountID, BotToken: result.Token, BaseURL: baseURL},
 			ChannelID:   channelID,
+			WorkspaceID: wsID,
 		})
 
 		w.Header().Set("Content-Type", "application/json")
@@ -930,6 +934,7 @@ func (s *Server) handleWorkspaceTelegramConfigure(w http.ResponseWriter, r *http
 		Provider:    provider,
 		Credentials: imbridge.Credentials{ChannelID: channelID, BotID: botID, BotToken: req.BotToken, BaseURL: baseURL},
 		ChannelID:   channelID,
+		WorkspaceID: wsID,
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -996,6 +1001,7 @@ func (s *Server) handleWorkspaceMatrixConfigure(w http.ResponseWriter, r *http.R
 		Provider:    provider,
 		Credentials: imbridge.Credentials{ChannelID: channelID, BotID: botID, BotToken: req.AccessToken, BaseURL: req.HomeserverURL},
 		ChannelID:   channelID,
+		WorkspaceID: wsID,
 	})
 
 	w.Header().Set("Content-Type", "application/json")

@@ -85,13 +85,19 @@ func (h *Handler) HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if sandboxID == "" {
 		sandboxID = req.SandboxID
 	}
-	if sandboxID == "" {
-		http.Error(w, "sandbox_id required", http.StatusBadRequest)
-		return
+
+	// Resolve sandboxID to a pointer (nil when empty for stateless CC sessions).
+	var sandboxIDPtr *string
+	if sandboxID != "" {
+		sandboxIDPtr = &sandboxID
 	}
 
 	workspaceID := WorkspaceIDFromContext(r.Context())
 	if workspaceID == "" {
+		if sandboxID == "" {
+			http.Error(w, "workspace_id or sandbox_id required", http.StatusBadRequest)
+			return
+		}
 		// Look up workspace from sandbox.
 		sbx, err := h.DB.GetSandbox(sandboxID)
 		if err != nil || sbx == nil {
@@ -102,7 +108,7 @@ func (h *Handler) HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := "cse_" + uuid.New().String()
-	if err := h.DB.CreateAgentSession(sessionID, sandboxID, workspaceID, req.Title, req.Tags); err != nil {
+	if err := h.DB.CreateAgentSession(sessionID, sandboxIDPtr, workspaceID, req.Title, req.Tags); err != nil {
 		log.Printf("bridge: create session error: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -130,7 +136,7 @@ func (h *Handler) HandleBridge(w http.ResponseWriter, r *http.Request) {
 
 	// Verify caller owns this session's sandbox.
 	callerSandbox := SandboxIDFromContext(r.Context())
-	if callerSandbox != "" && callerSandbox != session.SandboxID {
+	if callerSandbox != "" && (session.SandboxID == nil || callerSandbox != *session.SandboxID) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -150,7 +156,11 @@ func (h *Handler) HandleBridge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Issue worker JWT.
-	token, err := IssueWorkerJWT(h.JWTSecret, sessionID, session.SandboxID, session.WorkspaceID, newEpoch, jwtTTL)
+	sandboxIDStr := ""
+	if session.SandboxID != nil {
+		sandboxIDStr = *session.SandboxID
+	}
+	token, err := IssueWorkerJWT(h.JWTSecret, sessionID, sandboxIDStr, session.WorkspaceID, newEpoch, jwtTTL)
 	if err != nil {
 		log.Printf("bridge: issue jwt error: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -189,7 +199,7 @@ func (h *Handler) HandleArchive(w http.ResponseWriter, r *http.Request) {
 
 	// Verify caller owns this session.
 	callerSandbox := SandboxIDFromContext(r.Context())
-	if callerSandbox != "" && callerSandbox != session.SandboxID {
+	if callerSandbox != "" && (session.SandboxID == nil || callerSandbox != *session.SandboxID) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

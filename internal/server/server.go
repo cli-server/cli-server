@@ -70,6 +70,10 @@ type Server struct {
 	// BridgeHandler provides CCR V2-compatible bridge API for agent sessions.
 	BridgeHandler *bridge.Handler
 
+	// CCBrokerURL is the base URL of the cc-broker service for stateless
+	// Claude Code sessions (e.g. "http://cc-broker:8090").
+	CCBrokerURL string
+
 	// Credential proxy
 	EncryptionKey    []byte // AES-256 key for credential_bindings auth_blob
 	CredproxyPublicURL string // URL sandboxes use to reach credentialproxy
@@ -331,6 +335,9 @@ func (s *Server) Router() http.Handler {
 			r.Post("/api/sandboxes/{id}/weixin/qr-start", imbridgeProxy)
 			r.Post("/api/sandboxes/{id}/weixin/qr-wait", imbridgeProxy)
 		}
+
+		// IM inbound handler (stateless CC sessions via cc-broker)
+		r.Post("/api/workspaces/{wid}/im/inbound", s.handleIMInbound)
 
 		// Agent discovery
 		r.Get("/api/workspaces/{wid}/agents", s.handleListAgentCards)

@@ -89,7 +89,8 @@ func (s *Server) handleCreateTaskForWorkspace(w http.ResponseWriter, r *http.Req
 	var sessionID string
 	if s.BridgeHandler != nil {
 		sessionID = "cse_" + uuid.New().String()
-		if err := s.DB.CreateAgentSession(sessionID, req.TargetID, wid, fmt.Sprintf("Task: %s", taskID), nil); err != nil {
+		targetID := req.TargetID
+		if err := s.DB.CreateAgentSession(sessionID, &targetID, wid, fmt.Sprintf("Task: %s", taskID), nil); err != nil {
 			log.Printf("create task session: %v", err)
 		} else {
 			s.DB.Exec(`UPDATE agent_tasks SET session_id = $1 WHERE id = $2`, sessionID, taskID)

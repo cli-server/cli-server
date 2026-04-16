@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +48,8 @@ type BridgeBinding struct {
 	Credentials Credentials
 	ChannelID   string // workspace_im_channels.id
 	Cursor      string
+	WorkspaceID string // workspace that owns this channel
+	RoutingMode string // "nanoclaw" (default) or "stateless_cc"
 }
 
 // Bridge manages per-binding poll goroutines for all IM providers.
@@ -53,6 +57,7 @@ type Bridge struct {
 	db               BridgeDB
 	resolver         SandboxResolver
 	exec             ExecCommander
+	agentserverURL   string
 	providers        map[string]Provider
 	pollers          map[string]context.CancelFunc // key: channelID
 	registeredGroups map[string]string             // key: "sandboxID:chatJID" → cached settings hash
@@ -67,10 +72,15 @@ func NewBridge(db BridgeDB, resolver SandboxResolver, exec ExecCommander, provid
 	for _, p := range providers {
 		pm[p.Name()] = p
 	}
+	agentserverURL := os.Getenv("AGENTSERVER_URL")
+	if agentserverURL == "" {
+		agentserverURL = "http://localhost:8080"
+	}
 	return &Bridge{
 		db:               db,
 		resolver:         resolver,
 		exec:             exec,
+		agentserverURL:   agentserverURL,
 		providers:        pm,
 		pollers:          make(map[string]context.CancelFunc),
 		registeredGroups: make(map[string]string),
@@ -278,7 +288,7 @@ func (b *Bridge) pollLoop(ctx context.Context, binding BridgeBinding) {
 				}
 			}
 
-			forwarded, err := b.forwardToNanoClaw(ctx, binding, msg)
+			forwarded, err := b.forwardMessage(ctx, binding, msg)
 			if err != nil {
 				log.Printf("imbridge: forward failed channel=%s from=%s: %v (will retry next poll)",
 					channelID, msg.FromUserID, err)
@@ -301,6 +311,55 @@ func (b *Bridge) pollLoop(ctx context.Context, binding BridgeBinding) {
 			sleepCtx(ctx, bridgeRetryDelay)
 		}
 	}
+}
+
+// forwardMessage routes an inbound message based on the binding's RoutingMode.
+// "stateless_cc" forwards to the agentserver HTTP API; all other values
+// (including empty, for backward compatibility) forward to NanoClaw.
+func (b *Bridge) forwardMessage(ctx context.Context, binding BridgeBinding, msg InboundMessage) (bool, error) {
+	switch binding.RoutingMode {
+	case "stateless_cc":
+		return b.forwardToAgentserver(ctx, binding, msg)
+	default: // "nanoclaw" or empty (backward compatible)
+		return b.forwardToNanoClaw(ctx, binding, msg)
+	}
+}
+
+// forwardToAgentserver sends a message to the agentserver IM inbound endpoint.
+func (b *Bridge) forwardToAgentserver(ctx context.Context, binding BridgeBinding, msg InboundMessage) (bool, error) {
+	payload := map[string]interface{}{
+		"chat_jid":    msg.FromUserID,
+		"sender_name": msg.SenderName,
+		"content":     msg.Text,
+		"provider":    binding.Provider.Name(),
+		"channel_id":  binding.ChannelID,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return false, fmt.Errorf("marshal message: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/workspaces/%s/im/inbound", b.agentserverURL, binding.WorkspaceID)
+	ctx, cancel := context.WithTimeout(ctx, forwardTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("forward to agentserver: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		respBody, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("agentserver returned %d: %s", resp.StatusCode, respBody)
+	}
+	return true, nil
 }
 
 // forwardToNanoClaw sends a message to the NanoClaw pod's bridge HTTP endpoint.

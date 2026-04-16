@@ -225,6 +225,7 @@ var serveCmd = &cobra.Command{
 		srv.ModelserverOAuthIntrospectURL = os.Getenv("MODELSERVER_OAUTH_INTROSPECT_URL")
 		srv.ModelserverOAuthRedirectURI = os.Getenv("MODELSERVER_OAUTH_REDIRECT_URI")
 		srv.ModelserverProxyURL = os.Getenv("MODELSERVER_PROXY_URL")
+		srv.CCBrokerURL = os.Getenv("CC_BROKER_URL")
 
 		// Hydra OAuth2 for agent Device Flow.
 		hydraAdminURL := os.Getenv("HYDRA_ADMIN_URL")
