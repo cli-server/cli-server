@@ -18,7 +18,13 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	srv := ccbroker.NewServer(cfg, nil)
+	store, err := ccbroker.NewStore(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("database: %v", err)
+	}
+	defer store.Close()
+
+	srv := ccbroker.NewServer(cfg, store)
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: srv.Routes(),

@@ -2,7 +2,6 @@ package ccbroker
 
 import (
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,8 +10,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// Temporary stubs -- replaced in Tasks 2-3
-type Store struct{ io.Closer }
+// Temporary stubs -- replaced in Task 3
 type SSEBroker struct{}
 
 func NewSSEBroker() *SSEBroker { return &SSEBroker{} }
