@@ -57,12 +57,6 @@ func (s *Server) Routes() http.Handler {
 	return r
 }
 
-// Stub handlers -- replaced in Task 6
-func (s *Server) handleWorkerInternalEvents(w http.ResponseWriter, r *http.Request) { w.WriteHeader(501) }
-func (s *Server) handleGetInternalEvents(w http.ResponseWriter, r *http.Request)   { w.WriteHeader(501) }
-func (s *Server) handleWorkerState(w http.ResponseWriter, r *http.Request)         { w.WriteHeader(501) }
-func (s *Server) handleWorkerHeartbeat(w http.ResponseWriter, r *http.Request)     { w.WriteHeader(501) }
-
 // Helpers
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
