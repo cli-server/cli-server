@@ -57,9 +57,7 @@ func (s *Server) Routes() http.Handler {
 	return r
 }
 
-// Stub handlers -- replaced in Tasks 4-6
-func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request)       { w.WriteHeader(501) }
-func (s *Server) handleBridge(w http.ResponseWriter, r *http.Request)              { w.WriteHeader(501) }
+// Stub handlers -- replaced in Tasks 5-6
 func (s *Server) handleWorkerEventStream(w http.ResponseWriter, r *http.Request)   { w.WriteHeader(501) }
 func (s *Server) handleWorkerEvents(w http.ResponseWriter, r *http.Request)        { w.WriteHeader(501) }
 func (s *Server) handleWorkerInternalEvents(w http.ResponseWriter, r *http.Request) { w.WriteHeader(501) }
