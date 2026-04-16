@@ -66,11 +66,6 @@ func (r *ToolRouter) Route(ctx context.Context, toolName string, args map[string
 	return &MCPToolResult{Content: []MCPContentBlock{{Type: "text", Text: "not implemented"}}}, nil
 }
 
-// Stub tool definitions — will be replaced in Task 2.
-func buildToolDefinitions() []MCPToolDef {
-	return []MCPToolDef{}
-}
-
 // MCPServer implements http.Handler and speaks JSON-RPC 2.0 / MCP.
 type MCPServer struct {
 	router *ToolRouter
