@@ -10,15 +10,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// Temporary stubs -- replaced in Task 3
-type SSEBroker struct{}
-
-func NewSSEBroker() *SSEBroker { return &SSEBroker{} }
-
-type DedupRegistry struct{}
-
-func NewDedupRegistry() *DedupRegistry { return &DedupRegistry{} }
-
 type Server struct {
 	config Config
 	store  *Store
