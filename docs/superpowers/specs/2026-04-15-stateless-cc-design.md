@@ -448,6 +448,9 @@ Full tool set exposed by the MCP server:
 | `Glob` | `executor_id`, `pattern`, `path` | File pattern search |
 | `Grep` | `executor_id`, `pattern`, `path`, `glob` | Content search |
 | `LS` | `executor_id`, `path` | List directory |
+| `create_scheduled_task` | `cron`, `prompt`, `recurring` | Create scheduled task on agentserver |
+| `list_scheduled_tasks` | | List workspace scheduled tasks |
+| `cancel_scheduled_task` | `task_id` | Cancel a scheduled task |
 
 ### 5.3 Permission Enforcement
 
@@ -1480,6 +1483,115 @@ This is **more powerful** than CC's built-in worktree isolation because:
 - CC acts as a central orchestrator, managing worktrees across executors via tool calls
 - No special `EnterWorktree` tool needed — standard `Bash` + `git worktree` commands suffice
 
+### 16.4 Scheduled Tasks — MCP Tool + agentserver Scheduler
+
+CC's built-in `CronCreate` and `ScheduleWakeup` tools rely on an in-process scheduler that runs continuously. In our stateless design, CC workers exit per turn, making these built-in tools non-functional.
+
+**Solution**: Replace the built-in cron tools with MCP tools that create tasks on agentserver's centralized scheduling service.
+
+**Architecture:**
+
+```
+CC: "每天早上 9 点检查部署状态"
+  │
+  │ MCP tool call
+  ▼
+Tool Router MCP Server
+  │
+  │ scheduling tool → route to agentserver (not sandboxproxy)
+  ▼
+agentserver Scheduler Service
+  │
+  ├─ Store task in DB (workspace-scoped)
+  └─ Scheduler daemon (persistent, in agentserver)
+       │
+       │ cron fires at 09:00
+       ▼
+     agentserver → cc-broker.ProcessTurn(prompt="检查部署状态")
+       → CC worker starts → processes → exits
+```
+
+**MCP tool definitions:**
+
+```json
+[
+  {
+    "name": "create_scheduled_task",
+    "description": "Create a scheduled task that runs a prompt on a cron schedule. Tasks persist across sessions and are managed by the server.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cron": {
+          "type": "string",
+          "description": "5-field cron expression in local time (e.g., '0 9 * * *' = daily at 9am)"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "The prompt to execute when the cron fires"
+        },
+        "recurring": {
+          "type": "boolean",
+          "default": true,
+          "description": "true = fire on every cron match. false = fire once then auto-delete."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the task"
+        }
+      },
+      "required": ["cron", "prompt"]
+    }
+  },
+  {
+    "name": "list_scheduled_tasks",
+    "description": "List all scheduled tasks for this workspace.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "cancel_scheduled_task",
+    "description": "Cancel a scheduled task by ID.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "task_id": { "type": "string", "description": "The task ID to cancel" }
+      },
+      "required": ["task_id"]
+    }
+  }
+]
+```
+
+**agentserver schema:**
+
+```sql
+scheduled_tasks (
+    id            TEXT PRIMARY KEY,
+    workspace_id  TEXT NOT NULL,
+    session_id    TEXT,              -- originating session (for context)
+    cron          TEXT NOT NULL,     -- 5-field cron expression
+    prompt        TEXT NOT NULL,
+    description   TEXT,
+    recurring     BOOLEAN DEFAULT TRUE,
+    status        TEXT DEFAULT 'active',  -- 'active' | 'paused' | 'cancelled'
+    last_fired_at TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ,
+    updated_at    TIMESTAMPTZ
+)
+```
+
+**Advantages over CC's built-in CronCreate:**
+
+| Aspect | CC built-in CronCreate | MCP Scheduling Service |
+|--------|------------------------|------------------------|
+| Storage | Local file `scheduled_tasks.json` | agentserver DB |
+| Scheduler | In-process 1s timer (requires CC to be running) | agentserver daemon (always running) |
+| Stateless compatibility | Broken (worker exits per turn) | Fully compatible |
+| Visibility | Only within current CC session | Workspace-level; visible to all sessions and Web UI |
+| Management | CC-internal only | agentserver API; extensible to Web UI, admin tools |
+
 ## 17. Feature Coverage Audit
 
 Comprehensive audit of all CC features against the stateless design:
@@ -1512,6 +1624,7 @@ Comprehensive audit of all CC features against the stateless design:
 | Agent Tool | Local subagents work natively; worktree isolation via remote `git worktree` on executor (more powerful than CC's built-in) |
 | Edit (no undo) | Works but file checkpointing disabled; no undo |
 | Error Recovery | Session-level via bridge; mid-turn crashes lose in-memory state |
+| Scheduled Tasks (Cron) | Built-in CronCreate replaced by `create_scheduled_task` MCP tool → agentserver scheduler (Section 16.4) |
 
 ### 17.3 Intentionally Disabled
 
@@ -1519,8 +1632,8 @@ Comprehensive audit of all CC features against the stateless design:
 |---------|--------|--------|
 | LSP | Requires local file indexing; incompatible with FUSE read-only cwd | Code navigation unavailable; CC can still read/grep files via MCP |
 | Worktrees (built-in) | No local git repo; `EnterWorktree` tool not exposed | Remote worktree via `Bash` + `git worktree` on executor (Section 16.3) |
-| CronCreate (recurring) | Worker exits per turn | Use agentserver-level scheduler for recurring tasks |
-| ScheduleWakeup | Worker exits per turn | External job scheduler instead |
+| CronCreate (built-in) | Worker exits per turn; built-in cronScheduler can't run | Replaced by `create_scheduled_task` MCP tool → agentserver scheduler (Section 16.4) |
+| ScheduleWakeup (built-in) | Worker exits per turn | Replaced by `create_scheduled_task` with one-shot cron (Section 16.4) |
 | File Attribution | No local files to track | Tool calls execute on remote executors |
 | Telemetry | Prevent infrastructure leak | `CLAUDE_CODE_DISABLE_ANALYTICS=1` |
 | Session Transcript | Bridge event log is source of truth | `--no-session-persistence` |
