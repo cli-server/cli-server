@@ -1,7 +1,6 @@
 package ccbroker
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 )
@@ -57,13 +56,6 @@ type MCPContentBlock struct {
 type MCPToolResult struct {
 	Content []MCPContentBlock `json:"content"`
 	IsError bool              `json:"isError,omitempty"`
-}
-
-// Stub ToolRouter — will be replaced in Task 3.
-type ToolRouter struct{}
-
-func (r *ToolRouter) Route(ctx context.Context, toolName string, args map[string]interface{}) (*MCPToolResult, error) {
-	return &MCPToolResult{Content: []MCPContentBlock{{Type: "text", Text: "not implemented"}}}, nil
 }
 
 // MCPServer implements http.Handler and speaks JSON-RPC 2.0 / MCP.
