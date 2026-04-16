@@ -32,10 +32,7 @@ func generateToken() (string, error) {
 }
 
 func generateExecutorID() string {
-	id := uuid.New().String()
-	// Use the first segment of the UUID for brevity: "exe_" + 8 hex chars
-	parts := strings.Split(id, "-")
-	return "exe_" + parts[0]
+	return "exe_" + uuid.NewString()
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

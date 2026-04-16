@@ -67,6 +67,9 @@ func (s *Server) handleExecute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) execViaTunnel(ctx context.Context, req ExecuteRequest, timeout time.Duration) (ExecuteResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	body, _ := json.Marshal(req)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", "/tool/execute", bytes.NewReader(body))
 	if err != nil {
@@ -74,17 +77,7 @@ func (s *Server) execViaTunnel(ctx context.Context, req ExecuteRequest, timeout 
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	httpResp, err := s.tunnels.ExecViaTunnel(req.ExecutorID, httpReq)
-	if err != nil {
-		return ExecuteResponse{}, err
-	}
-	defer httpResp.Body.Close()
-
-	var resp ExecuteResponse
-	if err := json.NewDecoder(httpResp.Body).Decode(&resp); err != nil {
-		return ExecuteResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-	return resp, nil
+	return s.tunnels.ExecViaTunnel(req.ExecutorID, httpReq)
 }
 
 func (s *Server) execViaPodHTTP(ctx context.Context, executor *ExecutorInfo, req ExecuteRequest, timeout time.Duration) (ExecuteResponse, error) {

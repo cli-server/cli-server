@@ -2,6 +2,7 @@ package executorregistry
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -52,28 +53,34 @@ func (tr *TunnelRegistry) Get(executorID string) (*yamux.Session, bool) {
 }
 
 // ExecViaTunnel opens a yamux stream to the specified executor, writes the
-// given HTTP request over it, and reads back the HTTP response.
-func (tr *TunnelRegistry) ExecViaTunnel(executorID string, httpReq *http.Request) (*http.Response, error) {
+// given HTTP request over it, reads back the HTTP response, decodes it into
+// an ExecuteResponse, and closes the stream before returning.
+func (tr *TunnelRegistry) ExecViaTunnel(executorID string, httpReq *http.Request) (ExecuteResponse, error) {
 	session, ok := tr.Get(executorID)
 	if !ok {
-		return nil, fmt.Errorf("no tunnel for executor %s", executorID)
+		return ExecuteResponse{}, fmt.Errorf("no tunnel for executor %s", executorID)
 	}
 
 	stream, err := session.Open()
 	if err != nil {
-		return nil, fmt.Errorf("open yamux stream: %w", err)
+		return ExecuteResponse{}, fmt.Errorf("open yamux stream: %w", err)
 	}
+	defer stream.Close()
 
 	if err := httpReq.Write(stream); err != nil {
-		stream.Close()
-		return nil, fmt.Errorf("write http request: %w", err)
+		return ExecuteResponse{}, fmt.Errorf("write http request: %w", err)
 	}
 
 	resp, err := http.ReadResponse(bufio.NewReader(stream), httpReq)
 	if err != nil {
-		stream.Close()
-		return nil, fmt.Errorf("read http response: %w", err)
+		return ExecuteResponse{}, fmt.Errorf("read http response: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result ExecuteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return ExecuteResponse{}, fmt.Errorf("decode response: %w", err)
 	}
 
-	return resp, nil
+	return result, nil
 }

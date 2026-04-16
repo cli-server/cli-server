@@ -1,6 +1,7 @@
 package executorregistry
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -46,14 +47,20 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 
 	// Register tunnel and update executor status to online.
 	s.tunnels.Register(executorID, session)
-	s.store.UpdateExecutorStatus(r.Context(), executorID, "online")
+	if err := s.store.UpdateExecutorStatus(r.Context(), executorID, "online"); err != nil {
+		s.logger.Error("failed to mark executor online", "executor_id", executorID, "error", err)
+	}
 	s.logger.Info("tunnel connected", "executor_id", executorID)
 
 	// Block until the tunnel session closes.
 	<-session.CloseChan()
 
 	// Cleanup: unregister tunnel and mark executor offline.
+	// Use background context because r.Context() is cancelled on disconnect.
+	bgCtx := context.Background()
 	s.tunnels.Unregister(executorID)
-	s.store.UpdateExecutorStatus(r.Context(), executorID, "offline")
+	if err := s.store.UpdateExecutorStatus(bgCtx, executorID, "offline"); err != nil {
+		s.logger.Error("failed to mark executor offline", "executor_id", executorID, "error", err)
+	}
 	s.logger.Info("tunnel disconnected", "executor_id", executorID)
 }

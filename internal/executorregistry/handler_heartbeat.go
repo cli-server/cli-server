@@ -9,8 +9,9 @@ import (
 )
 
 type heartbeatRequest struct {
-	Status     string          `json:"status"`
-	SystemInfo json.RawMessage `json:"system_info"`
+	Status       string              `json:"status"`
+	SystemInfo   json.RawMessage     `json:"system_info"`
+	Capabilities *ExecutorCapability `json:"capabilities,omitempty"`
 }
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -54,5 +55,14 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	if req.Capabilities != nil {
+		req.Capabilities.ExecutorID = executorID
+		if err := s.store.UpdateCapabilities(r.Context(), executorID, *req.Capabilities); err != nil {
+			s.logger.Error("update capabilities via heartbeat", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

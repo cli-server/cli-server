@@ -34,5 +34,5 @@ func (s *Server) handleUpdateCapabilities(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
