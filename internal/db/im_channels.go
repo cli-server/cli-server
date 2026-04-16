@@ -16,6 +16,7 @@ type IMChannel struct {
 	BaseURL        string
 	Cursor         string
 	RequireMention bool
+	RoutingMode    string
 	BoundAt        time.Time
 }
 
@@ -47,12 +48,12 @@ func (db *DB) SaveIMChannelCredentials(channelID, botToken, baseURL string) erro
 // GetIMChannel retrieves a single workspace IM channel by ID.
 func (db *DB) GetIMChannel(channelID string) (*IMChannel, error) {
 	c := &IMChannel{}
-	var botToken, baseURL, cursor *string
+	var botToken, baseURL, cursor, routingMode *string
 	err := db.QueryRow(
-		`SELECT id, workspace_id, provider, bot_id, user_id, bot_token, base_url, cursor, require_mention, bound_at
+		`SELECT id, workspace_id, provider, bot_id, user_id, bot_token, base_url, cursor, require_mention, routing_mode, bound_at
 		FROM workspace_im_channels WHERE id = $1`,
 		channelID,
-	).Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.RequireMention, &c.BoundAt)
+	).Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.RequireMention, &routingMode, &c.BoundAt)
 	if err != nil {
 		return nil, err
 	}
@@ -65,13 +66,16 @@ func (db *DB) GetIMChannel(channelID string) (*IMChannel, error) {
 	if cursor != nil {
 		c.Cursor = *cursor
 	}
+	if routingMode != nil {
+		c.RoutingMode = *routingMode
+	}
 	return c, nil
 }
 
 // ListIMChannels returns all IM channels for a workspace.
 func (db *DB) ListIMChannels(workspaceID string) ([]IMChannel, error) {
 	rows, err := db.Query(
-		`SELECT id, workspace_id, provider, bot_id, user_id, bot_token, base_url, cursor, require_mention, bound_at
+		`SELECT id, workspace_id, provider, bot_id, user_id, bot_token, base_url, cursor, require_mention, routing_mode, bound_at
 		FROM workspace_im_channels WHERE workspace_id = $1 ORDER BY bound_at`,
 		workspaceID,
 	)
@@ -83,8 +87,8 @@ func (db *DB) ListIMChannels(workspaceID string) ([]IMChannel, error) {
 	var channels []IMChannel
 	for rows.Next() {
 		var c IMChannel
-		var botToken, baseURL, cursor *string
-		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.RequireMention, &c.BoundAt); err != nil {
+		var botToken, baseURL, cursor, routingMode *string
+		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.RequireMention, &routingMode, &c.BoundAt); err != nil {
 			return nil, err
 		}
 		if botToken != nil {
@@ -96,6 +100,9 @@ func (db *DB) ListIMChannels(workspaceID string) ([]IMChannel, error) {
 		if cursor != nil {
 			c.Cursor = *cursor
 		}
+		if routingMode != nil {
+			c.RoutingMode = *routingMode
+		}
 		channels = append(channels, c)
 	}
 	return channels, rows.Err()
@@ -105,7 +112,7 @@ func (db *DB) ListIMChannels(workspaceID string) ([]IMChannel, error) {
 // Used by RestoreIMBridgePollers.
 func (db *DB) ListAllActiveChannels(provider string) ([]IMChannel, error) {
 	rows, err := db.Query(
-		`SELECT id, workspace_id, provider, bot_id, user_id, bot_token, base_url, cursor, require_mention, bound_at
+		`SELECT id, workspace_id, provider, bot_id, user_id, bot_token, base_url, cursor, require_mention, routing_mode, bound_at
 		FROM workspace_im_channels
 		WHERE provider = $1 AND bot_token IS NOT NULL`,
 		provider,
@@ -118,8 +125,8 @@ func (db *DB) ListAllActiveChannels(provider string) ([]IMChannel, error) {
 	var channels []IMChannel
 	for rows.Next() {
 		var c IMChannel
-		var botToken, baseURL, cursor *string
-		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.RequireMention, &c.BoundAt); err != nil {
+		var botToken, baseURL, cursor, routingMode *string
+		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.RequireMention, &routingMode, &c.BoundAt); err != nil {
 			return nil, err
 		}
 		if botToken != nil {
@@ -130,6 +137,9 @@ func (db *DB) ListAllActiveChannels(provider string) ([]IMChannel, error) {
 		}
 		if cursor != nil {
 			c.Cursor = *cursor
+		}
+		if routingMode != nil {
+			c.RoutingMode = *routingMode
 		}
 		channels = append(channels, c)
 	}
@@ -264,14 +274,14 @@ func (db *DB) GetSandboxForChannel(channelID string) (sandboxID, podIP, bridgeSe
 // Returns sql.ErrNoRows if the sandbox has no channel bound.
 func (db *DB) GetIMChannelForSandbox(sandboxID string) (*IMChannel, error) {
 	c := &IMChannel{}
-	var botToken, baseURL, cursor *string
+	var botToken, baseURL, cursor, routingMode *string
 	err := db.QueryRow(
-		`SELECT c.id, c.workspace_id, c.provider, c.bot_id, c.user_id, c.bot_token, c.base_url, c.cursor, c.require_mention, c.bound_at
+		`SELECT c.id, c.workspace_id, c.provider, c.bot_id, c.user_id, c.bot_token, c.base_url, c.cursor, c.require_mention, c.routing_mode, c.bound_at
 		FROM workspace_im_channels c
 		JOIN sandboxes s ON s.im_channel_id = c.id
 		WHERE s.id = $1`,
 		sandboxID,
-	).Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.RequireMention, &c.BoundAt)
+	).Scan(&c.ID, &c.WorkspaceID, &c.Provider, &c.BotID, &c.UserID, &botToken, &baseURL, &cursor, &c.RequireMention, &routingMode, &c.BoundAt)
 	if err != nil {
 		return nil, err
 	}
@@ -283,6 +293,9 @@ func (db *DB) GetIMChannelForSandbox(sandboxID string) (*IMChannel, error) {
 	}
 	if cursor != nil {
 		c.Cursor = *cursor
+	}
+	if routingMode != nil {
+		c.RoutingMode = *routingMode
 	}
 	return c, nil
 }
