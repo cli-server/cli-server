@@ -453,11 +453,26 @@ Full tool set exposed by the MCP server:
 | `remote_glob` | `executor_id`, `pattern`, `path` | File pattern search |
 | `remote_grep` | `executor_id`, `pattern`, `path`, `glob` | Content search |
 | `remote_ls` | `executor_id`, `path` | List directory |
+| `workspace_write` | `path`, `content` | Write file to workspace context (skills, instructions, memory) |
+| `workspace_read` | `path` | Read file from workspace context |
+| `workspace_ls` | `path` | List workspace context directory |
 | `create_scheduled_task` | `cron`, `prompt`, `recurring` | Create scheduled task on agentserver |
 | `list_scheduled_tasks` | | List workspace scheduled tasks |
 | `cancel_scheduled_task` | `task_id` | Cancel a scheduled task |
 
-### 5.3 Permission Enforcement
+### 5.3 Tool Routing Classification
+
+Not all MCP tools route to sandboxproxy. The Tool Router classifies tools by destination:
+
+| Tool Category | Destination | Examples |
+|---------------|-------------|----------|
+| **Executor tools** (`remote_*`) | sandboxproxy → executor | `remote_bash`, `remote_read`, `remote_edit`, `remote_write`, `remote_glob`, `remote_grep`, `remote_ls` |
+| **Workspace tools** | cc-broker local filesystem | `workspace_write`, `workspace_read`, `workspace_ls` |
+| **Discovery tools** | executor-registry | `list_executors` |
+| **Scheduling tools** | agentserver | `create_scheduled_task`, `list_scheduled_tasks`, `cancel_scheduled_task` |
+| **User interaction** | cc-broker → agentserver → IM | `AskUserQuestion` (Section 16.1) |
+
+### 5.4 Permission Enforcement
 
 ```go
 func (r *ToolRouter) HandleToolCall(ctx context.Context, req MCPToolCallRequest) (MCPToolResult, error) {
@@ -1249,7 +1264,105 @@ func (b *CCBroker) syncProjectInstructions(ctx context.Context, workspaceID, exe
 }
 ```
 
-### 15.6 Settings Configuration
+### 15.6 Workspace Context Tools
+
+CC's built-in file tools (Write, Edit, Read) are disabled and replaced by `remote_*` MCP tools that operate on remote executors. However, CC also needs to read and write its own workspace context — skills, CLAUDE.md, memory entries, etc. These files live in the local temp directory (downloaded from OpenViking) and are NOT on any remote executor.
+
+The Tool Router exposes workspace context tools for this purpose:
+
+```json
+[
+  {
+    "name": "workspace_write",
+    "description": "Write a file to the workspace context. Use for creating/editing skills, instructions (CLAUDE.md), memory entries, and other workspace-level files. Changes persist across sessions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path within workspace context, e.g. 'skills/my-skill/skill.md', 'CLAUDE.md', 'rules/coding-standards.md'"
+        },
+        "content": { "type": "string", "description": "File content to write" }
+      },
+      "required": ["path", "content"]
+    }
+  },
+  {
+    "name": "workspace_read",
+    "description": "Read a file from the workspace context (skills, instructions, memory).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Relative path within workspace context" }
+      },
+      "required": ["path"]
+    }
+  },
+  {
+    "name": "workspace_ls",
+    "description": "List files in a workspace context directory.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "default": "", "description": "Relative path, e.g. 'skills/' or 'rules/'" }
+      }
+    }
+  }
+]
+```
+
+These tools are handled directly by cc-broker (not routed to sandboxproxy or any executor). They read/write the CC worker's local temp directory:
+
+```go
+func (r *ToolRouter) HandleToolCall(ctx context.Context, req MCPToolCallRequest) (MCPToolResult, error) {
+    switch req.Name {
+    case "workspace_write":
+        path := filepath.Join(r.claudeConfigDir, req.Arguments["path"])
+        os.MkdirAll(filepath.Dir(path), 0755)
+        os.WriteFile(path, []byte(req.Arguments["content"]), 0644)
+        return MCPToolResult{Content: []ContentBlock{{Type: "text", Text: "Written successfully"}}}, nil
+
+    case "workspace_read":
+        path := filepath.Join(r.claudeConfigDir, req.Arguments["path"])
+        content, err := os.ReadFile(path)
+        // ...
+
+    case "workspace_ls":
+        path := filepath.Join(r.claudeConfigDir, req.Arguments["path"])
+        entries, err := os.ReadDir(path)
+        // ...
+    }
+}
+```
+
+After CC exits, changes are detected by the diff-upload step and persisted to OpenViking. The next CC worker for this workspace will download the updated context, including any new skills, modified instructions, or memory entries.
+
+**Example — creating a skill:**
+
+```
+User: "帮我写一个调用 nano banana pro 画图的 skill"
+
+CC Turn 1: WebSearch("nano banana pro API documentation")
+  ← API docs
+
+CC Turn 2: workspace_ls(path="skills/")
+  ← existing skills list
+
+CC Turn 3: workspace_write(
+    path="skills/nano-banana-pro/skill.md",
+    content="---\nname: nano-banana-pro\n...\n---\n\nGenerate images using..."
+  )
+  → cc-broker writes to local /tmp/cc-worker-xxx/claude-config/skills/nano-banana-pro/skill.md
+  ← "Written successfully"
+
+CC Turn 4: Reply "已创建 nano-banana-pro skill"
+
+CC exits → diff detects new file → upload to OpenViking
+  → viking://workspace/{wid}/claude-home/skills/nano-banana-pro/skill.md
+  → next CC worker will discover this skill natively
+```
+
+### 15.7 Settings Configuration (unchanged from earlier)
 
 The `settings.json` in OpenViking is pre-configured per workspace:
 
@@ -1628,7 +1741,7 @@ Comprehensive audit of all CC features against the stateless design:
 | Feature | Why It Works |
 |---------|-------------|
 | WebSearch / WebFetch | Preserved via `--tools "WebSearch,WebFetch"`; no executor needed |
-| Skills | FUSE-mounted `.claude/skills/`; CC discovers natively |
+| Skills | Downloaded to `.claude/skills/`; CC discovers natively; new skills created via `workspace_write` |
 | Auto-Memory | FUSE-mounted MEMORY.md; CC reads/writes natively |
 | CLAUDE.md | FUSE-mounted; full feature support (@include, frontmatter, rules) |
 | Context Compaction | Auto + reactive compaction functional; memory persists via FUSE |
