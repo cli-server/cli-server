@@ -14,6 +14,8 @@ type Config struct {
 	LogLevel            slog.Level
 	ExecutorRegistryURL string
 	AgentserverURL      string
+	OpenVikingURL       string
+	OpenVikingAPIKey    string
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -32,6 +34,8 @@ func LoadConfigFromEnv() (Config, error) {
 	cfg.JWTSecret = []byte(secret)
 	cfg.ExecutorRegistryURL = envOr("CCBROKER_EXECUTOR_REGISTRY_URL", "http://localhost:8084")
 	cfg.AgentserverURL = envOr("CCBROKER_AGENTSERVER_URL", "http://localhost:8080")
+	cfg.OpenVikingURL = envOr("CCBROKER_OPENVIKING_URL", "http://localhost:1933")
+	cfg.OpenVikingAPIKey = os.Getenv("CCBROKER_OPENVIKING_API_KEY")
 	if v := os.Getenv("CCBROKER_LOG_LEVEL"); v != "" {
 		switch strings.ToLower(v) {
 		case "debug":
