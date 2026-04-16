@@ -36,6 +36,10 @@ func (s *Server) Routes() http.Handler {
 
 	r.Post("/api/executors/register", s.handleRegister)
 	r.Post("/api/executors/sandbox", s.handleRegisterSandbox)
+	r.Put("/api/executors/{id}/heartbeat", s.handleHeartbeat)
+	r.Get("/api/executors", s.handleListExecutors)
+	r.Get("/api/executors/{id}", s.handleGetExecutor)
+	r.Put("/api/executors/{id}/capabilities", s.handleUpdateCapabilities)
 
 	return r
 }
