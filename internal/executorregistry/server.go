@@ -10,17 +10,19 @@ import (
 )
 
 type Server struct {
-	config Config
-	store  *Store
-	logger *slog.Logger
+	config  Config
+	store   *Store
+	tunnels *TunnelRegistry
+	logger  *slog.Logger
 }
 
 func NewServer(cfg Config, store *Store) *Server {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	return &Server{
-		config: cfg,
-		store:  store,
-		logger: logger,
+		config:  cfg,
+		store:   store,
+		tunnels: NewTunnelRegistry(),
+		logger:  logger,
 	}
 }
 
@@ -40,6 +42,7 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/api/executors", s.handleListExecutors)
 	r.Get("/api/executors/{id}", s.handleGetExecutor)
 	r.Put("/api/executors/{id}/capabilities", s.handleUpdateCapabilities)
+	r.Get("/api/tunnel/{executor_id}", s.handleTunnel)
 
 	return r
 }
