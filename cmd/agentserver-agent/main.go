@@ -27,6 +27,13 @@ var (
 	skipOpenBrowser bool
 	resumeID       string
 	continueFlag   bool
+
+	// Executor subcommand flags.
+	executorRegistryURL string
+	executorName        string
+	executorWorkspaceID string
+	executorSkipBrowser bool
+	executorWorkDir     string
 )
 
 var rootCmd = &cobra.Command{
@@ -270,8 +277,38 @@ var versionCmd = &cobra.Command{
 	},
 }
 
+var executorCmd = &cobra.Command{
+	Use:   "executor",
+	Short: "Run as a tool executor connected to executor-registry",
+	Long: `Registers with executor-registry and serves as a tool executor for
+stateless Claude Code. Workers in cc-broker dispatch remote_* tool calls
+to this machine via the executor-registry tunnel.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+			<-sigCh
+			cancel()
+		}()
+
+		err := agent.RunExecutor(ctx, agent.ExecutorOpts{
+			ServerURL:       executorRegistryURL,
+			Name:            executorName,
+			WorkspaceID:     executorWorkspaceID,
+			SkipOpenBrowser: executorSkipBrowser,
+			WorkDir:         executorWorkDir,
+		})
+		if err != nil && err != context.Canceled {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 func init() {
-	rootCmd.AddCommand(claudecodeCmd, loginCmd, listCmd, removeCmd, taskWorkerCmd, mcpServerCmd, versionCmd)
+	rootCmd.AddCommand(claudecodeCmd, loginCmd, listCmd, removeCmd, taskWorkerCmd, mcpServerCmd, versionCmd, executorCmd)
 
 	// Root command flags (default: headless Claude Code agent).
 	rootCmd.Flags().StringVar(&server, "server", "https://agent.cs.ac.cn", "Agent server URL")
@@ -306,6 +343,14 @@ func init() {
 	removeCmd.Flags().String("workspace", "", "Workspace ID of the agent to remove")
 	removeCmd.Flags().String("dir", "", "Directory of the agent to remove")
 	removeCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+
+	// Executor subcommand flags.
+	defaultName, _ := os.Hostname()
+	executorCmd.Flags().StringVar(&executorRegistryURL, "registry", "https://agent.cs.ac.cn", "executor-registry URL")
+	executorCmd.Flags().StringVar(&executorName, "name", defaultName, "display name for this executor")
+	executorCmd.Flags().StringVar(&executorWorkspaceID, "workspace-id", "", "workspace ID to register this executor under (required)")
+	executorCmd.Flags().BoolVar(&executorSkipBrowser, "skip-open-browser", false, "don't auto-open browser during auth")
+	executorCmd.Flags().StringVar(&executorWorkDir, "work-dir", "", "working directory for tool executions (default: current directory)")
 }
 
 func truncID(id string, n int) string {
