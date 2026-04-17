@@ -257,6 +257,41 @@ executorRegistry:
     pullPolicy: Always
   replicaCount: 1
   port: 8084
+
+# OpenViking (vendored subchart — charts/openviking/) provides per-workspace
+# context persistence for cc-broker workers: CLAUDE.md, auto-memory, skills,
+# settings.json. Enable alongside ccbroker.enabled to get a full-context flow.
+#
+# When enabled and ccbroker.openviking.url is left empty, cc-broker's URL is
+# auto-wired to the in-cluster service by the chart template.
+#
+# Set `openviking.config.server.root_api_key` AND
+# `ccbroker.openviking.apiKey` to the same value so cc-broker can authenticate.
+openviking:
+  enabled: false
+  # Upstream default image is ghcr.io/volcengine/openviking. Override here if
+  # you're pulling through a mirror registry.
+  image:
+    repository: ghcr.io/volcengine/openviking
+    pullPolicy: IfNotPresent
+    tag: ""
+  persistence:
+    enabled: true
+    # Leave empty to use the cluster default storage class, or set to match
+    # your environment (e.g. csi-rbd-sc).
+    storageClass: ""
+    size: 20Gi
+  service:
+    type: ClusterIP
+    port: 1933
+  # OpenViking server config (subset — see charts/openviking/values.yaml for
+  # the full list including embedding/VLM settings that cc-broker does not
+  # exercise and can safely be left blank).
+  config:
+    server:
+      # Required for auth. Generate one and set both this AND
+      # ccbroker.openviking.apiKey to the same value.
+      root_api_key: ""
   logLevel: info
   database:
     name: executorregistry

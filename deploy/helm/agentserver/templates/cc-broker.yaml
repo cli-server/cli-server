@@ -54,8 +54,9 @@ spec:
             - sh
             - -c
             - |
-              PGPASSWORD="$PG_PASSWORD" psql -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} -tc "SELECT 1 FROM pg_database WHERE datname='{{ .Values.ccbroker.database.name }}'" | grep -q 1 || \
-              PGPASSWORD="$PG_PASSWORD" createdb -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} {{ .Values.ccbroker.database.name }}
+              {{- $dbName := (dig "database" "name" "ccbroker" .Values.ccbroker) }}
+              PGPASSWORD="$PG_PASSWORD" psql -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} -tc "SELECT 1 FROM pg_database WHERE datname='{{ $dbName }}'" | grep -q 1 || \
+              PGPASSWORD="$PG_PASSWORD" createdb -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} {{ $dbName }}
           env:
             - name: PG_PASSWORD
               valueFrom:
@@ -89,13 +90,25 @@ spec:
               value: "http://{{ .Release.Name }}:{{ .Values.service.port }}"
             - name: CCBROKER_IMBRIDGE_URL
               value: "http://{{ .Release.Name }}-imbridge:{{ .Values.imbridge.port }}"
-            {{- if .Values.ccbroker.openviking.url }}
-            - name: CCBROKER_OPENVIKING_URL
-              value: {{ .Values.ccbroker.openviking.url | quote }}
+            {{/* Prefer the explicit ccbroker.openviking.url; otherwise, if
+                 the OpenViking subchart is enabled in this release, point at
+                 its in-cluster service DNS. `dig` keeps this nil-safe when
+                 an operator omits the nested `ccbroker.openviking` or
+                 top-level `openviking` blocks from their values override. */}}
+            {{- $ovURL := (dig "openviking" "url" "" .Values.ccbroker) }}
+            {{- $ovEnabled := (dig "enabled" false .Values.openviking) }}
+            {{- $ovPort := (dig "service" "port" 1933 .Values.openviking) }}
+            {{- if and (not $ovURL) $ovEnabled }}
+            {{- $ovURL = printf "http://%s-openviking:%v" .Release.Name (int $ovPort) }}
             {{- end }}
-            {{- if .Values.ccbroker.openviking.apiKey }}
+            {{- if $ovURL }}
+            - name: CCBROKER_OPENVIKING_URL
+              value: {{ $ovURL | quote }}
+            {{- end }}
+            {{- $ovAPIKey := (dig "openviking" "apiKey" "" .Values.ccbroker) }}
+            {{- if $ovAPIKey }}
             - name: CCBROKER_OPENVIKING_API_KEY
-              value: {{ .Values.ccbroker.openviking.apiKey | quote }}
+              value: {{ $ovAPIKey | quote }}
             {{- end }}
             {{- if .Values.ccbroker.logLevel }}
             - name: CCBROKER_LOG_LEVEL

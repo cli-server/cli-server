@@ -2,8 +2,8 @@ apiVersion: v2
 name: agentserver
 description: Run your coding agent in the browser — a self-hosted web interface for opencode
 type: application
-version: 0.39.0
-appVersion: "0.39.0"
+version: 0.40.0
+appVersion: "0.40.0"
 home: https://github.com/agentserver/agentserver
 sources:
   - https://github.com/agentserver/agentserver
@@ -17,3 +17,12 @@ keywords:
   - terminal
   - code-server
 icon: https://raw.githubusercontent.com/agentserver/agentserver/main/docs/icon.png
+# Vendored subcharts. OpenViking provides per-workspace context persistence
+# (CLAUDE.md / Memory / Skills / settings) for cc-broker's stateless CC workers.
+# See `charts/openviking/` — the chart is a verbatim copy of the upstream
+# OpenViking Helm chart; upgrade by replacing the directory.
+dependencies:
+  - name: openviking
+    version: 0.1.0
+    repository: ""
+    condition: openviking.enabled
