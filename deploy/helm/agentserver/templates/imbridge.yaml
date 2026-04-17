@@ -45,6 +45,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "agentserver.databaseSecretName" . }}
                   key: database-url
+            {{- if .Values.internal.apiSecret }}
+            - name: INTERNAL_API_SECRET
+              value: {{ .Values.internal.apiSecret | quote }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
