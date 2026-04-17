@@ -129,8 +129,11 @@ func TestRouteToIM_SendImage_URL(t *testing.T) {
 }
 
 func TestRouteToIM_SendImage_ExecutorPath(t *testing.T) {
-	imageBytes := []byte("pixels")
-	// Mock executor-registry — returns Read result base64-encoded.
+	// Non-UTF-8 bytes so we catch any string-round-trip corruption.
+	imageBytes := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe}
+	// Mock executor-registry — expects `Bash: base64 <path> | tr -d '\n'` and
+	// returns the base64-encoded file bytes as Output, mimicking what the
+	// real executor's Bash tool would produce.
 	execSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ExecutorID string                 `json:"executor_id"`
@@ -138,8 +141,15 @@ func TestRouteToIM_SendImage_ExecutorPath(t *testing.T) {
 			Arguments  map[string]interface{} `json:"arguments"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		if req.ExecutorID != "exe_dev" || req.Tool != "Read" {
+		if req.ExecutorID != "exe_dev" || req.Tool != "Bash" {
 			t.Errorf("wrong executor-registry call: %+v", req)
+		}
+		cmd, _ := req.Arguments["command"].(string)
+		if !strings.HasPrefix(cmd, "base64 ") || !strings.Contains(cmd, "tr -d") {
+			t.Errorf("expected `base64 ... | tr -d '\\n'` command, got %q", cmd)
+		}
+		if !strings.Contains(cmd, "'/tmp/cat.png'") {
+			t.Errorf("expected path to be shell-quoted, got %q", cmd)
 		}
 		resp := map[string]interface{}{
 			"output":    base64.StdEncoding.EncodeToString(imageBytes),
@@ -247,6 +257,48 @@ func TestResolveMediaSource_RejectsInvalidBase64(t *testing.T) {
 	_, err := router.resolveMediaSource(context.Background(), "!!!not-base64!!!")
 	if err == nil {
 		t.Fatalf("expected error for invalid base64")
+	}
+}
+
+func TestResolveMediaSource_ShellQuotesPathWithApostrophe(t *testing.T) {
+	// A filename with an apostrophe must not break the base64 command on
+	// the executor.
+	var gotCommand string
+	execSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Arguments map[string]interface{} `json:"arguments"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		gotCommand, _ = req.Arguments["command"].(string)
+		resp := map[string]interface{}{"output": base64.StdEncoding.EncodeToString([]byte("x")), "exit_code": 0}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer execSrv.Close()
+
+	router := newTestRouter("http://unused", execSrv.URL)
+	_, err := router.resolveMediaSource(context.Background(), "exe_dev:/tmp/don't.png")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(gotCommand, "'/tmp/don'\\''t.png'") {
+		t.Errorf("path not shell-safe: %q", gotCommand)
+	}
+}
+
+func TestFetchURL_RejectsOversize(t *testing.T) {
+	big := make([]byte, (20<<20)+1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(big)
+	}))
+	defer srv.Close()
+
+	router := newTestRouter("http://unused", "")
+	_, err := router.fetchURL(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatalf("expected error for oversize URL response")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("expected size-limit error, got: %v", err)
 	}
 }
 

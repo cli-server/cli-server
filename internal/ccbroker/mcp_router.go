@@ -312,7 +312,8 @@ func (r *ToolRouter) resolveMediaSource(ctx context.Context, source string) ([]b
 	return base64.StdEncoding.DecodeString(source)
 }
 
-// fetchURL GETs a URL and returns the body bytes. Caps the response at 20 MiB.
+// fetchURL GETs a URL and returns the body bytes. Rejects oversize responses
+// rather than silently truncating.
 func (r *ToolRouter) fetchURL(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -326,21 +327,40 @@ func (r *ToolRouter) fetchURL(ctx context.Context, url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GET %s returned %d", url, resp.StatusCode)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 20<<20))
+	const maxBytes = 20 << 20
+	// Read max+1 so a response that exactly fills max still reports truncation.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxBytes {
+		return nil, fmt.Errorf("source at %s exceeds %d byte limit", url, maxBytes)
+	}
+	return data, nil
 }
 
-// readFromExecutor executes a Read tool call on the executor and decodes the
-// base64-encoded bytes returned by the executor's Read handler.
+// readFromExecutor reads a file from the executor in a binary-safe way.
+//
+// The executor's Read tool returns `string(data)`, which is lossy for
+// non-UTF-8 bytes: the executor's JSON response goes through
+// encoding/json on the wire, which replaces invalid UTF-8 with U+FFFD.
+// Running `base64 | tr -d '\n'` on the executor and decoding client-side
+// preserves every byte of binary content.
 func (r *ToolRouter) readFromExecutor(ctx context.Context, executorID, filePath string) ([]byte, error) {
 	if r.executorRegistryURL == "" {
 		return nil, fmt.Errorf("executor-registry not configured")
 	}
+	// Shell-quote the path so crafted filenames (apostrophes, spaces, $()) can't
+	// alter the command.
+	quoted := "'" + strings.ReplaceAll(filePath, "'", "'\\''") + "'"
 	reqBody := map[string]interface{}{
 		"executor_id": executorID,
-		"tool":        "Read",
+		"tool":        "Bash",
 		"arguments": map[string]interface{}{
-			"file_path": filePath,
-			"binary":    true,
+			// `tr -d '\n'` strips the default 76-column wrapping that GNU
+			// base64 adds, so the result is a single clean base64 string
+			// portable across GNU and BSD base64 implementations.
+			"command": "base64 " + quoted + " | tr -d '\\n'",
 		},
 	}
 	buf, _ := json.Marshal(reqBody)
@@ -367,15 +387,13 @@ func (r *ToolRouter) readFromExecutor(ctx context.Context, executorID, filePath 
 		return nil, fmt.Errorf("decode executor response: %w", err)
 	}
 	if out.ExitCode != 0 {
-		return nil, fmt.Errorf("executor Read failed: %s", out.Output)
+		return nil, fmt.Errorf("base64 %s on executor failed: %s", filePath, strings.TrimSpace(out.Output))
 	}
-	// For binary reads the executor currently returns the raw file bytes as
-	// Output. Attempt a base64 decode first (forward-compat with a future
-	// binary-safe Read); if that fails, fall back to the raw string bytes.
-	if decoded, err := base64.StdEncoding.DecodeString(out.Output); err == nil && len(decoded) > 0 {
-		return decoded, nil
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(out.Output))
+	if err != nil {
+		return nil, fmt.Errorf("decode base64 from executor: %w", err)
 	}
-	return []byte(out.Output), nil
+	return decoded, nil
 }
 
 // routeToScheduler handles scheduling-related tools (*_scheduled_*).

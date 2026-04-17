@@ -213,6 +213,11 @@ func (s *Server) handleImbridgeDirectSend(w http.ResponseWriter, r *http.Request
 // AI-generated image while bounding memory use per request.
 const maxDirectSendImageBytes = 20 << 20
 
+// maxDirectSendImageRequestBytes bounds the raw request body before JSON
+// decode. A 20 MiB image base64-encodes to ~26.67 MiB; the extra headroom
+// covers JSON overhead and the other fields.
+const maxDirectSendImageRequestBytes = 32 << 20
+
 // handleImbridgeDirectSendImage sends an image to an IM user without a
 // sandbox binding. Parallel to handleImbridgeDirectSend but carries
 // base64-encoded image bytes. Auth via INTERNAL_API_SECRET.
@@ -224,6 +229,11 @@ func (s *Server) handleImbridgeDirectSendImage(w http.ResponseWriter, r *http.Re
 		}
 	}
 
+	// Cap the raw body before JSON decode so we never buffer an unbounded
+	// request. MaxBytesReader returns an error from subsequent Reads once
+	// the limit is exceeded, which Decode will surface.
+	r.Body = http.MaxBytesReader(w, r.Body, maxDirectSendImageRequestBytes)
+
 	var req struct {
 		ChannelID   string `json:"channel_id"`
 		ToUserID    string `json:"to_user_id"`
@@ -232,18 +242,11 @@ func (s *Server) handleImbridgeDirectSendImage(w http.ResponseWriter, r *http.Re
 		Caption     string `json:"caption,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		http.Error(w, "invalid or oversized request body", http.StatusBadRequest)
 		return
 	}
 	if req.ChannelID == "" || req.ToUserID == "" || req.ImageBase64 == "" {
 		http.Error(w, "channel_id, to_user_id, and image_base64 are required", http.StatusBadRequest)
-		return
-	}
-
-	// Reject oversize payloads before spending CPU on base64 decode.
-	// Base64 expands bytes by ~4/3, so cap the encoded length accordingly.
-	if len(req.ImageBase64) > ((maxDirectSendImageBytes/3)+1)*4+16 {
-		http.Error(w, "image exceeds 20 MiB limit", http.StatusRequestEntityTooLarge)
 		return
 	}
 
