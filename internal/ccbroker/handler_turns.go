@@ -62,12 +62,20 @@ func (s *Server) handleProcessTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insert user message as an event.
+	// Insert user message as an event. The payload follows the Claude Code
+	// SDK's SDKUserMessage shape (type:"user", message:{role,content},
+	// parent_tool_use_id, session_id) — CC parses events from the bridge
+	// event-stream against this structure. A simpler `{type, content}`
+	// payload is silently ignored by CC and the turn runs with no user input.
 	eventUUID := uuid.NewString()
-	payload, _ := json.Marshal(map[string]string{
-		"uuid":    eventUUID,
-		"type":    "user",
-		"content": req.UserMessage,
+	payload, _ := json.Marshal(map[string]interface{}{
+		"type": "user",
+		"message": map[string]interface{}{
+			"role":    "user",
+			"content": req.UserMessage,
+		},
+		"parent_tool_use_id": nil,
+		"session_id":         req.SessionID,
 	})
 	_, err = s.store.InsertEvents(r.Context(), req.SessionID, epoch, []EventInput{
 		{

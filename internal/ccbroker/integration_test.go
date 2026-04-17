@@ -144,12 +144,24 @@ func TestEventBatchAndReplay(t *testing.T) {
 	sessionID := createSession(t, srv, "ws_test", "Event Test")
 	bridge := attachBridge(t, srv, sessionID)
 
-	// 2. POST events with JWT auth
+	// 2. POST events with JWT auth. Payload uses CC's SDKUserMessage shape
+	// plus a `uuid` field — cc-broker's handleWorkerEvents extracts the
+	// dedup key from payload.uuid. (Real CC events don't carry uuid; that's
+	// a known limitation of the current bridge dedup model.)
 	eventsReq := map[string]any{
 		"worker_epoch": 1,
 		"events": []map[string]any{
 			{
-				"payload":   map[string]any{"uuid": "evt1", "type": "user", "content": "hello"},
+				"payload": map[string]any{
+					"uuid": "evt1",
+					"type": "user",
+					"message": map[string]any{
+						"role":    "user",
+						"content": "hello",
+					},
+					"parent_tool_use_id": nil,
+					"session_id":         sessionID,
+				},
 				"ephemeral": false,
 			},
 		},
@@ -189,7 +201,16 @@ func TestEpochMismatch(t *testing.T) {
 		"worker_epoch": 99,
 		"events": []map[string]any{
 			{
-				"payload":   map[string]any{"uuid": "evt_wrong", "type": "user", "content": "oops"},
+				"payload": map[string]any{
+					"uuid": "evt_wrong",
+					"type": "user",
+					"message": map[string]any{
+						"role":    "user",
+						"content": "oops",
+					},
+					"parent_tool_use_id": nil,
+					"session_id":         sessionID,
+				},
 				"ephemeral": false,
 			},
 		},
