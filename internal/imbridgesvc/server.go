@@ -52,6 +52,7 @@ func (s *Server) Routes() http.Handler {
 	// Internal API: agentserver sends IM replies for stateless CC sessions
 	// (auth via X-Internal-Secret shared secret).
 	r.Post("/api/internal/imbridge/send", s.handleImbridgeDirectSend)
+	r.Post("/api/internal/imbridge/send-image", s.handleImbridgeDirectSendImage)
 
 	// Authenticated API routes (cookie auth).
 	r.Group(func(r chi.Router) {

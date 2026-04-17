@@ -88,10 +88,24 @@ func (s *Server) processWithCCBroker(ctx context.Context, session *db.AgentSessi
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
+	// Extract to_user_id from chat_jid (e.g., "user123@im.wechat" → "user123")
+	// and resolve the channel ID once, up-front, so the turn request and the
+	// final reply both carry the same IM context.
+	toUserID := msg.ChatJID
+	if idx := strings.Index(toUserID, "@"); idx > 0 {
+		toUserID = toUserID[:idx]
+	}
+	channelID := msg.ChannelID
+	if session != nil && session.IMChannelID != nil && *session.IMChannelID != "" {
+		channelID = *session.IMChannelID
+	}
+
 	body, _ := json.Marshal(map[string]interface{}{
-		"session_id":   session.ID,
-		"workspace_id": session.WorkspaceID,
-		"user_message": msg.Content,
+		"session_id":    session.ID,
+		"workspace_id":  session.WorkspaceID,
+		"user_message":  msg.Content,
+		"im_channel_id": channelID,
+		"im_user_id":    toUserID,
 	})
 
 	req, err := http.NewRequestWithContext(ctx, "POST", s.CCBrokerURL+"/api/turns", bytes.NewReader(body))
@@ -116,17 +130,6 @@ func (s *Server) processWithCCBroker(ctx context.Context, session *db.AgentSessi
 		return
 	}
 
-	// Extract to_user_id from chat_jid (e.g., "user123@im.wechat" → "user123").
-	toUserID := msg.ChatJID
-	if idx := strings.Index(toUserID, "@"); idx > 0 {
-		toUserID = toUserID[:idx]
-	}
-
-	// Use channel_id from session if available, falling back to the inbound message.
-	channelID := msg.ChannelID
-	if session != nil && session.IMChannelID != nil && *session.IMChannelID != "" {
-		channelID = *session.IMChannelID
-	}
 	if channelID == "" {
 		log.Printf("im_inbound: no IM channel for session %s, dropping reply", session.ID)
 		return

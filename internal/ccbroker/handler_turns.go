@@ -11,10 +11,16 @@ import (
 )
 
 // ProcessTurnRequest is the external API request body for POST /api/turns.
+//
+// IMChannelID and IMUserID are optional. When set (for turns originated by an
+// IM inbound) the cc-broker ToolRouter can route send_* MCP tool calls back
+// through imbridge to the originating IM channel / user.
 type ProcessTurnRequest struct {
 	SessionID   string `json:"session_id"`
 	WorkspaceID string `json:"workspace_id"`
 	UserMessage string `json:"user_message"`
+	IMChannelID string `json:"im_channel_id,omitempty"`
+	IMUserID    string `json:"im_user_id,omitempty"`
 }
 
 // handleProcessTurn handles POST /api/turns. It acquires the turn lock for
@@ -76,7 +82,7 @@ func (s *Server) handleProcessTurn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Spawn CC worker.
-	worker, err := s.SpawnWorker(r.Context(), req.SessionID, req.WorkspaceID)
+	worker, err := s.SpawnWorker(r.Context(), req.SessionID, req.WorkspaceID, req.IMChannelID, req.IMUserID)
 	if err != nil {
 		s.logger.Error("spawn worker failed", "session_id", req.SessionID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to spawn worker")

@@ -2,6 +2,7 @@ package imbridgesvc
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -200,6 +201,97 @@ func (s *Server) handleImbridgeDirectSend(w http.ResponseWriter, r *http.Request
 		log.Printf("imbridge direct send: failed channel=%s provider=%s to=%s: %v",
 			channel.ID, provider.Name(), req.ToUserID, err)
 		http.Error(w, "failed to send message", http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "sent"})
+}
+
+// maxDirectSendImageBytes caps the decoded image payload size for the
+// direct send-image endpoint. 20 MiB covers any reasonable screenshot or
+// AI-generated image while bounding memory use per request.
+const maxDirectSendImageBytes = 20 << 20
+
+// maxDirectSendImageRequestBytes bounds the raw request body before JSON
+// decode. A 20 MiB image base64-encodes to ~26.67 MiB; the extra headroom
+// covers JSON overhead and the other fields.
+const maxDirectSendImageRequestBytes = 32 << 20
+
+// handleImbridgeDirectSendImage sends an image to an IM user without a
+// sandbox binding. Parallel to handleImbridgeDirectSend but carries
+// base64-encoded image bytes. Auth via INTERNAL_API_SECRET.
+func (s *Server) handleImbridgeDirectSendImage(w http.ResponseWriter, r *http.Request) {
+	if secret := os.Getenv("INTERNAL_API_SECRET"); secret != "" {
+		if r.Header.Get("X-Internal-Secret") != secret {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	// Cap the raw body before JSON decode so we never buffer an unbounded
+	// request. MaxBytesReader returns an error from subsequent Reads once
+	// the limit is exceeded, which Decode will surface.
+	r.Body = http.MaxBytesReader(w, r.Body, maxDirectSendImageRequestBytes)
+
+	var req struct {
+		ChannelID   string `json:"channel_id"`
+		ToUserID    string `json:"to_user_id"`
+		ImageBase64 string `json:"image_base64"`
+		Format      string `json:"format,omitempty"`
+		Caption     string `json:"caption,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid or oversized request body", http.StatusBadRequest)
+		return
+	}
+	if req.ChannelID == "" || req.ToUserID == "" || req.ImageBase64 == "" {
+		http.Error(w, "channel_id, to_user_id, and image_base64 are required", http.StatusBadRequest)
+		return
+	}
+
+	data, err := base64.StdEncoding.DecodeString(req.ImageBase64)
+	if err != nil {
+		http.Error(w, "invalid image_base64: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(data) > maxDirectSendImageBytes {
+		http.Error(w, "image exceeds 20 MiB limit", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	channel, err := s.db.GetIMChannel(req.ChannelID)
+	if err != nil {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	}
+
+	provider := s.bridge.GetProvider(channel.Provider)
+	if provider == nil {
+		http.Error(w, "unknown IM provider: "+channel.Provider, http.StatusBadRequest)
+		return
+	}
+
+	isp, ok := provider.(imbridge.ImageSendProvider)
+	if !ok {
+		http.Error(w, "image sending not supported for provider: "+provider.Name(),
+			http.StatusNotImplemented)
+		return
+	}
+
+	s.bridge.StopTyping(channel.ID, req.ToUserID)
+
+	creds := &imbridge.Credentials{
+		ChannelID: channel.ID,
+		BotID:     channel.BotID,
+		BotToken:  channel.BotToken,
+		BaseURL:   channel.BaseURL,
+	}
+
+	if err := isp.SendImage(r.Context(), creds, req.ToUserID, data, req.Caption); err != nil {
+		log.Printf("imbridge direct send-image: failed channel=%s provider=%s to=%s: %v",
+			channel.ID, provider.Name(), req.ToUserID, err)
+		http.Error(w, "failed to send image", http.StatusBadGateway)
 		return
 	}
 

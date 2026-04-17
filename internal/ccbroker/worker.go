@@ -78,8 +78,10 @@ func diffSnapshot(dir string, old map[string]fileInfo) []fileChange {
 }
 
 // SpawnWorker sets up a temporary workspace, downloads files from OpenViking,
-// starts an MCP server, and launches a Claude Code worker process.
-func (s *Server) SpawnWorker(ctx context.Context, sessionID, workspaceID string) (*CCWorker, error) {
+// starts an MCP server, and launches a Claude Code worker process. imChannelID
+// and imUserID are optional — populated when the turn was originated by an IM
+// inbound so the MCP server can route send_* tool calls back through imbridge.
+func (s *Server) SpawnWorker(ctx context.Context, sessionID, workspaceID, imChannelID, imUserID string) (*CCWorker, error) {
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
 		return nil, fmt.Errorf("ANTHROPIC_API_KEY environment variable is not set")
@@ -126,7 +128,7 @@ func (s *Server) SpawnWorker(ctx context.Context, sessionID, workspaceID string)
 	snapshot := takeFileSnapshot(claudeDir)
 
 	// 5. Start MCP server.
-	_, mcpPort, mcpCloser, err := s.CreateMCPServer(sessionID, workspaceID, claudeDir)
+	_, mcpPort, mcpCloser, err := s.CreateMCPServer(sessionID, workspaceID, claudeDir, imChannelID, imUserID)
 	if err != nil {
 		os.RemoveAll(tempDir)
 		return nil, fmt.Errorf("create MCP server: %w", err)

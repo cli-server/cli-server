@@ -16,6 +16,8 @@ type Config struct {
 	AgentserverURL      string
 	OpenVikingURL       string
 	OpenVikingAPIKey    string
+	IMBridgeURL         string
+	IMBridgeSecret      string
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -36,6 +38,8 @@ func LoadConfigFromEnv() (Config, error) {
 	cfg.AgentserverURL = envOr("CCBROKER_AGENTSERVER_URL", "http://localhost:8080")
 	cfg.OpenVikingURL = envOr("CCBROKER_OPENVIKING_URL", "http://localhost:1933")
 	cfg.OpenVikingAPIKey = os.Getenv("CCBROKER_OPENVIKING_API_KEY")
+	cfg.IMBridgeURL = os.Getenv("CCBROKER_IMBRIDGE_URL")
+	cfg.IMBridgeSecret = os.Getenv("INTERNAL_API_SECRET")
 	if v := os.Getenv("CCBROKER_LOG_LEVEL"); v != "" {
 		switch strings.ToLower(v) {
 		case "debug":

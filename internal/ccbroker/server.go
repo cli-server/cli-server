@@ -68,13 +68,17 @@ func (s *Server) Routes() http.Handler {
 
 // CreateMCPServer creates a per-worker MCP server and returns (server, port, closer, error).
 // The caller should call closer() to stop the MCP server when done.
-func (s *Server) CreateMCPServer(sessionID, workspaceID, workspaceDir string) (*MCPServer, int, func(), error) {
+func (s *Server) CreateMCPServer(sessionID, workspaceID, workspaceDir, imChannelID, imUserID string) (*MCPServer, int, func(), error) {
 	router := NewToolRouter(ToolRouterConfig{
 		ExecutorRegistryURL: s.config.ExecutorRegistryURL,
 		AgentserverURL:      s.config.AgentserverURL,
+		IMBridgeURL:         s.config.IMBridgeURL,
+		IMBridgeSecret:      s.config.IMBridgeSecret,
 		WorkspaceDir:        workspaceDir,
 		SessionID:           sessionID,
 		WorkspaceID:         workspaceID,
+		IMChannelID:         imChannelID,
+		IMUserID:            imUserID,
 	}, s.logger)
 
 	mcpSrv := NewMCPServer(router, s.logger)
