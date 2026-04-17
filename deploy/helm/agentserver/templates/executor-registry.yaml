@@ -1,0 +1,107 @@
+{{- if .Values.executorRegistry.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-executor-registry-secret
+  labels:
+    app: {{ .Release.Name }}-executor-registry
+type: Opaque
+stringData:
+  database-url: {{ include "agentserver.executorRegistryDatabaseUrl" . | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-executor-registry
+  labels:
+    app: {{ .Release.Name }}-executor-registry
+spec:
+  replicas: {{ .Values.executorRegistry.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-executor-registry
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-executor-registry
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      initContainers:
+        {{- if .Values.postgresql.enabled }}
+        - name: wait-for-postgresql
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h {{ .Release.Name }}-postgresql -p 5432 -U {{ .Values.postgresql.auth.username }}; do
+                echo "Waiting for PostgreSQL to be ready..."
+                sleep 2
+              done
+        - name: create-executor-registry-database
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              PGPASSWORD="$PG_PASSWORD" psql -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} -tc "SELECT 1 FROM pg_database WHERE datname='{{ .Values.executorRegistry.database.name }}'" | grep -q 1 || \
+              PGPASSWORD="$PG_PASSWORD" createdb -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} {{ .Values.executorRegistry.database.name }}
+          env:
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-postgresql
+                  key: POSTGRES_PASSWORD
+        {{- end }}
+      containers:
+        - name: executor-registry
+          image: "{{ .Values.executorRegistry.image.repository }}:{{ .Values.executorRegistry.image.tag }}"
+          imagePullPolicy: {{ .Values.executorRegistry.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.executorRegistry.port }}
+              name: http
+              protocol: TCP
+          env:
+            - name: EXECREG_PORT
+              value: {{ .Values.executorRegistry.port | quote }}
+            - name: EXECREG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-executor-registry-secret
+                  key: database-url
+            {{- if .Values.executorRegistry.logLevel }}
+            - name: EXECREG_LOG_LEVEL
+              value: {{ .Values.executorRegistry.logLevel | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.executorRegistry.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.executorRegistry.port }}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          {{- with .Values.executorRegistry.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-executor-registry
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.executorRegistry.port }}
+      targetPort: {{ .Values.executorRegistry.port }}
+      protocol: TCP
+      name: http
+  selector:
+    app: {{ .Release.Name }}-executor-registry
+{{- end }}

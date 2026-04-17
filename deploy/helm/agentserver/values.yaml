@@ -209,6 +209,60 @@ credentialproxy:
   # Override database URL (defaults to shared agentserver database).
   externalDatabaseUrl: ""
 
+# Shared secret used on all internal service-to-service calls:
+#   agentserver → imbridge, imbridge → agentserver, cc-broker → imbridge.
+# When empty, internal endpoints fall open (no auth); set this in production.
+internal:
+  apiSecret: ""
+
+# cc-broker: runs Claude Code workers on demand and exposes the bridge +
+# MCP server used by stateless-CC sessions.
+ccbroker:
+  enabled: false
+  image:
+    repository: ghcr.io/agentserver/cc-broker
+    tag: latest
+    pullPolicy: Always
+  replicaCount: 1
+  port: 8085
+  logLevel: info
+  # Secret used to sign per-turn worker JWTs. Generated at install time if
+  # left empty; supply your own for stable values across re-installs.
+  jwtSecret: ""
+  database:
+    # Database name inside the shared PostgreSQL instance (ignored when
+    # externalUrl is set).
+    name: ccbroker
+    # Full DSN; overrides the shared PostgreSQL helper when set.
+    externalUrl: ""
+  # OpenViking provides per-workspace context persistence (CLAUDE.md, Memory,
+  # Skills, settings). When both fields are empty, cc-broker will start but
+  # workers will run without workspace context — fine for basic text chat,
+  # but skills/memory/CLAUDE.md won't persist.
+  openviking:
+    url: ""
+    apiKey: ""
+  # Spawned CC workers need Anthropic credentials. They're read from the
+  # shared agentserver secret (see `models.anthropicApiKey` /
+  # `models.anthropicBaseUrl` / `models.anthropicAuthToken` above).
+  resources: {}
+
+# executor-registry: tracks local tool-executor agents and routes remote_*
+# tool calls to them over WebSocket + yamux tunnels.
+executorRegistry:
+  enabled: false
+  image:
+    repository: ghcr.io/agentserver/executor-registry
+    tag: latest
+    pullPolicy: Always
+  replicaCount: 1
+  port: 8084
+  logLevel: info
+  database:
+    name: executorregistry
+    externalUrl: ""
+  resources: {}
+
 service:
   type: ClusterIP
   port: 8080

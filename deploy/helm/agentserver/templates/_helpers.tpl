@@ -39,3 +39,29 @@ postgres://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.pas
 {{ .Release.Name }}-secret
 {{- end -}}
 {{- end -}}
+
+{{/*
+Construct the cc-broker DATABASE_URL.
+- Shared PG: same instance, separate database (default: ccbroker)
+- External: ccbroker.database.externalUrl
+*/}}
+{{- define "agentserver.ccbrokerDatabaseUrl" -}}
+{{- if .Values.ccbroker.database.externalUrl -}}
+{{ .Values.ccbroker.database.externalUrl }}
+{{- else -}}
+postgres://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}@{{ .Release.Name }}-postgresql:5432/{{ .Values.ccbroker.database.name }}?sslmode=disable
+{{- end -}}
+{{- end -}}
+
+{{/*
+Construct the executor-registry DATABASE_URL.
+- Shared PG: same instance, separate database (default: executorregistry)
+- External: executorRegistry.database.externalUrl
+*/}}
+{{- define "agentserver.executorRegistryDatabaseUrl" -}}
+{{- if .Values.executorRegistry.database.externalUrl -}}
+{{ .Values.executorRegistry.database.externalUrl }}
+{{- else -}}
+postgres://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}@{{ .Release.Name }}-postgresql:5432/{{ .Values.executorRegistry.database.name }}?sslmode=disable
+{{- end -}}
+{{- end -}}

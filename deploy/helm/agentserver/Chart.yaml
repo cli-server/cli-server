@@ -2,8 +2,8 @@ apiVersion: v2
 name: agentserver
 description: Run your coding agent in the browser — a self-hosted web interface for opencode
 type: application
-version: 0.38.1
-appVersion: "0.38.1"
+version: 0.39.0
+appVersion: "0.39.0"
 home: https://github.com/agentserver/agentserver
 sources:
   - https://github.com/agentserver/agentserver

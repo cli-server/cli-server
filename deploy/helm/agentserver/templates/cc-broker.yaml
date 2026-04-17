@@ -1,0 +1,156 @@
+{{- if .Values.ccbroker.enabled }}
+{{- $existingSecret := (lookup "v1" "Secret" .Release.Namespace (printf "%s-ccbroker-secret" .Release.Name)) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-ccbroker-secret
+  labels:
+    app: {{ .Release.Name }}-ccbroker
+type: Opaque
+stringData:
+  database-url: {{ include "agentserver.ccbrokerDatabaseUrl" . | quote }}
+  {{- if .Values.ccbroker.jwtSecret }}
+  jwt-secret: {{ .Values.ccbroker.jwtSecret | quote }}
+  {{- else if $existingSecret }}
+  jwt-secret: {{ index $existingSecret.data "jwt-secret" | b64dec | quote }}
+  {{- else }}
+  jwt-secret: {{ randAlphaNum 48 | quote }}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-ccbroker
+  labels:
+    app: {{ .Release.Name }}-ccbroker
+spec:
+  replicas: {{ .Values.ccbroker.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-ccbroker
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-ccbroker
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      initContainers:
+        {{- if .Values.postgresql.enabled }}
+        - name: wait-for-postgresql
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h {{ .Release.Name }}-postgresql -p 5432 -U {{ .Values.postgresql.auth.username }}; do
+                echo "Waiting for PostgreSQL to be ready..."
+                sleep 2
+              done
+        - name: create-ccbroker-database
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              PGPASSWORD="$PG_PASSWORD" psql -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} -tc "SELECT 1 FROM pg_database WHERE datname='{{ .Values.ccbroker.database.name }}'" | grep -q 1 || \
+              PGPASSWORD="$PG_PASSWORD" createdb -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} {{ .Values.ccbroker.database.name }}
+          env:
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-postgresql
+                  key: POSTGRES_PASSWORD
+        {{- end }}
+      containers:
+        - name: cc-broker
+          image: "{{ .Values.ccbroker.image.repository }}:{{ .Values.ccbroker.image.tag }}"
+          imagePullPolicy: {{ .Values.ccbroker.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.ccbroker.port }}
+              protocol: TCP
+          env:
+            - name: CCBROKER_PORT
+              value: {{ .Values.ccbroker.port | quote }}
+            - name: CCBROKER_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-ccbroker-secret
+                  key: database-url
+            - name: CCBROKER_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-ccbroker-secret
+                  key: jwt-secret
+            - name: CCBROKER_EXECUTOR_REGISTRY_URL
+              value: "http://{{ .Release.Name }}-executor-registry:{{ .Values.executorRegistry.port }}"
+            - name: CCBROKER_AGENTSERVER_URL
+              value: "http://{{ .Release.Name }}:{{ .Values.service.port }}"
+            - name: CCBROKER_IMBRIDGE_URL
+              value: "http://{{ .Release.Name }}-imbridge:{{ .Values.imbridge.port }}"
+            {{- if .Values.ccbroker.openviking.url }}
+            - name: CCBROKER_OPENVIKING_URL
+              value: {{ .Values.ccbroker.openviking.url | quote }}
+            {{- end }}
+            {{- if .Values.ccbroker.openviking.apiKey }}
+            - name: CCBROKER_OPENVIKING_API_KEY
+              value: {{ .Values.ccbroker.openviking.apiKey | quote }}
+            {{- end }}
+            {{- if .Values.ccbroker.logLevel }}
+            - name: CCBROKER_LOG_LEVEL
+              value: {{ .Values.ccbroker.logLevel | quote }}
+            {{- end }}
+            {{- if .Values.internal.apiSecret }}
+            - name: INTERNAL_API_SECRET
+              value: {{ .Values.internal.apiSecret | quote }}
+            {{- end }}
+            # Anthropic credentials come from the shared agentserver secret so
+            # there is a single source of truth (`models.anthropicApiKey`).
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: anthropic-api-key
+                  optional: true
+            - name: ANTHROPIC_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: anthropic-base-url
+                  optional: true
+            - name: ANTHROPIC_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secret
+                  key: anthropic-auth-token
+                  optional: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.ccbroker.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.ccbroker.port }}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          {{- with .Values.ccbroker.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-ccbroker
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.ccbroker.port }}
+      targetPort: {{ .Values.ccbroker.port }}
+      protocol: TCP
+  selector:
+    app: {{ .Release.Name }}-ccbroker
+{{- end }}
