@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -110,39 +109,7 @@ func (s *Server) processWithCCBroker(ctx context.Context, session *db.AgentSessi
 
 	// Read SSE stream from cc-broker — events are persisted by cc-broker itself.
 	// We just need to wait for completion and extract the final text response.
-	var finalResponse string
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-
-		var event map[string]interface{}
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			continue
-		}
-
-		// Check for done event
-		if eventType, _ := event["event_type"].(string); eventType == "done" {
-			break
-		}
-
-		// Extract text from assistant messages for IM reply.
-		// CC events have nested payload; look for text content.
-		if payload, ok := event["payload"]; ok {
-			payloadMap, _ := payload.(map[string]interface{})
-			if payloadMap != nil {
-				// Look for assistant message with text content
-				if msgType, _ := payloadMap["type"].(string); msgType == "assistant" {
-					if content, ok := payloadMap["content"].(string); ok {
-						finalResponse = content
-					}
-				}
-			}
-		}
-	}
+	finalResponse := extractFinalText(resp.Body)
 
 	// Reply to IM via imbridge.
 	if finalResponse == "" {
