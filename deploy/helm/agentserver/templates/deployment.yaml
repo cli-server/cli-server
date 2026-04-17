@@ -181,6 +181,14 @@ spec:
             {{- end }}
             - name: IMBRIDGE_URL
               value: {{ printf "http://%s-imbridge.%s.svc:%v" .Release.Name .Release.Namespace (int .Values.imbridge.port) | quote }}
+            {{- if .Values.ccbroker.enabled }}
+            - name: CC_BROKER_URL
+              value: {{ printf "http://%s-ccbroker.%s.svc:%v" .Release.Name .Release.Namespace (int .Values.ccbroker.port) | quote }}
+            {{- end }}
+            {{- if .Values.internal.apiSecret }}
+            - name: INTERNAL_API_SECRET
+              value: {{ .Values.internal.apiSecret | quote }}
+            {{- end }}
             - name: OPENCODE_SUBDOMAIN_PREFIX
               value: {{ .Values.sandbox.opencode.subdomainPrefix | default "code" | quote }}
             - name: OPENCLAW_SUBDOMAIN_PREFIX
