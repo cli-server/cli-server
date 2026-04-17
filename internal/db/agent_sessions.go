@@ -19,6 +19,7 @@ type AgentSession struct {
 	Status      string
 	Epoch       int
 	Tags        []string
+	IMChannelID *string // set when session is created from an IM inbound message
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	ArchivedAt  sql.NullTime
@@ -63,11 +64,11 @@ func (db *DB) CreateAgentSession(id string, sandboxID *string, workspaceID, titl
 func (db *DB) GetAgentSession(id string) (*AgentSession, error) {
 	s := &AgentSession{}
 	var tags pq.StringArray
-	var sandboxID *string
+	var sandboxID, imChannelID *string
 	err := db.QueryRow(
-		`SELECT id, sandbox_id, workspace_id, title, status, epoch, tags, created_at, updated_at, archived_at
+		`SELECT id, sandbox_id, workspace_id, title, status, epoch, tags, im_channel_id, created_at, updated_at, archived_at
 		 FROM agent_sessions WHERE id = $1`, id,
-	).Scan(&s.ID, &sandboxID, &s.WorkspaceID, &s.Title, &s.Status, &s.Epoch, &tags, &s.CreatedAt, &s.UpdatedAt, &s.ArchivedAt)
+	).Scan(&s.ID, &sandboxID, &s.WorkspaceID, &s.Title, &s.Status, &s.Epoch, &tags, &imChannelID, &s.CreatedAt, &s.UpdatedAt, &s.ArchivedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -75,6 +76,7 @@ func (db *DB) GetAgentSession(id string) (*AgentSession, error) {
 		return nil, err
 	}
 	s.SandboxID = sandboxID
+	s.IMChannelID = imChannelID
 	s.Tags = tags
 	return s, nil
 }
@@ -308,12 +310,12 @@ func (db *DB) GetAgentSessionInternalEventsSince(sessionID string, sinceID int64
 func (db *DB) GetSessionByExternalID(ctx context.Context, workspaceID, externalID string) (*AgentSession, error) {
 	s := &AgentSession{}
 	var tags pq.StringArray
-	var sandboxID *string
+	var sandboxID, imChannelID *string
 	err := db.QueryRowContext(ctx,
-		`SELECT id, sandbox_id, workspace_id, title, status, epoch, tags, created_at, updated_at, archived_at
+		`SELECT id, sandbox_id, workspace_id, title, status, epoch, tags, im_channel_id, created_at, updated_at, archived_at
 		 FROM agent_sessions WHERE workspace_id = $1 AND external_id = $2`,
 		workspaceID, externalID,
-	).Scan(&s.ID, &sandboxID, &s.WorkspaceID, &s.Title, &s.Status, &s.Epoch, &tags, &s.CreatedAt, &s.UpdatedAt, &s.ArchivedAt)
+	).Scan(&s.ID, &sandboxID, &s.WorkspaceID, &s.Title, &s.Status, &s.Epoch, &tags, &imChannelID, &s.CreatedAt, &s.UpdatedAt, &s.ArchivedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -321,6 +323,7 @@ func (db *DB) GetSessionByExternalID(ctx context.Context, workspaceID, externalI
 		return nil, err
 	}
 	s.SandboxID = sandboxID
+	s.IMChannelID = imChannelID
 	s.Tags = tags
 	return s, nil
 }
@@ -330,6 +333,17 @@ func (db *DB) SetSessionExternalID(ctx context.Context, sessionID, externalID st
 	_, err := db.ExecContext(ctx,
 		`UPDATE agent_sessions SET external_id = $1 WHERE id = $2`,
 		externalID, sessionID,
+	)
+	return err
+}
+
+// SetSessionIMChannel sets the im_channel_id for a session.
+// Called when a session is created from an inbound IM message so that
+// CC's response can later be routed back to the correct channel.
+func (db *DB) SetSessionIMChannel(ctx context.Context, sessionID, channelID string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE agent_sessions SET im_channel_id = $1 WHERE id = $2`,
+		channelID, sessionID,
 	)
 	return err
 }

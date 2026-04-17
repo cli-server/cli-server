@@ -49,6 +49,10 @@ func (s *Server) Routes() http.Handler {
 	r.Post("/api/internal/imbridge/pollers/{sandboxId}/restore", s.handleRestorePollers)
 	r.Post("/api/internal/imbridge/pollers/{channelId}/stop", s.handleStopPoller)
 
+	// Internal API: agentserver sends IM replies for stateless CC sessions
+	// (auth via X-Internal-Secret shared secret).
+	r.Post("/api/internal/imbridge/send", s.handleImbridgeDirectSend)
+
 	// Authenticated API routes (cookie auth).
 	r.Group(func(r chi.Router) {
 		r.Use(s.auth.Middleware)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -137,6 +138,69 @@ func (s *Server) handleNanoclawIMSend(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to send message", http.StatusBadGateway)
 			return
 		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "sent"})
+}
+
+// ---------------------------------------------------------------------------
+// Stateless CC outbound messages (POST /api/internal/imbridge/send)
+// ---------------------------------------------------------------------------
+
+// handleImbridgeDirectSend sends a text message to an IM user without a
+// sandbox binding. Used by agentserver's stateless CC flow to route CC
+// responses back to the originating IM user. Authenticated via the
+// INTERNAL_API_SECRET shared secret.
+func (s *Server) handleImbridgeDirectSend(w http.ResponseWriter, r *http.Request) {
+	if secret := os.Getenv("INTERNAL_API_SECRET"); secret != "" {
+		if r.Header.Get("X-Internal-Secret") != secret {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	var req struct {
+		ChannelID string `json:"channel_id"`
+		ToUserID  string `json:"to_user_id"`
+		Text      string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ChannelID == "" || req.ToUserID == "" || req.Text == "" {
+		http.Error(w, "channel_id, to_user_id, and text are required", http.StatusBadRequest)
+		return
+	}
+
+	channel, err := s.db.GetIMChannel(req.ChannelID)
+	if err != nil {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	}
+
+	provider := s.bridge.GetProvider(channel.Provider)
+	if provider == nil {
+		http.Error(w, "unknown IM provider: "+channel.Provider, http.StatusBadRequest)
+		return
+	}
+
+	meta, _ := s.db.GetAllChannelMeta(channel.ID, req.ToUserID)
+	s.bridge.StopTyping(channel.ID, req.ToUserID)
+
+	creds := &imbridge.Credentials{
+		ChannelID: channel.ID,
+		BotID:     channel.BotID,
+		BotToken:  channel.BotToken,
+		BaseURL:   channel.BaseURL,
+	}
+
+	if err := provider.Send(r.Context(), creds, req.ToUserID, req.Text, meta); err != nil {
+		log.Printf("imbridge direct send: failed channel=%s provider=%s to=%s: %v",
+			channel.ID, provider.Name(), req.ToUserID, err)
+		http.Error(w, "failed to send message", http.StatusBadGateway)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
