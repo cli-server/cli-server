@@ -851,6 +851,7 @@ func (s *Server) handleListWorkspaceIMChannels(w http.ResponseWriter, r *http.Re
 		BotID          string `json:"bot_id"`
 		UserID         string `json:"user_id,omitempty"`
 		RequireMention bool   `json:"require_mention"`
+		RoutingMode    string `json:"routing_mode"`
 		BoundAt        string `json:"bound_at"`
 	}
 	resp := make([]channelResp, 0, len(channels))
@@ -861,6 +862,7 @@ func (s *Server) handleListWorkspaceIMChannels(w http.ResponseWriter, r *http.Re
 			BotID:          ch.BotID,
 			UserID:         ch.UserID,
 			RequireMention: ch.RequireMention,
+			RoutingMode:    ch.RoutingMode,
 			BoundAt:        ch.BoundAt.Format(time.RFC3339),
 		})
 	}

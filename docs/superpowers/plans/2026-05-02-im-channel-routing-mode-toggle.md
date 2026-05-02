@@ -495,6 +495,52 @@ on the next inbound message."
 
 ---
 
+### Task 3.2: 扩展 list handler 的 `channelResp` JSON 结构
+
+**Files:**
+- Modify: `internal/imbridgesvc/handlers.go` (~line 848 `handleListWorkspaceIMChannels`)
+
+Without this change, `GET /api/workspaces/{wid}/im/channels` omits `routing_mode` from the response and the frontend `<select>` falls back to `nanoclaw` on every refetch, making the Phase 4 toggle appear broken.
+
+- [ ] **Step 1: Extend `channelResp` struct to include `RoutingMode`**
+
+把：
+
+```go
+	type channelResp struct {
+		ID             string `json:"id"`
+		Provider       string `json:"provider"`
+		BotID          string `json:"bot_id"`
+		UserID         string `json:"user_id,omitempty"`
+		RequireMention bool   `json:"require_mention"`
+		BoundAt        string `json:"bound_at"`
+	}
+```
+
+改为：
+
+```go
+	type channelResp struct {
+		ID             string `json:"id"`
+		Provider       string `json:"provider"`
+		BotID          string `json:"bot_id"`
+		UserID         string `json:"user_id,omitempty"`
+		RequireMention bool   `json:"require_mention"`
+		RoutingMode    string `json:"routing_mode"`
+		BoundAt        string `json:"bound_at"`
+	}
+```
+
+并在其下方 for-loop 的 `resp = append(resp, channelResp{...})` 里添加 `RoutingMode: ch.RoutingMode,`。
+
+- [ ] **Step 2: 编译验证**
+
+`cd /root/agentserver && go build ./internal/imbridgesvc/...` — 0 errors.
+
+- [ ] **Step 3: Commit**（可和 Task 3.1 合并为同一个 commit，或独立 commit 均可）
+
+---
+
 ## Phase 4 — Frontend
 
 ### Task 4.1: 扩展 `IMChannel` 接口 + `updateWorkspaceIMChannel` 参数

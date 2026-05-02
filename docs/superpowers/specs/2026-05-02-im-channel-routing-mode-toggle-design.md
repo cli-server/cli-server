@@ -144,6 +144,10 @@ if req.RoutingMode != nil {
 
 Existing checks (`requireWorkspaceMember`, workspace ownership) cover this new branch without changes.
 
+### 3.3b imbridgesvc List Handler
+
+`handleListWorkspaceIMChannels` (in the same file) renders each channel through an inline `channelResp` struct that is also used as the JSON shape for `GET /api/workspaces/{wid}/im/channels`. Extend it with `RoutingMode string `json:"routing_mode"`` and populate it from `ch.RoutingMode` during the append. Without this, the frontend `<select>` value cannot be hydrated after a refetch and the toggle appears to revert on every page load.
+
 ### 3.4 Frontend (`web/src/`)
 
 **`lib/api.ts`**
