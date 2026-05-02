@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	agentsdk "github.com/agentserver/claude-agent-sdk-go"
 
@@ -31,7 +33,7 @@ func Run(
 	cfg Config,
 	mcp *agentsdk.McpSdkServer,
 ) (<-chan agentsdk.SDKMessage, error) {
-	spec := BuildSpec(ws, sessionID, cfg)
+	spec := BuildSpec(ws, sessionID, cfg, sessionJSONLExists(ws, sessionID))
 	spec.McpServer = mcp
 
 	sess, err := newV1Session(ctx, spec.ToOptions())
@@ -56,6 +58,25 @@ func Run(
 		}
 	}()
 	return out, nil
+}
+
+// sessionJSONLExists checks whether a Claude CLI session jsonl for the
+// given sessionID is already on disk under ws.ClaudeDir. The CLI stores
+// session files at <CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/<UUID>.jsonl,
+// where <encoded-cwd> is derived from the worker's Cwd via a CLI-internal
+// transformation we do not replicate here. A glob over all encoded-cwd
+// subdirectories matches whichever one the CLI would compute, since each
+// turn's Cwd is deterministic for a given sessionID.
+//
+// Returns true → caller must use --resume; false → caller must use
+// --session-id (the two flags are mutually exclusive in the CLI).
+func sessionJSONLExists(ws *workspace.Workspace, sessionID string) bool {
+	bare := strings.TrimPrefix(sessionID, "cse_")
+	if bare == "" {
+		return false
+	}
+	matches, _ := filepath.Glob(filepath.Join(ws.ClaudeDir, "projects", "*", bare+".jsonl"))
+	return len(matches) > 0
 }
 
 // v1Session is the agentsdk.Client-based adapter for the stable V1 SDK API.

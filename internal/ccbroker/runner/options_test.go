@@ -23,10 +23,13 @@ func TestBuildSpec(t *testing.T) {
 		DisableFileCheckpointing: true,
 		AutoCompactWindow:        165000,
 	}
-	spec := BuildSpec(ws, "cse_abc", cfg)
+	spec := BuildSpec(ws, "cse_abc", cfg, false)
 
-	if spec.Resume != "abc" {
-		t.Errorf("Resume=%q want abc (cse_ prefix stripped for CLI compatibility)", spec.Resume)
+	if spec.SessionUUID != "abc" {
+		t.Errorf("SessionUUID=%q want abc (cse_ prefix stripped for CLI compatibility)", spec.SessionUUID)
+	}
+	if spec.SessionExists {
+		t.Errorf("SessionExists must be false when caller indicated no jsonl present")
 	}
 	if spec.Cwd != ws.ProjectDir {
 		t.Errorf("Cwd=%q want %s", spec.Cwd, ws.ProjectDir)
@@ -86,7 +89,7 @@ func TestBuildSpec_PrefersAPIKeyWhenBothSet(t *testing.T) {
 		AnthropicAPIKey:    "key-1",
 		AnthropicAuthToken: "tok-2",
 	}
-	spec := BuildSpec(ws, "sid", cfg)
+	spec := BuildSpec(ws, "sid", cfg, false)
 
 	if spec.Env["ANTHROPIC_API_KEY"] != "key-1" {
 		t.Errorf("API_KEY not forwarded")

@@ -37,8 +37,15 @@ type Config struct {
 // the Claude SDK for one turn." It exists so tests can assert exactly what we
 // would have asked the SDK to do, without depending on the SDK's unexported
 // queryConfig. ToOptions() translates a Spec into an agentsdk option slice.
+//
+// Session lifecycle: the Claude CLI requires distinct flags for "create a
+// new session with this UUID" (--session-id) versus "continue an existing
+// session" (--resume). They are mutually exclusive: --session-id rejects
+// IDs that already have a jsonl on disk, --resume rejects IDs that don't.
+// runner.Run inspects ws.ClaudeDir before BuildSpec to decide.
 type Spec struct {
-	Resume                          string
+	SessionUUID                     string // bare UUID (cse_ prefix already stripped)
+	SessionExists                   bool   // true → --resume, false → --session-id
 	Cwd                             string
 	Env                             map[string]string
 	SystemPrompt                    string
@@ -51,8 +58,10 @@ type Spec struct {
 }
 
 // BuildSpec composes a Spec from workspace + sessionID + config. Pure.
-// Mirrors §2 of the design spec.
-func BuildSpec(ws *workspace.Workspace, sessionID string, cfg Config) Spec {
+// Mirrors §2 of the design spec. sessionExists must be true iff a session
+// jsonl for this UUID is already present in ws.ClaudeDir (caller checks via
+// filepath.Glob before invoking).
+func BuildSpec(ws *workspace.Workspace, sessionID string, cfg Config, sessionExists bool) Spec {
 	env := map[string]string{
 		"CLAUDE_CONFIG_DIR":                  ws.ClaudeDir,
 		"CLAUDE_COWORK_MEMORY_PATH_OVERRIDE": ws.MemoryDir,
@@ -73,8 +82,9 @@ func BuildSpec(ws *workspace.Workspace, sessionID string, cfg Config) Spec {
 		env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = strconv.Itoa(cfg.AutoCompactWindow)
 	}
 	return Spec{
-		Resume:       cliResumeID(sessionID),
-		Cwd:          ws.ProjectDir,
+		SessionUUID:   cliResumeID(sessionID),
+		SessionExists: sessionExists,
+		Cwd:           ws.ProjectDir,
 		Env:          env,
 		SystemPrompt: cfg.SystemPrompt,
 		AllowedTools: []string{"WebSearch", "WebFetch", "mcp__cc-broker__*"},
@@ -93,11 +103,20 @@ func BuildSpec(ws *workspace.Workspace, sessionID string, cfg Config) Spec {
 // callers usually build the MCP tools after BuildSpec.
 func (s Spec) ToOptions() []agentsdk.QueryOption {
 	opts := []agentsdk.QueryOption{
-		agentsdk.WithResume(s.Resume),
 		agentsdk.WithCwd(s.Cwd),
 		agentsdk.WithEnv(s.Env),
 		agentsdk.WithSystemPrompt(s.SystemPrompt),
 		agentsdk.WithAllowedTools(s.AllowedTools...),
+	}
+	if s.SessionUUID != "" {
+		// --session-id rejects already-existing IDs; --resume rejects missing
+		// ones. They are exclusive: pick exactly one based on whether the
+		// session jsonl was present after Setup downloaded from OpenViking.
+		if s.SessionExists {
+			opts = append(opts, agentsdk.WithResume(s.SessionUUID))
+		} else {
+			opts = append(opts, agentsdk.WithSessionID(s.SessionUUID))
+		}
 	}
 	if len(s.DisallowedTools) > 0 {
 		opts = append(opts, agentsdk.WithDisallowedTools(s.DisallowedTools...))
