@@ -10,6 +10,11 @@ RUN pnpm build
 # Stage 2: Build opencode frontend from submodule
 FROM oven/bun:1 AS opencode-frontend
 WORKDIR /app
+# python3 + g++ + make are needed by node-gyp to build native addons pulled
+# by opencode (e.g. tree-sitter-powershell) during `bun install`.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
 COPY opencode/ ./
 RUN bun install --frozen-lockfile
 RUN bun run --filter=@opencode-ai/app build
