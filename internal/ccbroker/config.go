@@ -10,7 +10,6 @@ import (
 type Config struct {
 	Port                string
 	DatabaseURL         string
-	JWTSecret           []byte
 	LogLevel            slog.Level
 	ExecutorRegistryURL string
 	AgentserverURL      string
@@ -29,11 +28,6 @@ func LoadConfigFromEnv() (Config, error) {
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("CCBROKER_DATABASE_URL is required")
 	}
-	secret := os.Getenv("CCBROKER_JWT_SECRET")
-	if secret == "" {
-		return cfg, fmt.Errorf("CCBROKER_JWT_SECRET is required (32+ chars)")
-	}
-	cfg.JWTSecret = []byte(secret)
 	cfg.ExecutorRegistryURL = envOr("CCBROKER_EXECUTOR_REGISTRY_URL", "http://localhost:8084")
 	cfg.AgentserverURL = envOr("CCBROKER_AGENTSERVER_URL", "http://localhost:8080")
 	cfg.OpenVikingURL = envOr("CCBROKER_OPENVIKING_URL", "http://localhost:1933")
