@@ -57,6 +57,15 @@ func TestBuildSpec(t *testing.T) {
 			t.Errorf("AllowedTools[%d]=%q want %q", i, spec.AllowedTools[i], w)
 		}
 	}
+	wantDisallowed := []string{"Bash", "Read", "Edit", "Write", "Glob", "Grep", "LS", "Task", "BashOutput", "KillShell", "NotebookEdit"}
+	if len(spec.DisallowedTools) != len(wantDisallowed) {
+		t.Fatalf("DisallowedTools=%v want %v", spec.DisallowedTools, wantDisallowed)
+	}
+	for i, w := range wantDisallowed {
+		if spec.DisallowedTools[i] != w {
+			t.Errorf("DisallowedTools[%d]=%q want %q", i, spec.DisallowedTools[i], w)
+		}
+	}
 	if !spec.PermissionBypass {
 		t.Errorf("PermissionBypass must be true")
 	}
