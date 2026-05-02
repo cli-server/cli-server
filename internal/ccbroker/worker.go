@@ -140,10 +140,14 @@ func (s *Server) SpawnWorker(ctx context.Context, sessionID, workspaceID, imChan
 	}
 
 	// 6. Write MCP config JSON to a temp file.
+	// Claude Code's MCP schema requires an explicit transport "type" — omitting
+	// it causes the CLI to reject the server entry with "Does not adhere to MCP
+	// server configuration schema" on startup.
 	mcpConfig := map[string]interface{}{
 		"mcpServers": map[string]interface{}{
 			"cc-broker": map[string]interface{}{
-				"url": fmt.Sprintf("http://127.0.0.1:%d", mcpPort),
+				"type": "http",
+				"url":  fmt.Sprintf("http://127.0.0.1:%d", mcpPort),
 			},
 		},
 	}
