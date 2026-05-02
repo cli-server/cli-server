@@ -25,8 +25,8 @@ func TestBuildSpec(t *testing.T) {
 	}
 	spec := BuildSpec(ws, "cse_abc", cfg)
 
-	if spec.Resume != "cse_abc" {
-		t.Errorf("Resume=%q want cse_abc", spec.Resume)
+	if spec.Resume != "abc" {
+		t.Errorf("Resume=%q want abc (cse_ prefix stripped for CLI compatibility)", spec.Resume)
 	}
 	if spec.Cwd != ws.ProjectDir {
 		t.Errorf("Cwd=%q want %s", spec.Cwd, ws.ProjectDir)

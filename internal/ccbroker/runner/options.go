@@ -2,11 +2,24 @@ package runner
 
 import (
 	"strconv"
+	"strings"
 
 	agentsdk "github.com/agentserver/claude-agent-sdk-go"
 
 	"github.com/agentserver/agentserver/internal/ccbroker/workspace"
 )
+
+// cliResumeID strips the cc-broker session-ID prefix to give the Claude CLI
+// the bare UUID it expects from --resume. agentserver assigns session IDs
+// like "cse_<UUID>" (per its own protocol); the CLI rejects anything that
+// is not a valid UUID with:
+//
+//   Error: --resume requires a valid session ID or session title when used
+//   with --print. Provided value "cse_..." is not a UUID and does not match
+//   any session title.
+func cliResumeID(sessionID string) string {
+	return strings.TrimPrefix(sessionID, "cse_")
+}
 
 // Config holds the broker-level configuration relevant to spawning a CC worker.
 // All fields are populated from cc-broker's process env at startup.
@@ -60,7 +73,7 @@ func BuildSpec(ws *workspace.Workspace, sessionID string, cfg Config) Spec {
 		env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = strconv.Itoa(cfg.AutoCompactWindow)
 	}
 	return Spec{
-		Resume:       sessionID,
+		Resume:       cliResumeID(sessionID),
 		Cwd:          ws.ProjectDir,
 		Env:          env,
 		SystemPrompt: cfg.SystemPrompt,
