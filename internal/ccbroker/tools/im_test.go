@@ -9,10 +9,12 @@ import (
 	"testing"
 )
 
-func TestSendMessage_PostsToAgentserver(t *testing.T) {
+func TestSendMessage_PostsToIMBridge(t *testing.T) {
 	var captured map[string]any
+	var gotPath string
 	var gotSecret string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
 		gotSecret = r.Header.Get("X-Internal-Secret")
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &captured)
@@ -24,17 +26,20 @@ func TestSendMessage_PostsToAgentserver(t *testing.T) {
 	tctx := &Context{
 		IMChannelID:       "ch1",
 		IMUserID:          "u1",
-		AgentserverURL:    srv.URL,
+		IMBridgeURL:       srv.URL,
 		InternalAPISecret: "topsecret",
 		HTTP:              http.DefaultClient,
 	}
 	tool := byName(imTools(tctx), "send_message")
 	r, _ := tool.Handler(context.Background(),
-		json.RawMessage(`{"text":"hello","sender":"bot"}`))
+		json.RawMessage(`{"text":"hello"}`))
 	if r.IsError {
 		t.Fatalf("IsError: %v", r.Content)
 	}
-	if captured["channel_id"] != "ch1" || captured["user_id"] != "u1" || captured["kind"] != "text" {
+	if gotPath != "/api/internal/imbridge/send" {
+		t.Errorf("path=%q want /api/internal/imbridge/send", gotPath)
+	}
+	if captured["channel_id"] != "ch1" || captured["to_user_id"] != "u1" || captured["text"] != "hello" {
 		t.Errorf("unexpected body: %v", captured)
 	}
 	if gotSecret != "topsecret" {
@@ -42,12 +47,42 @@ func TestSendMessage_PostsToAgentserver(t *testing.T) {
 	}
 }
 
-func TestSendMessage_NoIMContext(t *testing.T) {
-	tctx := &Context{HTTP: http.DefaultClient} // no IMChannelID/IMUserID
+func TestSendMessage_NoIMBridgeURL(t *testing.T) {
+	tctx := &Context{
+		IMChannelID: "ch1",
+		IMUserID:    "u1",
+		HTTP:        http.DefaultClient,
+		// IMBridgeURL intentionally empty
+	}
 	tool := byName(imTools(tctx), "send_message")
 	r, _ := tool.Handler(context.Background(),
 		json.RawMessage(`{"text":"hello"}`))
 	if !r.IsError {
-		t.Errorf("expected IsError when not invoked from an IM turn")
+		t.Errorf("expected IsError when IMBridgeURL is not configured")
+	}
+}
+
+func TestSendMessage_EmptyText(t *testing.T) {
+	tctx := &Context{
+		IMChannelID: "ch1",
+		IMUserID:    "u1",
+		IMBridgeURL: "http://imbridge.example",
+		HTTP:        http.DefaultClient,
+	}
+	tool := byName(imTools(tctx), "send_message")
+	r, _ := tool.Handler(context.Background(),
+		json.RawMessage(`{"text":""}`))
+	if !r.IsError {
+		t.Errorf("expected IsError when text is empty")
+	}
+}
+
+func TestSendFile_ReturnsError(t *testing.T) {
+	tctx := &Context{HTTP: http.DefaultClient}
+	tool := byName(imTools(tctx), "send_file")
+	r, _ := tool.Handler(context.Background(),
+		json.RawMessage(`{"source":"x","filename":"x.txt"}`))
+	if !r.IsError {
+		t.Errorf("expected IsError for send_file (not yet supported)")
 	}
 }

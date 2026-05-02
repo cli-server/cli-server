@@ -15,6 +15,7 @@ type Context struct {
 	IMUserID            string
 	ExecutorRegistryURL string
 	AgentserverURL      string
+	IMBridgeURL         string
 	InternalAPISecret   string
 	Workspace           *workspace.Workspace // for workspace_* tools
 	Viking              *workspace.VikingClient
