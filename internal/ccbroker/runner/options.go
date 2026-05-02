@@ -30,6 +30,7 @@ type Spec struct {
 	Env                             map[string]string
 	SystemPrompt                    string
 	AllowedTools                    []string
+	DisallowedTools                 []string
 	PermissionBypass                bool
 	AllowDangerouslySkipPermissions bool
 	MaxTurns                        int
@@ -59,11 +60,15 @@ func BuildSpec(ws *workspace.Workspace, sessionID string, cfg Config) Spec {
 		env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = strconv.Itoa(cfg.AutoCompactWindow)
 	}
 	return Spec{
-		Resume:                          sessionID,
-		Cwd:                             ws.ProjectDir,
-		Env:                             env,
-		SystemPrompt:                    cfg.SystemPrompt,
-		AllowedTools:                    []string{"WebSearch", "WebFetch", "mcp__cc-broker__*"},
+		Resume:       sessionID,
+		Cwd:          ws.ProjectDir,
+		Env:          env,
+		SystemPrompt: cfg.SystemPrompt,
+		AllowedTools: []string{"WebSearch", "WebFetch", "mcp__cc-broker__*"},
+		DisallowedTools: []string{
+			"Bash", "Read", "Edit", "Write", "Glob", "Grep", "LS",
+			"Task", "BashOutput", "KillShell", "NotebookEdit",
+		},
 		PermissionBypass:                true,
 		AllowDangerouslySkipPermissions: true,
 		MaxTurns:                        cfg.MaxTurns,
@@ -80,6 +85,9 @@ func (s Spec) ToOptions() []agentsdk.QueryOption {
 		agentsdk.WithEnv(s.Env),
 		agentsdk.WithSystemPrompt(s.SystemPrompt),
 		agentsdk.WithAllowedTools(s.AllowedTools...),
+	}
+	if len(s.DisallowedTools) > 0 {
+		opts = append(opts, agentsdk.WithDisallowedTools(s.DisallowedTools...))
 	}
 	if s.PermissionBypass {
 		opts = append(opts, agentsdk.WithPermissionMode(agentsdk.PermissionBypassAll))
