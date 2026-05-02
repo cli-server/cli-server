@@ -82,9 +82,14 @@ func diffSnapshot(dir string, old map[string]fileInfo) []fileChange {
 // and imUserID are optional — populated when the turn was originated by an IM
 // inbound so the MCP server can route send_* tool calls back through imbridge.
 func (s *Server) SpawnWorker(ctx context.Context, sessionID, workspaceID, imChannelID, imUserID string) (*CCWorker, error) {
+	// Claude Code supports two auth paths: ANTHROPIC_API_KEY for direct
+	// Anthropic access, or ANTHROPIC_AUTH_TOKEN (optionally with
+	// ANTHROPIC_BASE_URL) for third-party API gateways. Accept either.
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY environment variable is not set")
+	authToken := os.Getenv("ANTHROPIC_AUTH_TOKEN")
+	baseURL := os.Getenv("ANTHROPIC_BASE_URL")
+	if apiKey == "" && authToken == "" {
+		return nil, fmt.Errorf("neither ANTHROPIC_API_KEY nor ANTHROPIC_AUTH_TOKEN is set")
 	}
 
 	// 1. Create temp dir structure.
@@ -174,12 +179,21 @@ func (s *Server) SpawnWorker(ctx context.Context, sessionID, workspaceID, imChan
 	cmd.Env = []string{
 		"CLAUDE_CONFIG_DIR=" + claudeDir,
 		"CLAUDE_COWORK_MEMORY_PATH_OVERRIDE=" + memoryDir,
-		"ANTHROPIC_API_KEY=" + apiKey,
 		"CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING=1",
 		"CLAUDE_CODE_AUTO_COMPACT_WINDOW=165000",
 		"HOME=" + tempDir,
 		"PATH=" + os.Getenv("PATH"),
 		"TERM=xterm-256color",
+	}
+	// Forward whichever Anthropic credentials the broker was started with.
+	if apiKey != "" {
+		cmd.Env = append(cmd.Env, "ANTHROPIC_API_KEY="+apiKey)
+	}
+	if authToken != "" {
+		cmd.Env = append(cmd.Env, "ANTHROPIC_AUTH_TOKEN="+authToken)
+	}
+	if baseURL != "" {
+		cmd.Env = append(cmd.Env, "ANTHROPIC_BASE_URL="+baseURL)
 	}
 
 	// 9. Start the process.
