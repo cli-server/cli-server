@@ -37,76 +37,13 @@ type StreamClientEvent struct {
 	CreatedAt   string          `json:"created_at"`
 }
 
-type WorkerJWTClaims struct {
-	SessionID   string `json:"sid"`
-	WorkspaceID string `json:"wid"`
-	Epoch       int    `json:"epoch"`
-	Exp         int64  `json:"exp"`
-}
-
-type BridgeResponse struct {
-	WorkerJWT   string `json:"worker_jwt"`
-	APIBaseURL  string `json:"api_base_url"`
-	ExpiresIn   int    `json:"expires_in"`
-	WorkerEpoch int    `json:"worker_epoch"`
-}
-
-type EventBatchRequest struct {
-	WorkerEpoch int              `json:"worker_epoch"`
-	Events      []EventBatchItem `json:"events"`
-}
-
-type EventBatchItem struct {
-	Payload   json.RawMessage `json:"payload"`
-	Ephemeral bool            `json:"ephemeral"`
-}
-
-type InternalEventBatchRequest struct {
-	WorkerEpoch int                      `json:"worker_epoch"`
-	Events      []InternalEventBatchItem `json:"events"`
-}
-
-type InternalEventBatchItem struct {
-	Payload      json.RawMessage `json:"payload"`
-	IsCompaction bool            `json:"is_compaction"`
-	AgentID      string          `json:"agent_id,omitempty"`
-}
-
-type WorkerStateRequest struct {
-	WorkerStatus          string          `json:"worker_status"`
-	WorkerEpoch           int             `json:"worker_epoch"`
-	ExternalMetadata      json.RawMessage `json:"external_metadata,omitempty"`
-	RequiresActionDetails json.RawMessage `json:"requires_action_details,omitempty"`
-}
-
-type HeartbeatRequest struct {
-	WorkerEpoch int `json:"worker_epoch"`
-}
-
 type EventInput struct {
 	EventID   string
 	Payload   json.RawMessage
 	Ephemeral bool
 }
 
-type InternalEventInput struct {
-	EventType    string
-	Payload      json.RawMessage
-	IsCompaction bool
-	AgentID      string
-}
-
 type InsertedEvent struct {
 	SeqNum  int64
 	EventID string
-}
-
-type Worker struct {
-	SessionID             string
-	Epoch                 int
-	State                 string
-	ExternalMetadata      json.RawMessage
-	RequiresActionDetails json.RawMessage
-	LastHeartbeatAt       *time.Time
-	RegisteredAt          time.Time
 }

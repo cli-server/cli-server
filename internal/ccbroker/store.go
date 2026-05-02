@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -194,129 +193,6 @@ func (s *Store) InsertEvents(ctx context.Context, sessionID string, epoch int, e
 		return nil, fmt.Errorf("commit insert events: %w", err)
 	}
 	return inserted, nil
-}
-
-// GetEventsSince returns events with sequence number > sinceSeqNum.
-func (s *Store) GetEventsSince(ctx context.Context, sessionID string, sinceSeqNum int64, limit int) ([]SessionEvent, error) {
-	rows, err := s.QueryContext(ctx,
-		`SELECT id, session_id, event_id, event_type, source, epoch, payload, ephemeral, created_at
-		 FROM agent_session_events
-		 WHERE session_id = $1 AND id > $2
-		 ORDER BY id ASC
-		 LIMIT $3`,
-		sessionID, sinceSeqNum, limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("get events since: %w", err)
-	}
-	defer rows.Close()
-
-	var events []SessionEvent
-	for rows.Next() {
-		var e SessionEvent
-		if err := rows.Scan(&e.ID, &e.SessionID, &e.EventID, &e.EventType, &e.Source, &e.Epoch, &e.Payload, &e.Ephemeral, &e.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan event: %w", err)
-		}
-		events = append(events, e)
-	}
-	return events, rows.Err()
-}
-
-// InsertInternalEvents inserts a batch of internal events.
-func (s *Store) InsertInternalEvents(ctx context.Context, sessionID string, events []InternalEventInput) error {
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO agent_session_internal_events (session_id, event_type, payload, is_compaction, agent_id)
-		 VALUES ($1, $2, $3, $4, $5)`,
-	)
-	if err != nil {
-		return fmt.Errorf("prepare insert internal events: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, e := range events {
-		agentID := sql.NullString{String: e.AgentID, Valid: e.AgentID != ""}
-		if _, err := stmt.ExecContext(ctx, sessionID, e.EventType, e.Payload, e.IsCompaction, agentID); err != nil {
-			return fmt.Errorf("insert internal event: %w", err)
-		}
-	}
-
-	return tx.Commit()
-}
-
-// GetInternalEventsSince returns internal events with id > sinceID.
-func (s *Store) GetInternalEventsSince(ctx context.Context, sessionID string, sinceID int64, limit int) ([]SessionEvent, error) {
-	rows, err := s.QueryContext(ctx,
-		`SELECT id, event_type, payload, is_compaction, COALESCE(agent_id, ''), created_at
-		 FROM agent_session_internal_events
-		 WHERE session_id = $1 AND id > $2
-		 ORDER BY id ASC LIMIT $3`,
-		sessionID, sinceID, limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("get internal events since: %w", err)
-	}
-	defer rows.Close()
-
-	var events []SessionEvent
-	for rows.Next() {
-		var e SessionEvent
-		var isCompaction bool
-		var agentID string
-		if err := rows.Scan(&e.ID, &e.EventType, &e.Payload, &isCompaction, &agentID, &e.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan internal event: %w", err)
-		}
-		e.SessionID = sessionID
-		e.Source = "internal"
-		events = append(events, e)
-	}
-	return events, rows.Err()
-}
-
-// UpsertWorker inserts or updates a worker registration.
-func (s *Store) UpsertWorker(ctx context.Context, sessionID string, epoch int) error {
-	_, err := s.ExecContext(ctx,
-		`INSERT INTO agent_session_workers (session_id, epoch)
-		 VALUES ($1, $2)
-		 ON CONFLICT (session_id, epoch) DO UPDATE SET registered_at = NOW()`,
-		sessionID, epoch,
-	)
-	if err != nil {
-		return fmt.Errorf("upsert worker: %w", err)
-	}
-	return nil
-}
-
-// UpdateWorkerState updates the state and metadata for a worker.
-func (s *Store) UpdateWorkerState(ctx context.Context, sessionID string, epoch int, state string, metadata, actionDetails json.RawMessage) error {
-	_, err := s.ExecContext(ctx,
-		`UPDATE agent_session_workers
-		 SET state = $3, external_metadata = $4, requires_action_details = $5, last_heartbeat_at = NOW()
-		 WHERE session_id = $1 AND epoch = $2`,
-		sessionID, epoch, state, metadata, actionDetails,
-	)
-	if err != nil {
-		return fmt.Errorf("update worker state: %w", err)
-	}
-	return nil
-}
-
-// UpdateWorkerHeartbeat updates the heartbeat timestamp for a worker.
-func (s *Store) UpdateWorkerHeartbeat(ctx context.Context, sessionID string, epoch int) error {
-	_, err := s.ExecContext(ctx,
-		`UPDATE agent_session_workers SET last_heartbeat_at = NOW()
-		 WHERE session_id = $1 AND epoch = $2`,
-		sessionID, epoch,
-	)
-	if err != nil {
-		return fmt.Errorf("update worker heartbeat: %w", err)
-	}
-	return nil
 }
 
 // Close closes the underlying database connection.
