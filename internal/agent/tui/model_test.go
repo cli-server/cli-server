@@ -4,6 +4,9 @@ package tui
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -172,6 +175,39 @@ func TestModel_LogoutDoneMsg_WithError_AppendsErrorEntry(t *testing.T) {
 	m.Update(LogoutDoneMsg{Err: errors.New("boom")})
 	if m.timeline.Len() != before+1 {
 		t.Errorf("logout error should add timeline entry")
+	}
+}
+
+func TestModel_YoloCallsPostControl(t *testing.T) {
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		if !strings.HasSuffix(r.URL.Path, "/control") {
+			t.Errorf("path %q want /control", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), `"mode":"bypass"`) {
+			t.Errorf("body %s missing mode=bypass", body)
+		}
+		w.Write([]byte(`{"applied":true,"mode":"bypass"}`))
+	}))
+	defer srv.Close()
+	m := NewModel(ModelConfig{
+		ServerURL: srv.URL, WorkspaceID: "ws", ExecutorID: "e",
+		Bus: NewBus(BusConfig{ServerURL: srv.URL, WorkspaceID: "ws", ExecutorID: "e", Auth: &fakeAuth{tk: "t"}}),
+	})
+	m.SetAuthState(AuthLoggedIn)
+	m.sessionID = "cse_test"
+	_, cmd := m.Update(CommandSelectedMsg{Command: "yolo"})
+	if cmd == nil {
+		t.Fatal("expected cmd")
+	}
+	_ = cmd()
+	if !hit {
+		t.Error("PostControl was not invoked")
+	}
+	if m.permMode != "bypass" {
+		t.Errorf("permMode=%q", m.permMode)
 	}
 }
 

@@ -410,7 +410,17 @@ func (m *Model) runLocalCommand(name, args string) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "yolo":
 		m.permMode = "bypass"
-		return m, nil
+		sid := m.sessionID
+		if sid == "" {
+			return m, nil // no session yet; permMode will apply on next session
+		}
+		bus := m.bus
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			body, err := bus.PostControl(ctx, sid, "permission", map[string]any{"mode": "bypass"})
+			return ControlReplyMsg{Command: "permission", Body: body, Err: err}
+		}
 	case "login":
 		if m.startLoginFn != nil {
 			return m, m.startLoginFn()
