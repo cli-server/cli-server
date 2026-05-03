@@ -177,3 +177,54 @@ func TestDownloadTarGz_RejectsPathTraversal(t *testing.T) {
 		t.Fatalf("absolute-path write succeeded; want IsNotExist, got %v", err)
 	}
 }
+
+func TestUploadTarGz_RoundTrip(t *testing.T) {
+	fake := newFakeS3("ccbroker")
+	store, srv := newTestStore(t, fake)
+	defer srv.Close()
+
+	src := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "CLAUDE.md"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "skills", "foo.md"), []byte("a skill"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	key := "workspaces/ws1/claude-home.tar.gz"
+	if err := store.UploadTarGz(context.Background(), src, key); err != nil {
+		t.Fatalf("UploadTarGz: %v", err)
+	}
+
+	// Round-trip: stage the captured upload as if it were a pre-existing object,
+	// then download into a fresh dir and compare.
+	uploaded, ok := fake.uploads[key]
+	if !ok {
+		t.Fatalf("no upload captured; uploads=%v", keysOf(fake.uploads))
+	}
+	fake.objects[key] = uploaded
+
+	dest := t.TempDir()
+	if err := store.DownloadTarGz(context.Background(), key, dest); err != nil {
+		t.Fatalf("DownloadTarGz: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dest, "CLAUDE.md"))
+	if string(got) != "hi" {
+		t.Fatalf("CLAUDE.md round-trip mismatch: %q", got)
+	}
+	got, _ = os.ReadFile(filepath.Join(dest, "skills", "foo.md"))
+	if string(got) != "a skill" {
+		t.Fatalf("skills/foo.md round-trip mismatch: %q", got)
+	}
+}
+
+func keysOf(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}

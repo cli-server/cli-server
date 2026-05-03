@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -129,6 +130,97 @@ func (s *S3Store) DownloadTarGz(ctx context.Context, key, destDir string) error 
 			// Skip symlinks, char/block devices, etc.
 		}
 	}
+}
+
+// UploadTarGz walks srcDir, packages it as a tar.gz, and PUTs it to the given
+// key. The tarball is buffered in memory so minio-go can issue a single PUT
+// request (avoids multipart for the typical small workspace payload). Symlinks
+// are skipped. File modes are normalized to 0644 (regular) / 0755 (dir).
+// Failures during walk are logged and the offending file is skipped; the
+// upload still completes with whatever was packed.
+func (s *S3Store) UploadTarGz(ctx context.Context, srcDir, key string) error {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+	if err := writeTarball(srcDir, tw); err != nil {
+		return fmt.Errorf("s3: build tarball: %w", err)
+	}
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("s3: flush tar: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		return fmt.Errorf("s3: flush gzip: %w", err)
+	}
+
+	data := buf.Bytes()
+	_, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
+		ContentType:          "application/gzip",
+		// DisableContentSha256: true sends x-amz-content-sha256: UNSIGNED-PAYLOAD instead
+		// of the AWS V4 chunked-streaming encoding. Chunked encoding is incompatible with
+		// the httptest fake used in tests, and also adds overhead with no practical benefit
+		// when TLS (UseSSL: true in production) already provides transport integrity.
+		// This flag is active in production as well — it is not a test-only workaround.
+		DisableContentSha256: true,
+	})
+	if err != nil {
+		return fmt.Errorf("s3: put object: %w", err)
+	}
+	return nil
+}
+
+func writeTarball(srcDir string, tw *tar.Writer) error {
+	return filepath.WalkDir(srcDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			fmt.Fprintf(os.Stderr, "s3: walk error at %s: %v (skipping)\n", path, walkErr)
+			return nil
+		}
+		if path == srcDir {
+			return nil
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "s3: stat %s: %v (skipping)\n", path, err)
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		hdr := &tar.Header{Name: filepath.ToSlash(rel)}
+		switch {
+		case d.IsDir():
+			hdr.Typeflag = tar.TypeDir
+			hdr.Mode = 0o755
+			hdr.Name += "/"
+			if err := tw.WriteHeader(hdr); err != nil {
+				return fmt.Errorf("write header %s: %w", rel, err)
+			}
+		case info.Mode().IsRegular():
+			f, err := os.Open(path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "s3: open %s: %v (skipping)\n", path, err)
+				return nil
+			}
+			hdr.Typeflag = tar.TypeReg
+			hdr.Mode = 0o644
+			hdr.Size = info.Size()
+			if err := tw.WriteHeader(hdr); err != nil {
+				_ = f.Close()
+				return fmt.Errorf("write header %s: %w", rel, err)
+			}
+			_, err = io.Copy(tw, f)
+			_ = f.Close()
+			if err != nil {
+				return fmt.Errorf("copy %s: %w", rel, err)
+			}
+		default:
+			return nil
+		}
+		return nil
+	})
 }
 
 // safeJoin returns the cleaned absolute join of base and rel, plus a bool that
