@@ -14,10 +14,8 @@ type Workspace struct {
 
 	TempDir    string // root: /tmp/cc-broker/sess_<sessionID>
 	ClaudeDir  string // <TempDir>/claude-config — CLAUDE_CONFIG_DIR
-	ProjectDir string // <TempDir>/project       — CLI cwd
+	ProjectDir string // <TempDir>/project       — CLI cwd (kept empty; only used for proj_hash)
 	MemoryDir  string // <ClaudeDir>/projects/ws_<wid>/memory — auto-memory override
-
-	snapshot map[string]FileInfo // captured at Setup, consumed by Teardown
 }
 
 // TempDirBase is the parent under which per-session work directories are
@@ -31,18 +29,24 @@ func tempDirBase() string {
 	return os.TempDir()
 }
 
-// Setup creates the temp directory tree and downloads workspace context from
-// OpenViking. The returned Workspace must be passed to Teardown so the temp
-// directory is removed and changed files are uploaded back.
+// claudeHomeKey is the deterministic S3 object key for a workspace's
+// claude-home tarball. One workspace, one object.
+func claudeHomeKey(workspaceID string) string {
+	return fmt.Sprintf("workspaces/%s/claude-home.tar.gz", workspaceID)
+}
+
+// Setup creates the temp directory tree and downloads the workspace's
+// claude-home tarball from S3. The returned Workspace must be passed to
+// Teardown so the temp directory is removed and ClaudeDir is uploaded back.
 //
-// Download errors are non-fatal: a missing or partial workspace tree is expected
-// on first-turn workspaces that start empty.
-func Setup(ctx context.Context, workspaceID, sessionID string, vc *VikingClient) (*Workspace, error) {
+// On any error after the directory tree is created, Setup removes TempDir
+// before returning, so callers do not leak per-session directories.
+func Setup(ctx context.Context, workspaceID, sessionID string, store *S3Store) (*Workspace, error) {
 	// Path is deterministic in (sessionID) so Claude CLI's proj_hash lookup
-	// (which is derived from Cwd = ProjectDir) finds the same session jsonl
-	// across turns. Per-session turn serialization is enforced by the
-	// in-memory TurnLock in handler_turns. cc-broker runs replicas: 1 in
-	// production; multi-replica deployments would need a distributed lock.
+	// (derived from Cwd = ProjectDir) finds the same session jsonl across
+	// turns. Per-session turn serialization is enforced by the in-memory
+	// TurnLock in handler_turns. cc-broker runs replicas: 1 in production;
+	// multi-replica deployments would need a distributed lock.
 	tempDir := filepath.Join(tempDirBase(), "cc-broker", "sess_"+sessionID)
 	if err := os.MkdirAll(tempDir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir temp: %w", err)
@@ -64,65 +68,26 @@ func Setup(ctx context.Context, workspaceID, sessionID string, vc *VikingClient)
 		}
 	}
 
-	// Download claude-home (global config, CLAUDE.md, memory files, etc.).
-	// Fail-open: missing tree is normal for brand-new workspaces.
-	homeURI := fmt.Sprintf("viking://resources/workspace_%s/claude-home/", workspaceID)
-	if err := vc.DownloadTree(ctx, homeURI, ws.ClaudeDir); err != nil {
-		fmt.Fprintf(os.Stderr, "workspace.Setup: download claude-home: %v\n", err)
+	if err := store.DownloadTarGz(ctx, claudeHomeKey(workspaceID), ws.ClaudeDir); err != nil {
+		_ = os.RemoveAll(tempDir)
+		return nil, fmt.Errorf("download claude-home: %w", err)
 	}
 
-	// Download project tree (source files the agent will operate on).
-	projectURI := fmt.Sprintf("viking://resources/workspace_%s/project/", workspaceID)
-	if err := vc.DownloadTree(ctx, projectURI, ws.ProjectDir); err != nil {
-		fmt.Fprintf(os.Stderr, "workspace.Setup: download project: %v\n", err)
-	}
-
-	// Snapshot ClaudeDir so Teardown can diff and upload only what changed.
-	ws.snapshot = TakeSnapshot(ws.ClaudeDir)
 	return ws, nil
 }
 
-// Teardown diffs ClaudeDir against the snapshot taken at Setup, uploads every
-// added or modified file back to OpenViking, then removes the temp dir.
-//
-// - New (added) files use CreateFile (two-step temp_upload + add_resource).
-// - Modified files use UploadFile (single content/write call).
-// - Removed files are not propagated; OpenViking content writes are
-//   append-or-replace only.
-//
-// Individual upload errors are logged to stderr but do not cause Teardown to
-// return an error — a flaky upload must not block the caller's turn response.
-func Teardown(ctx context.Context, ws *Workspace, vc *VikingClient) error {
+// Teardown packages ClaudeDir as a tar.gz, uploads it to S3, then removes
+// the temp dir. Upload failures are logged but do not propagate — a flaky
+// upload must not block the caller's turn response. TempDir is always
+// removed.
+func Teardown(ctx context.Context, ws *Workspace, store *S3Store) error {
 	if ws == nil {
 		return nil
 	}
 	defer func() { _ = os.RemoveAll(ws.TempDir) }()
 
-	changes := DiffSnapshot(ws.ClaudeDir, ws.snapshot)
-	for _, c := range changes {
-		if c.Kind == "removed" {
-			continue
-		}
-
-		content, err := os.ReadFile(c.Path)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "workspace.Teardown: read %s: %v\n", c.Path, err)
-			continue
-		}
-
-		uri := fmt.Sprintf("viking://resources/workspace_%s/claude-home/%s",
-			ws.WorkspaceID, c.RelPath)
-
-		switch c.Kind {
-		case "added":
-			if err := vc.CreateFile(ctx, uri, content); err != nil {
-				fmt.Fprintf(os.Stderr, "workspace.Teardown: create %s: %v\n", uri, err)
-			}
-		case "modified":
-			if err := vc.UploadFile(ctx, uri, string(content)); err != nil {
-				fmt.Fprintf(os.Stderr, "workspace.Teardown: upload %s: %v\n", uri, err)
-			}
-		}
+	if err := store.UploadTarGz(ctx, ws.ClaudeDir, claudeHomeKey(ws.WorkspaceID)); err != nil {
+		fmt.Fprintf(os.Stderr, "workspace.Teardown: upload claude-home: %v\n", err)
 	}
 	return nil
 }
