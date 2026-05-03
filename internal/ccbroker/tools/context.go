@@ -18,6 +18,5 @@ type Context struct {
 	IMBridgeURL         string
 	InternalAPISecret   string
 	Workspace           *workspace.Workspace // for workspace_* tools
-	Viking              *workspace.VikingClient
-	HTTP                *http.Client // shared HTTP client
+	HTTP                *http.Client         // shared HTTP client
 }

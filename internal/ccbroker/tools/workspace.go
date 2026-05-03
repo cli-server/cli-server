@@ -37,7 +37,7 @@ func workspaceTools(tctx *Context) []agentsdk.McpTool {
 				return textResult(string(data)), nil
 			}),
 		agentsdk.Tool[workspaceWriteInput]("workspace_write",
-			"Write a file to the workspace context. Persists across sessions via OpenViking.",
+			"Write a file to the workspace context. Persists across sessions.",
 			func(ctx context.Context, in workspaceWriteInput) (*agentsdk.McpToolResult, error) {
 				p, err := safeWorkspacePath(tctx, in.Path)
 				if err != nil {
