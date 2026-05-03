@@ -147,7 +147,7 @@ func TestDownloadTarGz_HappyPath(t *testing.T) {
 	defer srv.Close()
 
 	dest := t.TempDir()
-	if _, err := store.DownloadTarGz(context.Background(), "workspaces/ws1/claude-home.tar.gz", dest); err != nil {
+	if err := store.DownloadTarGz(context.Background(), "workspaces/ws1/claude-home.tar.gz", dest); err != nil {
 		t.Fatalf("DownloadTarGz: %v", err)
 	}
 
@@ -168,7 +168,7 @@ func TestDownloadTarGz_NotFoundIsEmpty(t *testing.T) {
 	defer srv.Close()
 
 	dest := t.TempDir()
-	if _, err := store.DownloadTarGz(context.Background(), "workspaces/missing/claude-home.tar.gz", dest); err != nil {
+	if err := store.DownloadTarGz(context.Background(), "workspaces/missing/claude-home.tar.gz", dest); err != nil {
 		t.Fatalf("DownloadTarGz on missing key: want nil, got %v", err)
 	}
 	// destDir should remain empty
@@ -190,7 +190,7 @@ func TestDownloadTarGz_CorruptObjectReportsClearError(t *testing.T) {
 	defer srv.Close()
 
 	dest := t.TempDir()
-	_, err := store.DownloadTarGz(context.Background(), "workspaces/ws1/claude-home.tar.gz", dest)
+	err := store.DownloadTarGz(context.Background(), "workspaces/ws1/claude-home.tar.gz", dest)
 	if err == nil {
 		t.Fatal("DownloadTarGz on corrupt object: want error, got nil")
 	}
@@ -213,7 +213,7 @@ func TestDownloadTarGz_RejectsPathTraversal(t *testing.T) {
 	dest := t.TempDir()
 	parent := filepath.Dir(dest)
 
-	if _, err := store.DownloadTarGz(context.Background(), "workspaces/ws1/claude-home.tar.gz", dest); err != nil {
+	if err := store.DownloadTarGz(context.Background(), "workspaces/ws1/claude-home.tar.gz", dest); err != nil {
 		t.Fatalf("DownloadTarGz: %v", err)
 	}
 
@@ -247,7 +247,7 @@ func TestUploadTarGz_RoundTrip(t *testing.T) {
 	}
 
 	key := "workspaces/ws1/claude-home.tar.gz"
-	if err := store.UploadTarGz(context.Background(), src, key, nil, UploadOpts{}); err != nil {
+	if err := store.UploadTarGz(context.Background(), src, key, nil); err != nil {
 		t.Fatalf("UploadTarGz: %v", err)
 	}
 
@@ -260,7 +260,7 @@ func TestUploadTarGz_RoundTrip(t *testing.T) {
 	fake.objects[key] = uploaded
 
 	dest := t.TempDir()
-	if _, err := store.DownloadTarGz(context.Background(), key, dest); err != nil {
+	if err := store.DownloadTarGz(context.Background(), key, dest); err != nil {
 		t.Fatalf("DownloadTarGz: %v", err)
 	}
 	got, _ := os.ReadFile(filepath.Join(dest, "CLAUDE.md"))
@@ -295,7 +295,7 @@ func TestUploadTarGz_SkipsSymlinks(t *testing.T) {
 	}
 
 	key := "workspaces/ws1/claude-home.tar.gz"
-	if err := store.UploadTarGz(context.Background(), src, key, nil, UploadOpts{}); err != nil {
+	if err := store.UploadTarGz(context.Background(), src, key, nil); err != nil {
 		t.Fatalf("UploadTarGz: %v", err)
 	}
 
