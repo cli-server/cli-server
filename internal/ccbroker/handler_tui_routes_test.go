@@ -1,12 +1,14 @@
 package ccbroker
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/agentserver/agentserver/internal/ccbroker/tools"
 )
@@ -23,14 +25,43 @@ func newRoutesTestServer(t *testing.T) *Server {
 }
 
 func TestDecidePermission_HappyPath(t *testing.T) {
-	s := newRoutesTestServer(t)
-	pid := "perm_xyz"
-	s.gate.AddPendingForTest(pid, "s1", "t1")
+	// Use the server with real SSE-wired gate so permission events reach the
+	// SSE broker; this lets us capture the generated permission_id without
+	// needing AddPendingForTest from outside the tools package.
+	s := newFakeServerWithRealGate(t)
+
+	var capturedPID string
+	sub := s.sse.Subscribe("s1")
+	defer s.sse.Unsubscribe("s1", sub)
+
+	go func() {
+		_ = s.gate.Check(context.Background(), tools.CheckRequest{
+			SessionID:            "s1",
+			TurnID:               "t1",
+			Tool:                 "remote_bash",
+			ExecutorID:           "exe",
+			Args:                 json.RawMessage(`{}`),
+			PermissionMode:       "ask",
+			SessionCreatorUserID: "u",
+			ExecutorOwnerUserID:  "u",
+			Timeout:              5 * time.Second,
+		})
+	}()
+
+	// Wait for the permission_request SSE event to capture the permission_id.
+	select {
+	case ev := <-sub.Ch:
+		var payload map[string]any
+		json.Unmarshal(ev.Payload, &payload)
+		capturedPID, _ = payload["PermissionID"].(string)
+	case <-time.After(time.Second):
+		t.Fatal("no permission_request event within 1s")
+	}
 
 	body := `{"verdict":"allow","scope":"once"}`
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("POST",
-		"/api/sessions/s1/permissions/"+pid+"/decide",
+		"/api/sessions/s1/permissions/"+capturedPID+"/decide",
 		strings.NewReader(body))
 	s.Routes().ServeHTTP(rr, req)
 	if rr.Code != 200 {
