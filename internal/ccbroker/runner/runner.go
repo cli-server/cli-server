@@ -55,6 +55,18 @@ func Run(
 				return
 			case out <- msg:
 			}
+			// The Claude CLI in --print mode keeps stdin open after emitting
+			// the terminal "result" message, waiting for another user turn
+			// that never comes (the SDK's Client doesn't auto-close stdin
+			// like Query does). Without an explicit close here the SDK
+			// channel never drains, the pump in handler_turns blocks
+			// forever, and the SSE response to agentserver stays open until
+			// the HTTP read deadline. Returning here triggers
+			// `defer sess.Close()` which closes the transport and kills
+			// the subprocess.
+			if msg.Type == "result" {
+				return
+			}
 		}
 	}()
 	return out, nil
