@@ -13,6 +13,7 @@ type Executor struct {
 	Status      string    `json:"status"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	OwnerUserID string    `json:"owner_user_id,omitempty"`
 }
 
 type ExecutorCapability struct {
@@ -34,8 +35,10 @@ type ResourceInfo struct {
 
 type ExecutorInfo struct {
 	Executor
-	Capabilities ExecutorCapability `json:"capabilities"`
-	LastSeen     *time.Time         `json:"last_seen,omitempty"`
+	Capabilities      ExecutorCapability `json:"capabilities"`
+	LastSeen          *time.Time         `json:"last_seen,omitempty"`
+	OwnerUserID       string             `json:"owner_user_id"`
+	SharedToWorkspace bool               `json:"shared_to_workspace"`
 }
 
 type ExecuteRequest struct {

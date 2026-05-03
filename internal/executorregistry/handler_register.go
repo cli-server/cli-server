@@ -15,6 +15,7 @@ import (
 type registerRequest struct {
 	Name        string `json:"name"`
 	WorkspaceID string `json:"workspace_id"`
+	OwnerUserID string `json:"owner_user_id"` // optional; empty becomes NULL in DB
 }
 
 type registerResponse struct {
@@ -83,6 +84,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Status:      "online",
 		CreatedAt:   now,
 		UpdatedAt:   now,
+		OwnerUserID: req.OwnerUserID,
 	}
 
 	if err := s.store.CreateExecutor(r.Context(), executor, tunnelToken, registryToken); err != nil {
