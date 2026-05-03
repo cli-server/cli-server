@@ -288,7 +288,10 @@ func refreshDirect(ctx context.Context, serverURL, refreshToken string) (*agent.
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	// Use a timeout client; http.DefaultClient has no timeout and a slow or
+	// hung token endpoint would block all Bus.do calls indefinitely.
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

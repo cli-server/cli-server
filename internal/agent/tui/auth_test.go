@@ -105,6 +105,43 @@ func TestAuth_LoginFlowDenied(t *testing.T) {
 	}
 }
 
+func TestAuth_LoginFlowDenied_CallsOnLoginFailed(t *testing.T) {
+	var mu sync.Mutex
+	var capturedErr error
+	ac := NewAuthController(AuthConfig{
+		ServerURL:       "https://example",
+		CredentialsPath: t.TempDir() + "/creds.json",
+		RequestDeviceCode: func(_ string) (*agent.DeviceAuthResponse, error) {
+			return &agent.DeviceAuthResponse{DeviceCode: "dc", UserCode: "X", ExpiresIn: 60, Interval: 1}, nil
+		},
+		PollForToken: func(_ string, _ *agent.DeviceAuthResponse) (*agent.TokenResponse, error) {
+			return nil, errors.New("authorization denied by user")
+		},
+		OnLoginFailed: func(err error) {
+			mu.Lock()
+			capturedErr = err
+			mu.Unlock()
+		},
+	})
+	_, _ = ac.StartLogin(context.Background())
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		got := capturedErr
+		mu.Unlock()
+		if got != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	got := capturedErr
+	mu.Unlock()
+	if got == nil {
+		t.Error("OnLoginFailed not invoked")
+	}
+}
+
 func TestAuth_Logout_ClearsCreds(t *testing.T) {
 	p := t.TempDir() + "/creds.json"
 	_ = agent.SaveCredentials(p, &agent.Credentials{
