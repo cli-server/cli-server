@@ -53,7 +53,7 @@ func TestDecidePermission_HappyPath(t *testing.T) {
 	case ev := <-sub.Ch:
 		var payload map[string]any
 		json.Unmarshal(ev.Payload, &payload)
-		capturedPID, _ = payload["PermissionID"].(string)
+		capturedPID, _ = payload["permission_id"].(string)
 	case <-time.After(time.Second):
 		t.Fatal("no permission_request event within 1s")
 	}

@@ -33,22 +33,22 @@ type CheckRequest struct {
 }
 
 type Decision struct {
-	Verdict string // "allow" | "deny"
-	Scope   string // "once" | "always"
-	By      string
+	Verdict string `json:"verdict"`           // "allow" | "deny"
+	Scope   string `json:"scope"`             // "once" | "always"
+	By      string `json:"by,omitempty"`
 }
 
 type Event struct {
-	Type         string          // "permission_request" | "permission_resolved"
-	SessionID    string
-	TurnID       string
-	PermissionID string
-	Tool         string
-	ExecutorID   string
-	Args         json.RawMessage
-	Decision     *Decision
-	Source       string // "live" | "sticky"
-	EmittedAt    time.Time
+	Type         string          `json:"event_type"`              // "permission_request" | "permission_resolved"
+	SessionID    string          `json:"session_id,omitempty"`
+	TurnID       string          `json:"turn_id,omitempty"`
+	PermissionID string          `json:"permission_id,omitempty"`
+	Tool         string          `json:"tool,omitempty"`
+	ExecutorID   string          `json:"executor_id,omitempty"`
+	Args         json.RawMessage `json:"args,omitempty"`
+	Decision     *Decision       `json:"decision,omitempty"`
+	Source       string          `json:"source,omitempty"`       // "live" | "sticky"
+	EmittedAt    time.Time       `json:"emitted_at,omitempty"`
 }
 
 type Notifier func(sessionID string, evt Event)

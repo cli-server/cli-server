@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -237,6 +238,38 @@ func TestGate_CancelTurn_ResolvesAllPendingOfThatTurn(t *testing.T) {
 	for i, err := range errs {
 		if err != ErrPermissionDenied {
 			t.Errorf("call %d: err=%v want ErrPermissionDenied (cancelled)", i, err)
+		}
+	}
+}
+
+func TestEvent_JSONShape_UsesSnakeCase(t *testing.T) {
+	e := Event{
+		Type:         "permission_request",
+		PermissionID: "perm_xyz",
+		Tool:         "remote_bash",
+		ExecutorID:   "exe_a",
+		Decision:     &Decision{Verdict: "allow", Scope: "once"},
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{
+		`"event_type":"permission_request"`,
+		`"permission_id":"perm_xyz"`,
+		`"tool":"remote_bash"`,
+		`"executor_id":"exe_a"`,
+		`"decision":{"verdict":"allow","scope":"once"}`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q in marshalled event:\n%s", want, s)
+		}
+	}
+	// Make sure the old PascalCase keys are gone.
+	for _, bad := range []string{`"Type":`, `"PermissionID":`, `"Tool":`} {
+		if strings.Contains(s, bad) {
+			t.Errorf("unexpected PascalCase key %q in:\n%s", bad, s)
 		}
 	}
 }

@@ -90,9 +90,9 @@ func TestPermissionEventReachesSSE(t *testing.T) {
 	if err := json.Unmarshal(firstEv.Payload, &payload); err != nil {
 		t.Errorf("payload not valid JSON: %v", err)
 	}
-	// Event struct fields marshal with Go default (PascalCase) since no json tags.
-	if payload["PermissionID"] == "" || payload["PermissionID"] == nil {
-		t.Errorf("PermissionID missing from payload: %v", payload)
+	// Event struct fields now marshal with snake_case json tags.
+	if payload["permission_id"] == "" || payload["permission_id"] == nil {
+		t.Errorf("permission_id missing from payload: %v", payload)
 	}
 
 	// After timeout (200ms), a permission_resolved event should arrive.
