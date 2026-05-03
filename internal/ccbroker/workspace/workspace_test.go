@@ -107,3 +107,32 @@ func TestSetup_EmptyWorkspaceWhenObjectMissing(t *testing.T) {
 		t.Fatalf("ClaudeDir should only contain the projects/ scaffold; got %v", names)
 	}
 }
+
+func TestTeardown_UploadFailureStillCleansTempDir(t *testing.T) {
+	old := TempDirBase
+	TempDirBase = t.TempDir()
+	defer func() { TempDirBase = old }()
+
+	fake := newFakeS3("ccbroker")
+	store, srv := newTestStore(t, fake)
+	defer srv.Close()
+
+	ws, err := Setup(context.Background(), "ws_fail", "cse_y", store)
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+
+	// Now make the upstream PUT fail. Teardown must log + continue, returning
+	// nil and removing TempDir even though the upload failed.
+	fake.failPUT = true
+
+	if err := Teardown(context.Background(), ws, store); err != nil {
+		t.Fatalf("Teardown: want nil even when upload fails, got %v", err)
+	}
+	if _, err := os.Stat(ws.TempDir); !os.IsNotExist(err) {
+		t.Fatalf("TempDir should be removed even after upload failure; err=%v", err)
+	}
+	if len(fake.uploads) != 0 {
+		t.Fatalf("no upload should have been recorded; got %d", len(fake.uploads))
+	}
+}

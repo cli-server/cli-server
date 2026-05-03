@@ -23,6 +23,7 @@ type fakeS3 struct {
 	bucket  string
 	objects map[string][]byte // key → content (pre-loaded responses)
 	uploads map[string][]byte // key → content (captured PUTs)
+	failPUT bool              // if true, PUT returns 500 (used by Teardown failure tests)
 }
 
 func newFakeS3(bucket string) *fakeS3 {
@@ -54,6 +55,10 @@ func (f *fakeS3) handler() http.Handler {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(data)
 		case http.MethodPut:
+			if f.failPUT {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			body, _ := io.ReadAll(r.Body)
 			f.uploads[path] = body
 			w.WriteHeader(http.StatusOK)
