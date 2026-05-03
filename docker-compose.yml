@@ -134,8 +134,10 @@ services:
       - sh
       - -c
       - |
-        sleep 3
-        mc alias set local http://minio:9000 minioadmin minioadmin
+        until mc alias set local http://minio:9000 minioadmin minioadmin 2>/dev/null; do
+          echo "waiting for minio..."
+          sleep 1
+        done
         mc mb -p local/ccbroker || true
 
 volumes:
