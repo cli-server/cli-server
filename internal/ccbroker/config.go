@@ -19,7 +19,6 @@ type Config struct {
 	S3Bucket            string
 	S3AccessKeyID       string
 	S3SecretAccessKey   string
-	S3UseSSL            bool
 	S3PathStyle         bool
 	IMBridgeURL         string
 	IMBridgeSecret      string
@@ -42,7 +41,6 @@ func LoadConfigFromEnv() (Config, error) {
 	cfg.S3Bucket = os.Getenv("CCBROKER_S3_BUCKET")
 	cfg.S3AccessKeyID = os.Getenv("CCBROKER_S3_ACCESS_KEY_ID")
 	cfg.S3SecretAccessKey = os.Getenv("CCBROKER_S3_SECRET_ACCESS_KEY")
-	cfg.S3UseSSL = envBool("CCBROKER_S3_USE_SSL", true)
 	cfg.S3PathStyle = envBool("CCBROKER_S3_PATH_STYLE", false)
 	if cfg.S3Endpoint == "" {
 		return cfg, fmt.Errorf("CCBROKER_S3_ENDPOINT is required")

@@ -50,8 +50,6 @@ func (f *fakeS3) handler() http.Handler {
 				_, _ = w.Write([]byte(`<?xml version="1.0"?><Error><Code>NoSuchKey</Code></Error>`))
 				return
 			}
-			// minio-go requires Last-Modified in RFC 822 format or it returns an error.
-			w.Header().Set("Last-Modified", "Mon, 1 Jan 2024 00:00:00 GMT")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(data)
 		case http.MethodPut:
@@ -91,14 +89,12 @@ func makeTarGz(t *testing.T, files map[string]string) []byte {
 func newTestStore(t *testing.T, fake *fakeS3) (*S3Store, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewServer(fake.handler())
-	u, _ := url.Parse(srv.URL)
 	store, err := NewS3Store(S3Config{
-		Endpoint:        u.Host,
+		Endpoint:        srv.URL,
 		Region:          "us-east-1",
 		Bucket:          fake.bucket,
 		AccessKeyID:     "test",
 		SecretAccessKey: "test",
-		UseSSL:          false,
 		PathStyle:       true,
 	})
 	if err != nil {
