@@ -705,12 +705,16 @@ ALTER TABLE agent_sessions
   ADD COLUMN IF NOT EXISTS responder_attached_at  TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS active_turn_id         TEXT;
 
--- Note: legacy IM-flow rows are intentionally left with creator_user_id NULL.
--- The cross-user permission check (cc-broker §6.4) treats empty/NULL as
--- "owner unknown, no cross-user check applicable" — legacy IM rows never
--- reach the TUI inbound path so the field is irrelevant for them. Using
--- a 'unknown' sentinel would conflate "we don't know" with a plausible
--- real user id; leaving NULL preserves the distinction.
+-- Restrictive design: legacy rows keep creator_user_id NULL. Store layer
+-- queries SHOULD NOT COALESCE this field to a sentinel — leave it NULL so
+-- it's transparent to readers. For agent_sessions specifically, legacy
+-- IM-flow rows never reach the TUI inbound path (which is the only consumer
+-- of creator_user_id), so NULL is harmless here.
+--
+-- See the executors migration (002_executor_owner_sharing.sql) for the
+-- mirrored handling of executor.owner_user_id, where NULL → 'unknown' via
+-- COALESCE in GetExecutor and gate.Check denies cross-user invocation.
+-- Legacy executors must be re-registered to be invocable.
 
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_channel_external
   ON agent_sessions (workspace_id, channel_type, external_id);
@@ -727,10 +731,17 @@ ALTER TABLE executors
   ADD COLUMN IF NOT EXISTS owner_user_id          TEXT,
   ADD COLUMN IF NOT EXISTS shared_to_workspace    BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Same reasoning as agent_sessions.creator_user_id: leave legacy executors
--- with owner_user_id NULL. cc-broker's gate.Check treats empty as "unknown
--- owner; cross-user check skipped". Sentinel string would create false
--- equality with a real user id "unknown".
+-- Restrictive cross-user policy. Legacy executors keep owner_user_id NULL
+-- in the DB. The store layer (GetExecutor, Task 4) projects NULL → 'unknown'
+-- via COALESCE; gate.Check (Task 6) compares 'unknown' against the session
+-- creator's real user id, which never matches → cross_user_denied. Legacy
+-- executors are therefore unreachable until re-registered with a real
+-- owner_user_id.
+--
+-- INVARIANT: the auth layer must reject 'unknown' as a registerable user id
+-- to prevent false equality with this sentinel. (Tracked as a Phase 1.x
+-- follow-up — current auth uses opaque IDs, so the invariant holds in
+-- practice but is not yet enforced at registration.)
 
 CREATE INDEX IF NOT EXISTS idx_executors_owner ON executors(owner_user_id);
 ```
