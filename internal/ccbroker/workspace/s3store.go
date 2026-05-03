@@ -63,12 +63,9 @@ func NewS3Store(cfg S3Config) (*S3Store, error) {
 }
 
 // DownloadTarGz streams the object at key, gunzip-untars it into destDir.
-// Returns the object's ETag so callers can pass it back as the IfMatch
-// precondition on a subsequent UploadTarGz (optimistic concurrency).
-// On 404 the returned etag is empty and err is nil — caller treats it as a
-// fresh workspace and may upload with IfNoneMatch:"*" to assert "create only".
+// Returns nil if the object does not exist (treated as empty workspace).
 // Tar entries with paths escaping destDir are skipped.
-func (s *S3Store) DownloadTarGz(ctx context.Context, key, destDir string) (etag string, err error) {
+func (s *S3Store) DownloadTarGz(ctx context.Context, key, destDir string) error {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: &s.bucket,
 		Key:    &key,
@@ -76,30 +73,26 @@ func (s *S3Store) DownloadTarGz(ctx context.Context, key, destDir string) (etag 
 	if err != nil {
 		var nsk *s3types.NoSuchKey
 		if errors.As(err, &nsk) {
-			return "", nil
+			return nil
 		}
-		return "", fmt.Errorf("s3: get object %s: %w", key, err)
+		return fmt.Errorf("s3: get object %s: %w", key, err)
 	}
 	defer out.Body.Close()
 
-	if out.ETag != nil {
-		etag = *out.ETag
-	}
-
 	gr, err := gzip.NewReader(out.Body)
 	if err != nil {
-		return "", fmt.Errorf("s3: corrupt tar.gz at %s: %w", key, err)
+		return fmt.Errorf("s3: corrupt tar.gz at %s: %w", key, err)
 	}
 	defer gr.Close()
 
 	tr := tar.NewReader(gr)
 	for {
-		hdr, terr := tr.Next()
-		if terr == io.EOF {
-			return etag, nil
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return nil
 		}
-		if terr != nil {
-			return "", fmt.Errorf("s3: tar next: %w", terr)
+		if err != nil {
+			return fmt.Errorf("s3: tar next: %w", err)
 		}
 		dest, ok := safeJoin(destDir, hdr.Name)
 		if !ok {
@@ -109,35 +102,27 @@ func (s *S3Store) DownloadTarGz(ctx context.Context, key, destDir string) (etag 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(dest, 0o755); err != nil {
-				return "", fmt.Errorf("s3: mkdir %s: %w", dest, err)
+				return fmt.Errorf("s3: mkdir %s: %w", dest, err)
 			}
 		case tar.TypeReg, tar.TypeRegA:
 			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-				return "", fmt.Errorf("s3: mkdir parent %s: %w", dest, err)
+				return fmt.Errorf("s3: mkdir parent %s: %w", dest, err)
 			}
 			f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 			if err != nil {
-				return "", fmt.Errorf("s3: create %s: %w", dest, err)
+				return fmt.Errorf("s3: create %s: %w", dest, err)
 			}
 			if _, err := io.Copy(f, tr); err != nil {
 				_ = f.Close()
-				return "", fmt.Errorf("s3: copy %s: %w", dest, err)
+				return fmt.Errorf("s3: copy %s: %w", dest, err)
 			}
 			if err := f.Close(); err != nil {
-				return "", fmt.Errorf("s3: close %s: %w", dest, err)
+				return fmt.Errorf("s3: close %s: %w", dest, err)
 			}
 		default:
 			// Skip symlinks, char/block devices, etc.
 		}
 	}
-}
-
-// UploadOpts carries optional preconditions for an optimistic-locked PUT.
-// At most one of IfMatch / IfNoneMatch should be set. Both empty means
-// unconditional write (overwrite or create regardless of current state).
-type UploadOpts struct {
-	IfMatch     string // only PUT if current ETag matches; "" = unconstrained
-	IfNoneMatch string // only PUT if no object exists when set to "*"; "" = unconstrained
 }
 
 // UploadTarGz walks srcDir, packages it as a tar.gz, and PUTs it to the given
@@ -150,10 +135,7 @@ type UploadOpts struct {
 // excludeRel, if non-nil, returns true for any rel-path under srcDir that
 // should be omitted from the tarball. Used by callers that store some
 // subdirectories as separate S3 objects (per-session jsonl).
-//
-// Returns ErrPreconditionFailed when opts.IfMatch / IfNoneMatch are violated
-// — the caller can choose to drop the write or retry after re-syncing.
-func (s *S3Store) UploadTarGz(ctx context.Context, srcDir, key string, excludeRel func(rel string) bool, opts UploadOpts) error {
+func (s *S3Store) UploadTarGz(ctx context.Context, srcDir, key string, excludeRel func(rel string) bool) error {
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
@@ -168,38 +150,17 @@ func (s *S3Store) UploadTarGz(ctx context.Context, srcDir, key string, excludeRe
 	}
 
 	body := bytes.NewReader(buf.Bytes())
-	in := &s3.PutObjectInput{
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        &s.bucket,
 		Key:           &key,
 		Body:          body,
 		ContentLength: aws.Int64(int64(body.Len())),
 		ContentType:   aws.String("application/gzip"),
-	}
-	if opts.IfMatch != "" {
-		in.IfMatch = aws.String(opts.IfMatch)
-	}
-	if opts.IfNoneMatch != "" {
-		in.IfNoneMatch = aws.String(opts.IfNoneMatch)
-	}
-	_, err := s.client.PutObject(ctx, in)
+	})
 	if err != nil {
-		if isPreconditionFailed(err) {
-			return ErrPreconditionFailed
-		}
 		return fmt.Errorf("s3: put object %s: %w", key, err)
 	}
 	return nil
-}
-
-// isPreconditionFailed detects an HTTP 412 from an aws-sdk-go-v2 PutObject
-// error. The SDK surfaces it via the smithy ResponseError chain rather than
-// a typed S3 error.
-func isPreconditionFailed(err error) bool {
-	var re interface{ HTTPStatusCode() int }
-	if errors.As(err, &re) && re.HTTPStatusCode() == 412 {
-		return true
-	}
-	return false
 }
 
 func writeTarball(srcDir string, tw *tar.Writer, excludeRel func(rel string) bool) error {
@@ -263,12 +224,6 @@ func writeTarball(srcDir string, tw *tar.Writer, excludeRel func(rel string) boo
 		return nil
 	})
 }
-
-// ErrPreconditionFailed is returned by UploadTarGz when an If-Match or
-// If-None-Match precondition fails (HTTP 412). Optimistic-lock callers
-// distinguish this from a transport error and decide whether to drop
-// their write or retry after re-fetching.
-var ErrPreconditionFailed = errors.New("s3: precondition failed")
 
 // safeJoin returns the cleaned absolute join of base and rel, plus a bool that
 // is false if rel resolves outside base. Rejects absolute paths and any rel

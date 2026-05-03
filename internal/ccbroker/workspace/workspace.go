@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,13 +17,6 @@ type Workspace struct {
 	ClaudeDir  string // <TempDir>/claude-config — CLAUDE_CONFIG_DIR
 	ProjectDir string // <TempDir>/project       — CLI cwd (kept empty; only used for proj_hash)
 	MemoryDir  string // <ClaudeDir>/projects/ws_<wid>/memory — auto-memory override
-
-	// claudeHomeETag is the ETag returned by S3 when claude-home was
-	// downloaded at Setup. Teardown passes it back as IfMatch to detect
-	// concurrent modifications by other sessions sharing this workspace.
-	// Empty means no prior object existed; Teardown then uses
-	// IfNoneMatch:"*" to assert "create only".
-	claudeHomeETag string
 }
 
 // TempDirBase is the parent under which per-session work directories are
@@ -119,16 +111,14 @@ func Setup(ctx context.Context, workspaceID, sessionID string, store *S3Store) (
 		}
 	}
 
-	etag, err := store.DownloadTarGz(ctx, claudeHomeKey(workspaceID), ws.ClaudeDir)
-	if err != nil {
+	if err := store.DownloadTarGz(ctx, claudeHomeKey(workspaceID), ws.ClaudeDir); err != nil {
 		_ = os.RemoveAll(tempDir)
 		return nil, fmt.Errorf("download claude-home for workspace %s: %w", workspaceID, err)
 	}
-	ws.claudeHomeETag = etag
 
 	// Per-session subtree is downloaded AFTER claude-home so it overrides
 	// any stale copy that was still present in the tarball.
-	if _, err := store.DownloadTarGz(ctx, sessionTarballKey(workspaceID, sessionID), sessionSubtreeLocalDir(ws)); err != nil {
+	if err := store.DownloadTarGz(ctx, sessionTarballKey(workspaceID, sessionID), sessionSubtreeLocalDir(ws)); err != nil {
 		_ = os.RemoveAll(tempDir)
 		return nil, fmt.Errorf("download session subtree for %s/%s: %w", workspaceID, sessionID, err)
 	}
@@ -159,38 +149,24 @@ func Teardown(ctx context.Context, ws *Workspace, store *S3Store) error {
 
 	subtreeDir := sessionSubtreeLocalDir(ws)
 	if subtreeHasFiles(subtreeDir) {
-		if err := store.UploadTarGz(ctx, subtreeDir, sessionTarballKey(ws.WorkspaceID, ws.SessionID), nil, UploadOpts{}); err != nil {
+		if err := store.UploadTarGz(ctx, subtreeDir, sessionTarballKey(ws.WorkspaceID, ws.SessionID), nil); err != nil {
 			fmt.Fprintf(os.Stderr, "workspace.Teardown: upload session subtree: %v\n", err)
 		}
 	}
 
 	// Exclude THIS session's subtree from the claude-home tarball — it's
 	// stored separately. We deliberately do NOT exclude other sessions'
-	// subtrees that may still be present (carried in from pre-split data);
-	// they will get migrated out the next time their owning session runs.
+	// subtrees that may still be present; they get rewritten the next
+	// time their owning session runs a turn.
+	//
+	// Concurrent same-workspace turns can still race here: last writer wins
+	// on memory / settings. The per-session subtree (jsonl) is safe because
+	// each session uses its own key.
 	skipSubtree := sessionSubtreeRel(ws)
 	excludeRel := func(rel string) bool {
 		return rel == skipSubtree || strings.HasPrefix(rel, skipSubtree+"/")
 	}
-
-	// Optimistic lock: if the object existed at Setup, only overwrite when
-	// the ETag is still ours (no other session beat us). If it didn't exist,
-	// create-only via IfNoneMatch:"*". On conflict we drop this turn's
-	// claude-home modifications; the per-session jsonl is already safe in
-	// its own key.
-	uploadOpts := UploadOpts{}
-	if ws.claudeHomeETag != "" {
-		uploadOpts.IfMatch = ws.claudeHomeETag
-	} else {
-		uploadOpts.IfNoneMatch = "*"
-	}
-	err := store.UploadTarGz(ctx, ws.ClaudeDir, claudeHomeKey(ws.WorkspaceID), excludeRel, uploadOpts)
-	switch {
-	case err == nil:
-		// fine
-	case errors.Is(err, ErrPreconditionFailed):
-		fmt.Fprintf(os.Stderr, "workspace.Teardown: claude-home modified concurrently for workspace %s, dropping local changes\n", ws.WorkspaceID)
-	default:
+	if err := store.UploadTarGz(ctx, ws.ClaudeDir, claudeHomeKey(ws.WorkspaceID), excludeRel); err != nil {
 		fmt.Fprintf(os.Stderr, "workspace.Teardown: upload claude-home: %v\n", err)
 	}
 	return nil
