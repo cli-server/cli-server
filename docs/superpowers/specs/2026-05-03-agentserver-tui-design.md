@@ -43,7 +43,7 @@
 
 给 `agentserver-agent` 二进制新增 `tui` 子命令。该命令在用户机器上启动一个**双角色进程**：
 
-1. **手脚（Executor 角色）**：与 `executor` 子命令完全等价的功能（向 executor-registry 注册 executor 身份、维护 yamux tunnel、暴露 `Bash/Read/Write/Edit/Glob/Grep/LS`），再加注册时 `interactive=true` 标记。
+1. **手脚（Executor 角色）**：与 `executor` 子命令完全等价（向 executor-registry 注册 executor 身份、维护 yamux tunnel、暴露 `Bash/Read/Write/Edit/Glob/Grep/LS`）；唯一外观差异是 `display_name` 默认带 ` (interactive)` 后缀，方便 `/agents` 列表辨识。session 选哪个 executor 由 `preferred_executor_id` 严格控制（§6.6），不依赖任何 executor 侧 flag。
 2. **远程 harness 的瘦客户端（TUI 角色）**：Bubble Tea 终端界面，按 §1.1 原则——纯 I/O。
 
 ### 1.4 非目标
@@ -64,14 +64,16 @@
 |---|---|---|---|---|---|
 | `connect` (`claudecode`) | 老 headless | 不动 | agent-registry (sandbox) | yamux + ccr v2 bridge | 否 |
 | `executor` | 纯手脚 | 不动 | executor-registry | yamux | 否 |
-| **`tui`** | **手脚 + 远程 harness 客户端** | **新增** | executor-registry（带 `interactive=true`）+ agentserver session | yamux（手脚）+ HTTPS+SSE（TUI） | **是** |
+| **`tui`** | **手脚 + 远程 harness 客户端** | **新增** | executor-registry + agentserver session | yamux（手脚）+ HTTPS+SSE（TUI） | **是** |
 | `mcp-server` | 旧 MCP stdio bridge | 不动 | — | — | 否 |
 | `login` / `list` / `remove` | 工具 | 不动 | — | — | — |
 
 `tui` 与 `executor` 共享几乎全部代码（注册、tunnel、`executortools`、心跳、重连、re-register）；差异仅在：
-- 启动时把 `interactive=true` 写进注册请求的 capabilities；
+- 默认 `--name` 带 `(interactive)` 后缀（仅 UI 辨识用，不影响路由）；
 - 启动多一个 TUI 协程（Bubble Tea program）；
 - 本地权限确认逻辑搬到 cc-broker（§6.4），本进程内零变化。
+
+**为什么不在 executor 上打 `interactive=true` 标记？** 早期设计有过此考虑——让 LLM 知道哪个 executor 有 UI。但 `preferred_executor_id` 是更强的 session 级机制（绑 session、跟随 responder、直接进 system prompt），完全覆盖该需求；权限闸又搬到了 cc-broker，LLM 也不需要知道哪个有 UI。executor 侧 flag 因此是冗余的，删之。
 
 ### 2.2 `tui` 子命令 flag
 
@@ -173,7 +175,7 @@ agentserver tui [flags]
 - `cmd/agentserver-agent/main.go`：`tuiCmd`（薄壳）。
 - `internal/agent/tui.go`：`RunTUI(opts)` 入口。
 - `internal/agent/tui/`（新包）：Bubble Tea models / views / messages / keymap / Bus。
-- `internal/agent/executor_client.go`：极小改动——注册时 capabilities 加 `interactive: true`。
+- `internal/agent/executor_client.go`：无改动（`tui` 直接复用现有 `ExecutorClient`，仅 `--name` 默认值在 main.go 处理）。
 
 **agentserver 侧（新增）：**
 - `POST /api/workspaces/{wid}/tui/inbound` — TUI 上传 prompt（含 active_turn_id CAS）。
@@ -1644,7 +1646,6 @@ internal/ccbroker/tools/prompt.go                  # system prompt builder
 ### A.2 修改文件
 
 ```
-internal/agent/executor_client.go                  # 注册时 capabilities 加 interactive=true
 internal/agent/executor_session.go                 # ExecutorSession 加 runtime_cwd 字段（optional）
 
 internal/ccbroker/handler_turns.go                 # 解析 metadata，turn_kind=compaction 处理，
