@@ -30,8 +30,3 @@ type Context struct {
 	AgentserverInternalURL string  // for turn-finished callback
 	CurrentTurnID          string  // set per turn by handler_turns
 }
-
-// Gate is the permission gate. Implementation lives in permission.go (Task 6).
-// This forward declaration here lets Context reference it before that file exists.
-// Remove this declaration once permission.go lands with the real Gate type.
-type Gate struct{}
