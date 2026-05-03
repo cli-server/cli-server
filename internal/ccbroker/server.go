@@ -30,7 +30,6 @@ func NewServer(cfg Config, store *Store) (*Server, error) {
 		Bucket:          cfg.S3Bucket,
 		AccessKeyID:     cfg.S3AccessKeyID,
 		SecretAccessKey: cfg.S3SecretAccessKey,
-		UseSSL:          cfg.S3UseSSL,
 		PathStyle:       cfg.S3PathStyle,
 	})
 	if err != nil {

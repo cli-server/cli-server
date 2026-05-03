@@ -8,32 +8,37 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
-// S3Config carries the S3-compatible endpoint configuration. Endpoint is
-// host:port without scheme; UseSSL controls https vs http. PathStyle must
-// be true for MinIO and most on-prem S3 implementations; false for AWS S3
-// (virtual-hosted-style is required) and most public clouds.
+// S3Config carries the S3-compatible endpoint configuration.
+//
+// Endpoint is a full URL with scheme — http://... or https://... — so operators
+// can use the same form they paste into rclone / aws cli. Trailing path
+// segments are not supported. PathStyle must be true for MinIO and most on-prem
+// S3 implementations; false for AWS S3 (virtual-hosted-style is required) and
+// most public clouds.
 type S3Config struct {
 	Endpoint        string
 	Region          string
 	Bucket          string
 	AccessKeyID     string
 	SecretAccessKey string
-	UseSSL          bool
 	PathStyle       bool
 }
 
 // S3Store is the workspace persistence backend. One instance is held by the
 // server and shared across all turns.
 type S3Store struct {
-	client *minio.Client
+	client *s3.Client
 	bucket string
 }
 
@@ -44,55 +49,38 @@ func NewS3Store(cfg S3Config) (*S3Store, error) {
 	if cfg.Bucket == "" {
 		return nil, errors.New("s3: bucket required")
 	}
-	c, err := minio.New(cfg.Endpoint, &minio.Options{
-		Creds:        credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
-		Secure:       cfg.UseSSL,
-		Region:       cfg.Region,
-		BucketLookup: bucketLookup(cfg.PathStyle),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("s3: new client: %w", err)
+	if _, err := url.Parse(cfg.Endpoint); err != nil {
+		return nil, fmt.Errorf("s3: parse endpoint %q: %w", cfg.Endpoint, err)
 	}
-	return &S3Store{client: c, bucket: cfg.Bucket}, nil
-}
 
-func bucketLookup(pathStyle bool) minio.BucketLookupType {
-	if pathStyle {
-		return minio.BucketLookupPath
-	}
-	return minio.BucketLookupDNS
+	client := s3.New(s3.Options{
+		Region:       cfg.Region,
+		BaseEndpoint: aws.String(cfg.Endpoint),
+		Credentials:  credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
+		UsePathStyle: cfg.PathStyle,
+	})
+	return &S3Store{client: client, bucket: cfg.Bucket}, nil
 }
 
 // DownloadTarGz streams the object at key, gunzip-untars it into destDir.
 // Returns nil if the object does not exist (treated as empty workspace).
 // Tar entries with paths escaping destDir are skipped.
 func (s *S3Store) DownloadTarGz(ctx context.Context, key, destDir string) error {
-	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: &s.bucket,
+		Key:    &key,
+	})
 	if err != nil {
-		return fmt.Errorf("s3: get object: %w", err)
-	}
-	defer obj.Close()
-
-	gr, err := gzip.NewReader(obj)
-	if err != nil {
-		// GetObject is lazy: the real error (404, auth, network, 5xx) surfaces
-		// here when minio-go reads the response body. Two failure shapes:
-		//   (a) minio.ErrorResponse from a clean S3 error — extractable directly
-		//   (b) gzip.ErrHeader, because minio-go yielded the XML error body as
-		//       data before flagging an error — gzip rejects it as non-gzip.
-		// Case (b) hides the real cause; resolve by stat-ing the object.
-		if errResp := minio.ToErrorResponse(err); errResp.Code == "NoSuchKey" {
+		var nsk *s3types.NoSuchKey
+		if errors.As(err, &nsk) {
 			return nil
 		}
-		_, statErr := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
-		if statErr != nil {
-			if minio.ToErrorResponse(statErr).Code == "NoSuchKey" {
-				return nil
-			}
-			return fmt.Errorf("s3: download %s: %w", key, statErr)
-		}
-		// Stat succeeded → object exists but body is not a valid gzip. Real
-		// corruption.
+		return fmt.Errorf("s3: get object %s: %w", key, err)
+	}
+	defer out.Body.Close()
+
+	gr, err := gzip.NewReader(out.Body)
+	if err != nil {
 		return fmt.Errorf("s3: corrupt tar.gz at %s: %w", key, err)
 	}
 	defer gr.Close()
@@ -138,7 +126,7 @@ func (s *S3Store) DownloadTarGz(ctx context.Context, key, destDir string) error 
 }
 
 // UploadTarGz walks srcDir, packages it as a tar.gz, and PUTs it to the given
-// key. The tarball is buffered in memory so minio-go can issue a single PUT
+// key. The tarball is buffered in memory so the SDK can issue a single PUT
 // request (avoids multipart for the typical small workspace payload). Symlinks
 // are skipped. File modes are normalized to 0644 (regular) / 0755 (dir).
 // Failures during walk are logged and the offending file is skipped; the
@@ -157,18 +145,16 @@ func (s *S3Store) UploadTarGz(ctx context.Context, srcDir, key string) error {
 		return fmt.Errorf("s3: flush gzip: %w", err)
 	}
 
-	data := buf.Bytes()
-	_, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
-		ContentType:          "application/gzip",
-		// DisableContentSha256: true sends x-amz-content-sha256: UNSIGNED-PAYLOAD instead
-		// of the AWS V4 chunked-streaming encoding. Chunked encoding is incompatible with
-		// the httptest fake used in tests, and also adds overhead with no practical benefit
-		// when TLS (UseSSL: true in production) already provides transport integrity.
-		// This flag is active in production as well — it is not a test-only workaround.
-		DisableContentSha256: true,
+	body := bytes.NewReader(buf.Bytes())
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        &s.bucket,
+		Key:           &key,
+		Body:          body,
+		ContentLength: aws.Int64(int64(body.Len())),
+		ContentType:   aws.String("application/gzip"),
 	})
 	if err != nil {
-		return fmt.Errorf("s3: put object: %w", err)
+		return fmt.Errorf("s3: put object %s: %w", key, err)
 	}
 	return nil
 }

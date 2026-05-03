@@ -239,10 +239,9 @@ ccbroker:
   # (CLAUDE.md, Memory, Skills, settings). One claude-home.tar.gz object
   # per workspace. Required when ccbroker.enabled is true.
   s3:
-    endpoint: ""           # required, e.g. "s3.amazonaws.com" or "minio.minio.svc:9000"
+    endpoint: ""           # required full URL, e.g. "https://s3.amazonaws.com" or "http://minio.minio.svc:9000"
     region: ""             # required for AWS-style; "" is fine for MinIO
     bucket: ""             # required
-    useSSL: true
     pathStyle: false       # true for MinIO / on-prem; false for AWS / OSS / COS
     existingSecret: ""     # k8s secret with keys: access_key_id, secret_access_key
   # Spawned CC workers need Anthropic credentials. They're read from the

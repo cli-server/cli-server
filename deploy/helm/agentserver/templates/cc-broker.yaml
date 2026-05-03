@@ -97,8 +97,6 @@ spec:
               value: {{ .Values.ccbroker.s3.region | quote }}
             - name: CCBROKER_S3_BUCKET
               value: {{ .Values.ccbroker.s3.bucket | quote }}
-            - name: CCBROKER_S3_USE_SSL
-              value: {{ .Values.ccbroker.s3.useSSL | quote }}
             - name: CCBROKER_S3_PATH_STYLE
               value: {{ .Values.ccbroker.s3.pathStyle | quote }}
             - name: CCBROKER_S3_ACCESS_KEY_ID
