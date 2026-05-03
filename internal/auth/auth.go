@@ -113,6 +113,13 @@ func UserIDFromContext(ctx context.Context) string {
 	return v
 }
 
+// ContextWithUserID returns a copy of ctx with userID injected under the same
+// key that Middleware uses. Intended for use in tests that bypass the real
+// auth middleware.
+func ContextWithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, userIDKey, userID)
+}
+
 // GetUserByID returns user info by ID.
 func (a *Auth) GetUserByID(id string) (*db.User, error) {
 	return a.db.GetUserByID(id)

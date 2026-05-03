@@ -364,6 +364,9 @@ func (s *Server) Router() http.Handler {
 		// Agent interaction audit trail
 		r.Get("/api/workspaces/{wid}/agent-interactions", s.handleListInteractions)
 
+		// TUI inbound (user-authenticated prompt submission for TUI sessions)
+		r.Post("/api/workspaces/{wid}/tui/inbound", s.handleTUIInbound)
+
 		// Admin routes
 		r.Route("/api/admin", func(r chi.Router) {
 			r.Use(s.requireAdmin)
