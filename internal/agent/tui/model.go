@@ -489,9 +489,3 @@ func (m *Model) View() string {
 // writeRuntimeCwd is implemented in T16. Stubbed here for T12 to compile.
 func writeRuntimeCwd(executorID, cwd string) error { return nil }
 
-// RenderView is implemented in T13. Stubbed for T12 compile.
-// (DELETE when T13 adds the real one — until then, this is a placeholder
-// so handleNormalKey + Update have a working View target.)
-func RenderView(m *Model) string {
-	return "[view not yet implemented — Task 13]"
-}
