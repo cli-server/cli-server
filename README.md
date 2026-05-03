@@ -205,6 +205,9 @@ See the [API reference](docs/api-reference.md) for full endpoint documentation.
 | `STORAGE_CLASS` | K8s storage class for PVCs | (cluster default) |
 | `USER_DRIVE_SIZE` | Per-workspace storage size | `10Gi` |
 | `USER_DRIVE_STORAGE_CLASS` | Storage class for workspace drives | inherits `STORAGE_CLASS` |
+| `CC_BROKER_URL` | URL of the cc-broker service (required for TUI flow) | - |
+| `EXECUTOR_REGISTRY_URL` | URL of the executor-registry service (required for TUI flow) | - |
+| `INTERNAL_API_SECRET` | Shared secret for internal endpoints (recommended) | - |
 
 </details>
 

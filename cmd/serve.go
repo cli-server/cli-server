@@ -226,6 +226,7 @@ var serveCmd = &cobra.Command{
 		srv.ModelserverOAuthRedirectURI = os.Getenv("MODELSERVER_OAUTH_REDIRECT_URI")
 		srv.ModelserverProxyURL = os.Getenv("MODELSERVER_PROXY_URL")
 		srv.CCBrokerURL = os.Getenv("CC_BROKER_URL")
+		srv.ExecutorRegistryURL = os.Getenv("EXECUTOR_REGISTRY_URL")
 
 		// Hydra OAuth2 for agent Device Flow.
 		hydraAdminURL := os.Getenv("HYDRA_ADMIN_URL")
@@ -273,6 +274,10 @@ var serveCmd = &cobra.Command{
 		healthCtx, healthCancel := context.WithCancel(context.Background())
 		healthMon := server.NewAgentHealthMonitor(database)
 		go healthMon.Run(healthCtx)
+
+		// Leak worker: cleans up stale active turns and responders.
+		lw := server.NewLeakWorker(srv, server.LeakWorkerConfig{})
+		go lw.Run(healthCtx)
 
 		httpServer := &http.Server{Addr: addr, Handler: srv.Router()}
 
