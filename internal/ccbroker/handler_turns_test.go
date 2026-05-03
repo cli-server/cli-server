@@ -41,7 +41,7 @@ func TestHandleProcessTurn_OrchestratesPipeline(t *testing.T) {
 	}()
 
 	teardownCalled := atomic.Int32{}
-	workspaceSetup = func(_ context.Context, wid, sid string, _ *workspace.VikingClient) (*workspace.Workspace, error) {
+	workspaceSetup = func(_ context.Context, wid, sid string, _ *workspace.S3Store) (*workspace.Workspace, error) {
 		return &workspace.Workspace{
 			WorkspaceID: wid,
 			SessionID:   sid,
@@ -51,7 +51,7 @@ func TestHandleProcessTurn_OrchestratesPipeline(t *testing.T) {
 			MemoryDir:   "/tmp/fake/claude-config/projects/ws_" + wid + "/memory",
 		}, nil
 	}
-	workspaceTeardown = func(_ context.Context, _ *workspace.Workspace, _ *workspace.VikingClient) error {
+	workspaceTeardown = func(_ context.Context, _ *workspace.Workspace, _ *workspace.S3Store) error {
 		teardownCalled.Add(1)
 		return nil
 	}

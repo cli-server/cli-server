@@ -24,7 +24,10 @@ func main() {
 	}
 	defer store.Close()
 
-	srv := ccbroker.NewServer(cfg, store)
+	srv, err := ccbroker.NewServer(cfg, store)
+	if err != nil {
+		log.Fatalf("init server: %v", err)
+	}
 	httpServer := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.Routes(),

@@ -104,9 +104,8 @@ func (s *Server) handleProcessTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set up the per-turn workspace (download OpenViking tree, snapshot ClaudeDir).
-	vc := workspace.NewVikingClient(s.config.OpenVikingURL, s.config.OpenVikingAPIKey)
-	ws, err := workspaceSetup(r.Context(), req.WorkspaceID, req.SessionID, vc)
+	// Set up the per-turn workspace (download claude-home tarball from S3).
+	ws, err := workspaceSetup(r.Context(), req.WorkspaceID, req.SessionID, s.s3)
 	if err != nil {
 		s.logger.Error("workspace setup failed", "session_id", req.SessionID, "error", err)
 		writeError(w, http.StatusInternalServerError, "workspace setup failed")
@@ -124,7 +123,6 @@ func (s *Server) handleProcessTurn(w http.ResponseWriter, r *http.Request) {
 		IMBridgeURL:         s.config.IMBridgeURL,
 		InternalAPISecret:   s.config.IMBridgeSecret,
 		Workspace:           ws,
-		Viking:              vc,
 		HTTP:                http.DefaultClient,
 	}
 	mcp := tools.BuildMcpServer(tctx)
@@ -145,7 +143,7 @@ func (s *Server) handleProcessTurn(w http.ResponseWriter, r *http.Request) {
 	msgCh, err := runnerRun(r.Context(), ws, req.SessionID, req.UserMessage, runCfg, mcp)
 	if err != nil {
 		s.logger.Error("runner.Run failed", "session_id", req.SessionID, "error", err)
-		go workspaceTeardown(context.Background(), ws, vc) //nolint:errcheck
+		go workspaceTeardown(context.Background(), ws, s.s3) //nolint:errcheck
 		writeError(w, http.StatusInternalServerError, "failed to start SDK session")
 		return
 	}
@@ -153,7 +151,7 @@ func (s *Server) handleProcessTurn(w http.ResponseWriter, r *http.Request) {
 	// Check flusher BEFORE setting SSE headers.
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		go workspaceTeardown(context.Background(), ws, vc) //nolint:errcheck
+		go workspaceTeardown(context.Background(), ws, s.s3) //nolint:errcheck
 		writeError(w, http.StatusInternalServerError, "streaming not supported")
 		return
 	}
@@ -174,7 +172,7 @@ func (s *Server) handleProcessTurn(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer workspaceTeardown(context.Background(), ws, vc) //nolint:errcheck
+		defer workspaceTeardown(context.Background(), ws, s.s3) //nolint:errcheck
 		for sdkMsg := range msgCh {
 			evt, convErr := runner.ToEventPayload(sdkMsg)
 			if convErr != nil {
