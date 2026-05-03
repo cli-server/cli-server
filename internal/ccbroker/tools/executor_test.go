@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	agentsdk "github.com/agentserver/claude-agent-sdk-go"
 )
@@ -194,5 +196,116 @@ func TestExecutorTools_RegistersAll8Tools(t *testing.T) {
 		if toolByName(tools, name) == nil {
 			t.Errorf("missing tool: %s", name)
 		}
+	}
+}
+
+// textOfResult extracts the first content text from a McpToolResult.
+func textOfResult(r *agentsdk.McpToolResult) string {
+	if r == nil || len(r.Content) == 0 {
+		return ""
+	}
+	return r.Content[0].Text
+}
+
+// TestRemoteBash_BlockedByGateAsk verifies that gateCheck emits a
+// permission_request event in "ask" mode and returns an IsError result
+// with a "permission_denied" reason code when the user denies.
+func TestRemoteBash_BlockedByGateAsk(t *testing.T) {
+	notified := make(chan Event, 4)
+	g := NewGate(func(_ string, e Event) {
+		select {
+		case notified <- e:
+		default:
+		}
+	})
+	tctx := &Context{
+		SessionID:           "s",
+		WorkspaceID:         "ws",
+		Gate:                g,
+		PermissionMode:      "ask",
+		CreatorUserID:       "u",
+		CurrentTurnID:       "t1",
+		ExecutorRegistryURL: "http://exec-reg-must-not-be-called",
+		HTTP:                &http.Client{Timeout: time.Second},
+	}
+
+	// Stub out the executor lookup so no real HTTP call is made.
+	origLookup := lookupExecutor
+	lookupExecutor = func(_ context.Context, _ *Context, _ string) (lookupResult, error) {
+		return lookupResult{OwnerUserID: "u", SharedToWorkspace: false}, nil
+	}
+	defer func() { lookupExecutor = origLookup }()
+
+	rawArgs, _ := json.Marshal(map[string]string{"command": "ls"})
+	done := make(chan *agentsdk.McpToolResult, 1)
+	go func() {
+		res := gateCheck(context.Background(), tctx, "remote_bash", "exe_a", json.RawMessage(rawArgs))
+		done <- res
+	}()
+
+	// Wait for the permission_request event, then deny it.
+	select {
+	case ev := <-notified:
+		if ev.Type != "permission_request" {
+			t.Fatalf("first event = %q, want permission_request", ev.Type)
+		}
+		if err := g.Resolve(ev.PermissionID, Decision{Verdict: "deny", Scope: "once"}); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no permission_request emitted within timeout")
+	}
+
+	select {
+	case res := <-done:
+		if res == nil || !res.IsError {
+			t.Errorf("expected IsError result, got %+v", res)
+		}
+		if !strings.Contains(textOfResult(res), "permission_denied") {
+			t.Errorf("error text missing reason code: %s", textOfResult(res))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("gateCheck didn't return after deny")
+	}
+}
+
+// TestRemoteBash_BypassDispatchesToRegistry verifies that in "bypass" mode
+// the gate is skipped and the call is forwarded to executor-registry.
+func TestRemoteBash_BypassDispatchesToRegistry(t *testing.T) {
+	var registryHit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/api/execute") {
+			registryHit = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"output":"hello","exit_code":0}`))
+		}
+	}))
+	defer srv.Close()
+
+	tctx := &Context{
+		SessionID:           "s",
+		Gate:                NewGate(func(_ string, _ Event) {}),
+		PermissionMode:      "bypass",
+		CreatorUserID:       "u",
+		ExecutorRegistryURL: srv.URL,
+		HTTP:                srv.Client(),
+	}
+
+	origLookup := lookupExecutor
+	lookupExecutor = func(_ context.Context, _ *Context, _ string) (lookupResult, error) {
+		return lookupResult{OwnerUserID: "u"}, nil
+	}
+	defer func() { lookupExecutor = origLookup }()
+
+	res, err := forwardExecute(context.Background(), tctx, "remote_bash", "Bash",
+		remoteBashInput{ExecutorID: "exe_a", Command: "ls"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || res.IsError {
+		t.Errorf("expected non-error result, got %+v", res)
+	}
+	if !registryHit {
+		t.Error("expected dispatch to executor-registry, but /api/execute was never hit")
 	}
 }
