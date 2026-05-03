@@ -18,8 +18,18 @@ type TUIOpts struct {
 	ResponderTTL    string
 }
 
-// RunTUI is the entry point for the `tui` subcommand. Stubbed in Task 1;
-// completed in Task 14 once Model + Bus + AuthController are wired.
+// RunTUI is the entry point for the `tui` subcommand. The actual wiring lives
+// in cmd/agentserver-agent/tui_run.go to avoid the import cycle that would
+// arise if this package imported internal/agent/tui (which already imports
+// internal/agent).
+//
+// cmd/agentserver-agent sets RunTUIFunc at init() time.
+var RunTUIFunc func(ctx context.Context, opts TUIOpts) error
+
+// RunTUI delegates to RunTUIFunc, which is wired by the binary's init().
 func RunTUI(ctx context.Context, opts TUIOpts) error {
-	return errors.New("tui: not yet implemented (Task 14 will wire it)")
+	if RunTUIFunc == nil {
+		return errors.New("tui: RunTUIFunc not wired (missing cmd/agentserver-agent/tui_run.go init)")
+	}
+	return RunTUIFunc(ctx, opts)
 }
