@@ -17,8 +17,10 @@ import (
 
 // handleAnthropicProxy proxies Anthropic API requests, recording token usage and trace data.
 func (s *Server) handleAnthropicProxy(w http.ResponseWriter, r *http.Request) {
-	// 1. Validate proxy token (x-api-key header).
-	proxyToken := r.Header.Get("x-api-key")
+	// 1. Validate proxy token. Accept either x-api-key (sandbox-style) or
+	// Authorization: Bearer (workspace-style from cc-broker). The token
+	// itself is opaque — the validation result tells us which kind it is.
+	proxyToken := extractProxyToken(r.Header)
 	if proxyToken == "" {
 		http.Error(w, "missing api key", http.StatusUnauthorized)
 		return
@@ -34,7 +36,9 @@ func (s *Server) handleAnthropicProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid api key", http.StatusUnauthorized)
 		return
 	}
-	if sbx.Status != "running" && sbx.Status != "creating" {
+	// Sandbox-scoped tokens are only authoritative while the sandbox is alive.
+	// Workspace-scoped tokens have no lifecycle gating.
+	if sbx.TokenType == "sandbox" && sbx.Status != "running" && sbx.Status != "creating" {
 		http.Error(w, "sandbox not active", http.StatusForbidden)
 		return
 	}
