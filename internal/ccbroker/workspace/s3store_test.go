@@ -228,3 +228,48 @@ func keysOf(m map[string][]byte) []string {
 	}
 	return out
 }
+
+func TestUploadTarGz_SkipsSymlinks(t *testing.T) {
+	fake := newFakeS3("ccbroker")
+	store, srv := newTestStore(t, fake)
+	defer srv.Close()
+
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "real.txt"), []byte("real"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/passwd", filepath.Join(src, "link")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	key := "workspaces/ws1/claude-home.tar.gz"
+	if err := store.UploadTarGz(context.Background(), src, key); err != nil {
+		t.Fatalf("UploadTarGz: %v", err)
+	}
+
+	// Inspect the captured upload: walk the tar entries by name.
+	uploaded := fake.uploads[key]
+	gr, err := gzip.NewReader(bytes.NewReader(uploaded))
+	if err != nil {
+		t.Fatalf("gzip reader: %v", err)
+	}
+	defer gr.Close()
+	tr := tar.NewReader(gr)
+	names := map[string]bool{}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("tar next: %v", err)
+		}
+		names[hdr.Name] = true
+	}
+	if !names["real.txt"] {
+		t.Fatalf("real.txt missing from upload; names=%v", names)
+	}
+	if names["link"] {
+		t.Fatalf("symlink entry should have been skipped; names=%v", names)
+	}
+}
