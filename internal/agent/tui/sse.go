@@ -86,6 +86,13 @@ func (s *SSEConsumer) connectOnce(ctx context.Context, out chan<- SSEEvent) erro
 		return err
 	}
 	url := s.bus.ServerURL() + "/api/agents/sessions/" + s.cfg.SessionID + "/events"
+	// First connect: pull a backlog so events emitted between session
+	// creation and SSE subscribe (cc-broker is async — a fast turn can
+	// finish before the consumer is wired up) are not lost. Reconnects
+	// use Last-Event-ID instead.
+	if s.lastID == "" {
+		url += "?tail=500"
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
