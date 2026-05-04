@@ -28,6 +28,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("init server: %v", err)
 	}
+	if err := srv.Start(context.Background()); err != nil {
+		log.Fatalf("ccbroker: recovery failed: %v", err)
+	}
 	httpServer := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.Routes(),
