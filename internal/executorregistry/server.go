@@ -42,6 +42,10 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/api/executors", s.handleListExecutors)
 	r.Get("/api/executors/{id}", s.handleGetExecutor)
 	r.Put("/api/executors/{id}/capabilities", s.handleUpdateCapabilities)
+	// Tunnel: served under /api/executors/* so the gateway's
+	// /api/executors PathPrefix routes it here. The legacy /api/tunnel/{id}
+	// alias is retained so older agent binaries keep working until they upgrade.
+	r.Get("/api/executors/{executor_id}/tunnel", s.handleTunnel)
 	r.Get("/api/tunnel/{executor_id}", s.handleTunnel)
 	r.Post("/api/execute", s.handleExecute)
 
