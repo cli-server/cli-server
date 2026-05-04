@@ -63,9 +63,16 @@ func (s *Server) handleTurnEvents(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("turn events catch-up failed; continuing with live tail only", "turn_id", tid, "error", err)
 	}
 
-	// If turn was already terminal at request time and DB had no events past
-	// since, end here. Otherwise tail.
-	if isTerminalTurnState(turn.State) && len(seenSeqs) == 0 {
+	// Re-check turn state after the catch-up replay: the turn may have
+	// transitioned to terminal between our initial GetTurn and the catch-up
+	// query. Even if it didn't, an originally-terminal turn must end here —
+	// no live SSE terminal event will arrive (the worker's terminal events
+	// aren't persisted, only broadcast).
+	postState := turn.State
+	if fresh, err := s.store.GetTurn(r.Context(), tid); err == nil && fresh != nil {
+		postState = fresh.State
+	}
+	if isTerminalTurnState(postState) {
 		fmt.Fprintf(w, "data: {\"event_type\":\"done\",\"turn_id\":%q}\n\n", tid)
 		flusher.Flush()
 		return
