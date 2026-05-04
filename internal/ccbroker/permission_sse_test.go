@@ -21,7 +21,6 @@ func newFakeServerWithRealGate(t *testing.T) *Server {
 		config:       Config{},
 		store:        newFakeStore(),
 		sse:          NewSSEBroker(),
-		turnLock:     NewTurnLock(),
 		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		activeTurns:  newActiveTurnRegistry(),
 		compactQueue: newCompactQueue(),

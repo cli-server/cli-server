@@ -1,48 +1,24 @@
 package ccbroker
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
-	agentsdk "github.com/agentserver/claude-agent-sdk-go"
 	"github.com/google/uuid"
-
-	"github.com/agentserver/agentserver/internal/ccbroker/runner"
-	"github.com/agentserver/agentserver/internal/ccbroker/tools"
-	"github.com/agentserver/agentserver/internal/ccbroker/workspace"
-)
-
-// Test seams. Do not reassign in production.
-var (
-	workspaceSetup    = workspace.Setup
-	workspaceTeardown = workspace.Teardown
-	runnerRun         = func(ctx context.Context, ws *workspace.Workspace, sessionID, userMessage string, cfg runner.Config, mcp *agentsdk.McpSdkServer) (<-chan agentsdk.SDKMessage, error) {
-		return runner.Run(ctx, ws, sessionID, userMessage, cfg, mcp)
-	}
 )
 
 // TurnMetadata carries optional per-turn metadata sent by TUI / API callers.
-// IM inbound turns omit this field entirely; defaults apply (ChannelType="im",
-// PermissionMode="bypass").
 type TurnMetadata struct {
 	ChannelType         string `json:"channel_type,omitempty"`
 	CreatorUserID       string `json:"creator_user_id,omitempty"`
 	PermissionMode      string `json:"permission_mode,omitempty"`
 	Model               string `json:"model,omitempty"`
 	PreferredExecutorID string `json:"preferred_executor_id,omitempty"`
-	TurnKind            string `json:"turn_kind,omitempty"` // "user" | "compaction"
+	TurnKind            string `json:"turn_kind,omitempty"`
 }
 
-// ProcessTurnRequest is the external API request body for POST /api/turns.
-//
-// IMChannelID and IMUserID are optional. When set (for turns originated by an
-// IM inbound) the cc-broker ToolRouter can route send_* MCP tool calls back
-// through imbridge to the originating IM channel / user.
-//
-// Metadata is optional. When absent (legacy IM turns), defaults apply.
 type ProcessTurnRequest struct {
 	SessionID   string       `json:"session_id"`
 	WorkspaceID string       `json:"workspace_id"`
@@ -52,7 +28,6 @@ type ProcessTurnRequest struct {
 	Metadata    TurnMetadata `json:"metadata,omitempty"`
 }
 
-// defaultStr returns v if non-empty, otherwise def.
 func defaultStr(v, def string) string {
 	if v == "" {
 		return def
@@ -60,10 +35,15 @@ func defaultStr(v, def string) string {
 	return v
 }
 
-// handleProcessTurn handles POST /api/turns. It acquires the turn lock for
-// the session, ensures the session exists, inserts the user message, runs
-// the SDK session in-process, and streams SSE events back to the caller
-// until the SDK stream ends or the client disconnects.
+const maxPendingPerSession = 16
+
+// handleProcessTurn is the synchronous wrapper around the async queue. It:
+//  1. Validates and persists the user message + agent_turns row
+//  2. Notifies the per-session worker
+//  3. Subscribes to SSEBroker, filters by this turn_id, streams to client
+//  4. Returns when a terminal event for this turn arrives, or on disconnect
+//
+// The handler never calls runner.Run; the worker does.
 func (s *Server) handleProcessTurn(w http.ResponseWriter, r *http.Request) {
 	var req ProcessTurnRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -74,25 +54,6 @@ func (s *Server) handleProcessTurn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "session_id, workspace_id, and user_message are required")
 		return
 	}
-
-	// Generate a unique ID for this turn. Used by the permission gate and for
-	// tracing across logs.
-	turnID := "trn_" + uuid.NewString()
-
-	// Phase 1 Task 13: register this turn in activeTurns so cancel/leak-worker
-	// can reach it. The cancel propagates into turnCtx which is passed to the
-	// runner (so handleCancelTurn can abort the SDK invocation).
-	turnCtx, cancelTurn := context.WithCancel(r.Context())
-	s.activeTurns.Set(req.SessionID, turnID, cancelTurn)
-	defer func() {
-		cancelTurn()
-		s.activeTurns.Clear(req.SessionID, turnID)
-		s.callTurnFinished(req.SessionID, turnID)
-	}()
-
-	// Acquire turn lock so only one turn runs per session at a time.
-	s.turnLock.Acquire(req.SessionID)
-	defer s.turnLock.Release(req.SessionID)
 
 	// Ensure session exists.
 	sess, err := s.store.GetSession(r.Context(), req.SessionID)
@@ -107,20 +68,27 @@ func (s *Server) handleProcessTurn(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get current epoch for event insertion.
+	// Per-session backpressure.
+	pending, err := s.store.CountPending(r.Context(), req.SessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check pending depth")
+		return
+	}
+	if pending >= maxPendingPerSession {
+		writeError(w, http.StatusTooManyRequests, "too many pending turns for this session")
+		return
+	}
+
+	turnID := "trn_" + uuid.NewString()
+
 	epoch, err := s.store.GetSessionEpoch(r.Context(), req.SessionID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get session epoch")
 		return
 	}
 
-	// Insert user message as an event. The payload follows the Claude Code
-	// SDK's SDKUserMessage shape (type:"user", message:{role,content},
-	// parent_tool_use_id, session_id) — CC parses events from the bridge
-	// event-stream against this structure. A simpler `{type, content}`
-	// payload is silently ignored by CC and the turn runs with no user input.
-	eventUUID := uuid.NewString()
-	payload, _ := json.Marshal(map[string]interface{}{
+	userEventID := uuid.NewString()
+	userPayload, _ := json.Marshal(map[string]interface{}{
 		"type": "user",
 		"message": map[string]interface{}{
 			"role":    "user",
@@ -129,154 +97,54 @@ func (s *Server) handleProcessTurn(w http.ResponseWriter, r *http.Request) {
 		"parent_tool_use_id": nil,
 		"session_id":         req.SessionID,
 	})
-	_, err = s.store.InsertEvents(r.Context(), req.SessionID, epoch, []EventInput{
-		{
-			EventID:   eventUUID,
-			Payload:   payload,
-			Ephemeral: false,
-		},
-	})
-	if err != nil {
+	if _, err := s.store.InsertEventsWithTurn(r.Context(), req.SessionID, epoch, turnID, []EventInput{
+		{EventID: userEventID, Payload: userPayload, Ephemeral: false},
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to insert user message")
 		return
 	}
 
-	// Acquire the workspace's persistent proxy token first, before any
-	// expensive S3 setup, so a token-fetch failure (agentserver down,
-	// network glitch) doesn't waste a tarball download we'd have to clean up.
-	// Cache hit is in-memory; the only slow path is first-time per workspace.
-	// CC sends this as Authorization: Bearer via the ANTHROPIC_AUTH_TOKEN env;
-	// llmproxy uses it to authorize on behalf of this workspace.
-	wsTok, err := s.wstoken(r.Context(), req.WorkspaceID)
-	if err != nil {
-		s.logger.Error("workspace token fetch failed", "workspace_id", req.WorkspaceID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to acquire workspace token")
+	metaBytes, _ := json.Marshal(req.Metadata)
+	turn := AgentTurn{
+		ID:          turnID,
+		SessionID:   req.SessionID,
+		WorkspaceID: req.WorkspaceID,
+		UserEventID: userEventID,
+		UserMessage: req.UserMessage,
+		Metadata:    metaBytes,
+	}
+	if req.IMChannelID != "" {
+		turn.IMChannelID.String, turn.IMChannelID.Valid = req.IMChannelID, true
+	}
+	if req.IMUserID != "" {
+		turn.IMUserID.String, turn.IMUserID.Valid = req.IMUserID, true
+	}
+	if err := s.store.EnqueueTurn(r.Context(), turn); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to enqueue turn")
 		return
 	}
 
-	// Set up the per-turn workspace (download claude-home tarball from S3).
-	ws, err := workspaceSetup(r.Context(), req.WorkspaceID, req.SessionID, s.s3)
-	if err != nil {
-		s.logger.Error("workspace setup failed", "session_id", req.SessionID, "error", err)
-		writeError(w, http.StatusInternalServerError, "workspace setup failed")
-		return
-	}
+	// Subscribe BEFORE notifying so we can't miss the worker's first event.
+	sub := s.sse.Subscribe(req.SessionID)
+	defer s.sse.Unsubscribe(req.SessionID, sub)
 
-	// Build the in-process MCP server with this turn's identity + dependencies.
-	tctx := &tools.Context{
-		SessionID:           req.SessionID,
-		WorkspaceID:         req.WorkspaceID,
-		IMChannelID:         req.IMChannelID,
-		IMUserID:            req.IMUserID,
-		ExecutorRegistryURL: s.config.ExecutorRegistryURL,
-		AgentserverURL:      s.config.AgentserverURL,
-		IMBridgeURL:         s.config.IMBridgeURL,
-		InternalAPISecret:   s.config.IMBridgeSecret,
-		Workspace:           ws,
-		HTTP:                http.DefaultClient,
+	s.workerRegistry.Notify(req.SessionID)
 
-		// Phase 1 Task 7: TUI metadata threading.
-		ChannelType:            defaultStr(req.Metadata.ChannelType, "im"),
-		CreatorUserID:          req.Metadata.CreatorUserID,
-		PermissionMode:         defaultStr(req.Metadata.PermissionMode, "bypass"),
-		PreferredExecutorID:    req.Metadata.PreferredExecutorID,
-		Gate:                   s.gate,
-		AgentserverInternalURL: s.config.AgentserverInternalURL,
-		CurrentTurnID:          turnID,
-	}
-	mcp := tools.BuildMcpServer(tctx)
-
-	// Phase 1 Task 13: honor any compaction request queued since the previous turn.
-	if s.compactQueue.Take(req.SessionID) {
-		req.Metadata.TurnKind = "compaction"
-	}
-
-	// Build runner config + turn metadata. AnthropicAPIKey is deliberately
-	// left empty so CC sends Bearer only (no x-api-key), terminating at
-	// llmproxy with the workspace token acquired above.
-	runCfg := runner.Config{
-		SystemPrompt:             "", // CC default; override later if we add a workspace prompt
-		MaxTurns:                 0,  // unlimited; rely on auto-compact
-		AnthropicAuthToken:       wsTok,
-		AnthropicBaseURL:         s.config.LLMProxyURL,
-		DisableFileCheckpointing: true,
-		AutoCompactWindow:        165000,
-
-		// Phase 1 Task 7: TUI metadata threading.
-		SessionID:           req.SessionID,
-		TurnID:              turnID,
-		ChannelType:         tctx.ChannelType,
-		CreatorUserID:       tctx.CreatorUserID,
-		PermissionMode:      tctx.PermissionMode,
-		Model:               req.Metadata.Model,
-		PreferredExecutorID: tctx.PreferredExecutorID,
-		TurnKind:            req.Metadata.TurnKind,
-	}
-
-	// Start the SDK session. Returns a channel of SDKMessages that closes
-	// when the CC subprocess exits, ctx is cancelled, or the SDK errors.
-	// Use turnCtx (not r.Context()) so handleCancelTurn can abort the runner.
-	msgCh, err := runnerRun(turnCtx, ws, req.SessionID, req.UserMessage, runCfg, mcp)
-	if err != nil {
-		s.logger.Error("runner.Run failed", "session_id", req.SessionID, "error", err)
-		go workspaceTeardown(context.Background(), ws, s.s3) //nolint:errcheck
-		writeError(w, http.StatusInternalServerError, "failed to start SDK session")
-		return
-	}
-
-	// Check flusher BEFORE setting SSE headers.
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		go workspaceTeardown(context.Background(), ws, s.s3) //nolint:errcheck
 		writeError(w, http.StatusInternalServerError, "streaming not supported")
 		return
 	}
-
-	// Set SSE response headers.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
 
-	// Subscribe to session SSE events (the pump goroutine below broadcasts here).
-	sub := s.sse.Subscribe(req.SessionID)
-	defer s.sse.Unsubscribe(req.SessionID, sub)
-
-	// Pump SDKMessages → DB + SSE broadcast. Closes `done` when the SDK channel
-	// drains so the for-select loop below can flush the SSE subscription and
-	// emit the "done" sentinel.
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		defer workspaceTeardown(context.Background(), ws, s.s3) //nolint:errcheck
-		for sdkMsg := range msgCh {
-			evt, convErr := runner.ToEventPayload(sdkMsg)
-			if convErr != nil {
-				s.logger.Warn("ToEventPayload failed", "session_id", req.SessionID, "error", convErr)
-				continue
-			}
-			eventID := uuid.NewString()
-			var seqNum int64
-			if !evt.Ephemeral {
-				inserted, insertErr := s.store.InsertEvents(context.Background(), req.SessionID, epoch, []EventInput{
-					{EventID: eventID, Payload: evt.Payload, Ephemeral: false},
-				})
-				if insertErr != nil {
-					s.logger.Warn("InsertEvents failed", "session_id", req.SessionID, "error", insertErr)
-				} else if len(inserted) > 0 {
-					seqNum = inserted[0].SeqNum
-				}
-			}
-			s.sse.Publish(req.SessionID, &StreamClientEvent{
-				EventID:     eventID,
-				SequenceNum: seqNum,
-				EventType:   "client_event",
-				Source:      "worker",
-				Payload:     evt.Payload,
-				CreatedAt:   time.Now().Format(time.RFC3339Nano),
-			})
-		}
-	}()
+	// Send turn_id in the prelude so clients know which turn this stream
+	// represents.
+	fmt.Fprintf(w, "data: {\"event_type\":\"turn_started\",\"turn_id\":%q}\n\n", turnID)
+	flusher.Flush()
 
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
@@ -284,41 +152,34 @@ func (s *Server) handleProcessTurn(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
-			// Client disconnected. runner.Run's internal goroutine already
-			// watches ctx and closes the SDK; teardown happens via the pump
-			// goroutine's defer.
+			// Client disconnected; the worker keeps running. Cancel is a
+			// separate explicit endpoint.
 			return
-
 		case evt := <-sub.Ch:
+			if evt.TurnID != "" && evt.TurnID != turnID {
+				continue // belongs to another turn on this session
+			}
 			data, _ := json.Marshal(evt)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
-
-		case <-sub.Done():
-			// Subscriber was closed (e.g. channel overflow).
-			return
-
-		case <-done:
-			// SDK stream ended. Drain remaining buffered events.
-			for {
-				select {
-				case evt := <-sub.Ch:
-					data, _ := json.Marshal(evt)
-					fmt.Fprintf(w, "data: %s\n\n", data)
-					flusher.Flush()
-				default:
-					goto drained
-				}
+			if isTerminalEventType(evt.EventType) && evt.TurnID == turnID {
+				fmt.Fprintf(w, "data: {\"event_type\":\"done\",\"turn_id\":%q}\n\n", turnID)
+				flusher.Flush()
+				return
 			}
-		drained:
-			// Send done sentinel.
-			fmt.Fprintf(w, "data: {\"event_type\":\"done\"}\n\n")
-			flusher.Flush()
+		case <-sub.Done():
 			return
-
 		case <-keepalive.C:
 			fmt.Fprintf(w, ":keepalive\n\n")
 			flusher.Flush()
 		}
 	}
+}
+
+func isTerminalEventType(t string) bool {
+	switch t {
+	case "turn_done", "turn_cancelled", "turn_failed":
+		return true
+	}
+	return false
 }

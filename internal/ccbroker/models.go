@@ -33,6 +33,7 @@ type StreamClientEvent struct {
 	SequenceNum int64           `json:"sequence_num"`
 	EventType   string          `json:"event_type"`
 	Source      string          `json:"source"`
+	TurnID      string          `json:"turn_id,omitempty"`
 	Payload     json.RawMessage `json:"payload"`
 	CreatedAt   string          `json:"created_at"`
 }

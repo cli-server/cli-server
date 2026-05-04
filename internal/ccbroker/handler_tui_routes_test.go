@@ -3,12 +3,16 @@ package ccbroker
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/agentserver/agentserver/internal/ccbroker/tools"
 )
@@ -84,6 +88,13 @@ func TestDecidePermission_AlreadyResolved(t *testing.T) {
 
 func TestCancelTurn_Active(t *testing.T) {
 	s := newRoutesTestServer(t)
+	store := newFakeStore()
+	s.store = store
+	store.sessions["s1"] = &Session{ID: "s1", WorkspaceID: "ws"}
+	_ = store.EnqueueTurn(context.Background(), AgentTurn{
+		ID: "t1", SessionID: "s1", WorkspaceID: "ws", UserEventID: "e", UserMessage: "x",
+	})
+	_ = store.MarkTurnRunning(context.Background(), "t1")
 	cancelled := false
 	s.activeTurns.Set("s1", "t1", func() { cancelled = true })
 
@@ -91,27 +102,83 @@ func TestCancelTurn_Active(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/sessions/s1/turns/t1/cancel", nil)
 	s.Routes().ServeHTTP(rr, req)
 	if rr.Code != http.StatusAccepted {
-		t.Errorf("status %d", rr.Code)
+		t.Errorf("status %d body=%s", rr.Code, rr.Body)
 	}
 	if !cancelled {
 		t.Errorf("cancel func not invoked")
 	}
+	if !strings.Contains(rr.Body.String(), `"was":"running"`) {
+		t.Errorf("body %s should report was:running", rr.Body)
+	}
 }
 
-func TestCancelTurn_NoOpOnMismatch(t *testing.T) {
+func TestCancelTurn_UnknownTurnReturns404(t *testing.T) {
 	s := newRoutesTestServer(t)
+	store := newFakeStore()
+	s.store = store
 	cancelled := false
 	s.activeTurns.Set("s1", "t1", func() { cancelled = true })
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/sessions/s1/turns/t_DIFFERENT/cancel", nil)
 	s.Routes().ServeHTTP(rr, req)
-	// Should still succeed (idempotent), but cancel func not called
-	if rr.Code != http.StatusAccepted {
-		t.Errorf("status %d", rr.Code)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status %d want 404", rr.Code)
 	}
 	if cancelled {
-		t.Errorf("cancel func should NOT be invoked for mismatched tid")
+		t.Errorf("cancel func should NOT be invoked for unknown tid")
+	}
+}
+
+func TestCancelQueuedTurn(t *testing.T) {
+	store := newFakeStore()
+	sse := NewSSEBroker()
+	srv := &Server{
+		store: store, sse: sse,
+		activeTurns: newActiveTurnRegistry(),
+		gate:        tools.NewGate(func(string, tools.Event) {}),
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	store.sessions["sess_q"] = &Session{ID: "sess_q", WorkspaceID: "ws"}
+	_ = store.EnqueueTurn(context.Background(), AgentTurn{
+		ID: "trn_q", SessionID: "sess_q", WorkspaceID: "ws", UserEventID: "e", UserMessage: "x",
+	})
+
+	r := chi.NewRouter()
+	r.Post("/api/sessions/{sid}/turns/{tid}/cancel", srv.handleCancelTurn)
+	req := httptest.NewRequest("POST", "/api/sessions/sess_q/turns/trn_q/cancel", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatalf("expected 200/202, got %d", rec.Code)
+	}
+	got, _ := store.GetTurn(context.Background(), "trn_q")
+	if got.State != "cancelled" {
+		t.Fatalf("expected cancelled, got %s", got.State)
+	}
+}
+
+func TestCancelTerminalTurnReturns410(t *testing.T) {
+	store := newFakeStore()
+	srv := &Server{
+		store: store, sse: NewSSEBroker(),
+		activeTurns: newActiveTurnRegistry(),
+		gate:        tools.NewGate(func(string, tools.Event) {}),
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	_ = store.EnqueueTurn(context.Background(), AgentTurn{
+		ID: "trn_t", SessionID: "sess_t", WorkspaceID: "ws", UserEventID: "e", UserMessage: "x",
+	})
+	_ = store.MarkTurnDone(context.Background(), "trn_t")
+
+	r := chi.NewRouter()
+	r.Post("/api/sessions/{sid}/turns/{tid}/cancel", srv.handleCancelTurn)
+	req := httptest.NewRequest("POST", "/api/sessions/sess_t/turns/trn_t/cancel", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d", rec.Code)
 	}
 }
 

@@ -14,19 +14,59 @@ import (
 func (s *Server) handleCancelTurn(w http.ResponseWriter, r *http.Request) {
 	sid := chi.URLParam(r, "sid")
 	tid := chi.URLParam(r, "tid")
-	s.activeTurns.Cancel(sid, tid)
-	s.gate.CancelTurn(tid)
-	// Broadcast turn_cancelled so TUI subscribers see it.
+
+	turn, err := s.store.GetTurn(r.Context(), tid)
+	if err != nil {
+		http.Error(w, `{"code":"internal"}`, http.StatusInternalServerError)
+		return
+	}
+	if turn == nil || turn.SessionID != sid {
+		http.Error(w, `{"code":"not_found"}`, http.StatusNotFound)
+		return
+	}
+
+	switch turn.State {
+	case "queued":
+		if err := s.store.MarkTurnCancelled(r.Context(), tid); err != nil {
+			http.Error(w, `{"code":"internal"}`, http.StatusInternalServerError)
+			return
+		}
+		// Race window: between the GetTurn above and MarkTurnCancelled here,
+		// the worker may have picked the turn and called MarkTurnRunning. The
+		// UPDATE still succeeds (state IN ('queued','running')), so we must
+		// also signal the in-mem registry to cancel the runner's turnCtx if
+		// it was promoted. Cancel is a safe no-op when the tid doesn't match.
+		s.activeTurns.Cancel(sid, tid)
+		s.gate.CancelTurn(tid)
+		s.broadcastTurnCancelled(sid, tid)
+		w.WriteHeader(http.StatusAccepted)
+		w.Write([]byte(`{"cancelled":true,"was":"queued"}`))
+	case "running":
+		if err := s.store.MarkTurnCancelled(r.Context(), tid); err != nil {
+			http.Error(w, `{"code":"internal"}`, http.StatusInternalServerError)
+			return
+		}
+		s.activeTurns.Cancel(sid, tid)
+		s.gate.CancelTurn(tid)
+		s.broadcastTurnCancelled(sid, tid)
+		w.WriteHeader(http.StatusAccepted)
+		w.Write([]byte(`{"cancelled":true,"was":"running"}`))
+	default:
+		w.WriteHeader(http.StatusGone)
+		w.Write([]byte(`{"code":"already_terminal","state":"` + turn.State + `"}`))
+	}
+}
+
+func (s *Server) broadcastTurnCancelled(sid, tid string) {
 	payload, _ := json.Marshal(map[string]string{"turn_id": tid})
 	s.sse.Publish(sid, &StreamClientEvent{
 		EventID:   "evt_" + uuid.NewString(),
 		EventType: "turn_cancelled",
 		Source:    "broker",
+		TurnID:    tid,
 		Payload:   payload,
 		CreatedAt: time.Now().Format(time.RFC3339Nano),
 	})
-	w.WriteHeader(http.StatusAccepted)
-	w.Write([]byte(`{"cancelled":true}`))
 }
 
 func (s *Server) handleDecidePermission(w http.ResponseWriter, r *http.Request) {
