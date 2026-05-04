@@ -25,6 +25,20 @@ type storer interface {
 	CreateSession(ctx context.Context, id, workspaceID, title, source string, externalID *string) error
 	GetSessionEpoch(ctx context.Context, sessionID string) (int, error)
 	InsertEvents(ctx context.Context, sessionID string, epoch int, events []EventInput) ([]InsertedEvent, error)
+	InsertEventsWithTurn(ctx context.Context, sessionID string, epoch int, turnID string, events []EventInput) ([]InsertedEvent, error)
+
+	// Turn queue ops
+	EnqueueTurn(ctx context.Context, t AgentTurn) error
+	PickNextPending(ctx context.Context, sessionID string) (*AgentTurn, error)
+	MarkTurnRunning(ctx context.Context, turnID string) error
+	MarkTurnDone(ctx context.Context, turnID string) error
+	MarkTurnCancelled(ctx context.Context, turnID string) error
+	MarkTurnFailed(ctx context.Context, turnID, errMsg string) error
+	GetTurn(ctx context.Context, turnID string) (*AgentTurn, error)
+	ListSessionsWithPending(ctx context.Context) ([]string, error)
+	ListSessionTurns(ctx context.Context, sessionID string, limit int) ([]AgentTurn, error)
+	ResetRunningToQueued(ctx context.Context) (int, error)
+	CountPending(ctx context.Context, sessionID string) (int, error)
 }
 
 type Server struct {

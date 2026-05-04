@@ -159,40 +159,7 @@ func (s *Store) GetSessionEpoch(ctx context.Context, sessionID string) (int, err
 // InsertEvents inserts a batch of events, skipping duplicates.
 // Returns only the successfully inserted events with their sequence numbers.
 func (s *Store) InsertEvents(ctx context.Context, sessionID string, epoch int, events []EventInput) ([]InsertedEvent, error) {
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO agent_session_events (session_id, event_id, event_type, source, epoch, payload, ephemeral)
-		 VALUES ($1, $2, 'client_event', 'worker', $3, $4, $5)
-		 ON CONFLICT (event_id) DO NOTHING
-		 RETURNING id`,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("prepare insert events: %w", err)
-	}
-	defer stmt.Close()
-
-	var inserted []InsertedEvent
-	for _, e := range events {
-		var seqNum int64
-		err := stmt.QueryRowContext(ctx, sessionID, e.EventID, epoch, e.Payload, e.Ephemeral).Scan(&seqNum)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue // duplicate event_id — skip
-		}
-		if err != nil {
-			return nil, fmt.Errorf("insert event %s: %w", e.EventID, err)
-		}
-		inserted = append(inserted, InsertedEvent{SeqNum: seqNum, EventID: e.EventID})
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit insert events: %w", err)
-	}
-	return inserted, nil
+	return s.InsertEventsWithTurn(ctx, sessionID, epoch, "", events)
 }
 
 // Close closes the underlying database connection.
