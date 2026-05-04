@@ -44,7 +44,13 @@ func main() {
 		<-sigCh
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		httpServer.Shutdown(ctx)
+		// Stop accepting new HTTP first so no new turns enqueue, then drain
+		// workers. Use a fresh ~10s context for srv.Shutdown since the HTTP
+		// shutdown ctx may already be near its deadline.
+		_ = httpServer.Shutdown(ctx)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		_ = srv.Shutdown(shutdownCtx)
 	}()
 
 	log.Printf("cc-broker listening on :%s", cfg.Port)
