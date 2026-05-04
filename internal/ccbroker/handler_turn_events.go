@@ -42,7 +42,6 @@ func (s *Server) handleTurnEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Catch-up from DB.
 	seenSeqs := map[int64]struct{}{}
-	highestSeq := since
 	if past, err := s.store.GetTurnEvents(r.Context(), tid, since); err == nil {
 		for _, e := range past {
 			evt := &StreamClientEvent{
@@ -53,9 +52,6 @@ func (s *Server) handleTurnEvents(w http.ResponseWriter, r *http.Request) {
 			data, _ := json.Marshal(evt)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			seenSeqs[e.SeqNum] = struct{}{}
-			if e.SeqNum > highestSeq {
-				highestSeq = e.SeqNum
-			}
 			if isTerminalEventType(e.EventType) {
 				fmt.Fprintf(w, "data: {\"event_type\":\"done\",\"turn_id\":%q}\n\n", tid)
 				flusher.Flush()
@@ -66,7 +62,6 @@ func (s *Server) handleTurnEvents(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.logger.Warn("turn events catch-up failed; continuing with live tail only", "turn_id", tid, "error", err)
 	}
-	_ = highestSeq
 
 	// If turn was already terminal at request time and DB had no events past
 	// since, end here. Otherwise tail.
