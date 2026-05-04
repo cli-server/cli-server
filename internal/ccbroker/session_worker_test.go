@@ -2,11 +2,20 @@ package ccbroker
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	agentsdk "github.com/agentserver/claude-agent-sdk-go"
+
+	"github.com/agentserver/agentserver/internal/ccbroker/runner"
+	"github.com/agentserver/agentserver/internal/ccbroker/tools"
+	"github.com/agentserver/agentserver/internal/ccbroker/workspace"
 )
 
 // TestWorkerProcessesSingleTurn asserts that, given one queued turn, the
@@ -128,5 +137,158 @@ func TestWorkerExitsOnQuit(t *testing.T) {
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatalf("worker did not exit on quit")
+	}
+}
+
+func TestExecuteHappyPath(t *testing.T) {
+	sid, wid, tid := "sess_e", "ws_e", "trn_e"
+	store := newFakeStore()
+	store.sessions[sid] = &Session{ID: sid, WorkspaceID: wid}
+	_ = store.EnqueueTurn(context.Background(), AgentTurn{
+		ID: tid, SessionID: sid, WorkspaceID: wid, UserEventID: "evt_u", UserMessage: "hello",
+	})
+
+	sse := NewSSEBroker()
+	sub := sse.Subscribe(sid)
+	defer sse.Unsubscribe(sid, sub)
+
+	teardownCalled := atomic.Int32{}
+	deps := workerDeps{
+		store:        store,
+		s3:           nil,
+		sse:          sse,
+		activeTurns:  newActiveTurnRegistry(),
+		compactQueue: newCompactQueue(),
+		gate:         tools.NewGate(func(string, tools.Event) {}),
+		logger:       slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		httpClient:   http.DefaultClient,
+		wstoken: func(_ context.Context, _ string) (string, error) {
+			return "tok", nil
+		},
+		workspaceSetup: func(_ context.Context, w, s string, _ *workspace.S3Store) (*workspace.Workspace, error) {
+			return &workspace.Workspace{WorkspaceID: w, SessionID: s, TempDir: "/tmp/x"}, nil
+		},
+		workspaceTeardown: func(_ context.Context, _ *workspace.Workspace, _ *workspace.S3Store) error {
+			teardownCalled.Add(1)
+			return nil
+		},
+		runnerRun: func(_ context.Context, _ *workspace.Workspace, _, _ string, _ runner.Config, _ *agentsdk.McpSdkServer) (<-chan agentsdk.SDKMessage, error) {
+			ch := make(chan agentsdk.SDKMessage, 2)
+			ch <- agentsdk.SDKMessage{Type: "assistant", Raw: json.RawMessage(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`)}
+			ch <- agentsdk.SDKMessage{Type: "result", Subtype: "success", Raw: json.RawMessage(`{"type":"result","subtype":"success","is_error":false}`)}
+			close(ch)
+			return ch, nil
+		},
+		callTurnFinished: func(_, _ string) {},
+	}
+	w := newSessionWorker(sid, deps, func(string) {})
+
+	turn, _ := store.PickNextPending(context.Background(), sid)
+	if turn == nil {
+		t.Fatalf("expected pending turn")
+	}
+	w.execute(context.Background(), turn)
+
+	if teardownCalled.Load() != 1 {
+		t.Fatalf("teardown not called")
+	}
+	got, _ := store.GetTurn(context.Background(), tid)
+	if got == nil || got.State != "done" {
+		t.Fatalf("expected done, got %+v", got)
+	}
+
+	// Drain published events; expect at least one with our TurnID.
+	gotTurnID := false
+loop:
+	for {
+		select {
+		case ev := <-sub.Ch:
+			if ev.TurnID == tid {
+				gotTurnID = true
+			}
+		default:
+			break loop
+		}
+	}
+	if !gotTurnID {
+		t.Fatalf("no event tagged with TurnID")
+	}
+}
+
+func TestExecuteCancelMidStream(t *testing.T) {
+	sid, wid, tid := "sess_c", "ws_c", "trn_c"
+	store := newFakeStore()
+	store.sessions[sid] = &Session{ID: sid, WorkspaceID: wid}
+	_ = store.EnqueueTurn(context.Background(), AgentTurn{
+		ID: tid, SessionID: sid, WorkspaceID: wid, UserEventID: "evt", UserMessage: "x",
+	})
+
+	deps := workerDeps{
+		store: store, sse: NewSSEBroker(),
+		activeTurns: newActiveTurnRegistry(), compactQueue: newCompactQueue(),
+		gate:       tools.NewGate(func(string, tools.Event) {}),
+		logger:     slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		httpClient: http.DefaultClient,
+		wstoken:    func(context.Context, string) (string, error) { return "t", nil },
+		workspaceSetup: func(context.Context, string, string, *workspace.S3Store) (*workspace.Workspace, error) {
+			return &workspace.Workspace{}, nil
+		},
+		workspaceTeardown: func(context.Context, *workspace.Workspace, *workspace.S3Store) error { return nil },
+		runnerRun: func(ctx context.Context, _ *workspace.Workspace, _, _ string, _ runner.Config, _ *agentsdk.McpSdkServer) (<-chan agentsdk.SDKMessage, error) {
+			ch := make(chan agentsdk.SDKMessage)
+			go func() {
+				<-ctx.Done() // block until cancelled, then close
+				close(ch)
+			}()
+			return ch, nil
+		},
+		callTurnFinished: func(string, string) {},
+	}
+	w := newSessionWorker(sid, deps, func(string) {})
+	turn, _ := store.PickNextPending(context.Background(), sid)
+
+	// Cancel via activeTurns from another goroutine after a short delay.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		deps.activeTurns.Cancel(sid, tid)
+	}()
+
+	w.execute(context.Background(), turn)
+	got, _ := store.GetTurn(context.Background(), tid)
+	if got == nil || got.State != "cancelled" {
+		t.Fatalf("expected cancelled, got %+v", got)
+	}
+}
+
+func TestExecuteRunnerError(t *testing.T) {
+	sid, wid, tid := "sess_re", "ws_re", "trn_re"
+	store := newFakeStore()
+	store.sessions[sid] = &Session{ID: sid, WorkspaceID: wid}
+	_ = store.EnqueueTurn(context.Background(), AgentTurn{
+		ID: tid, SessionID: sid, WorkspaceID: wid, UserEventID: "evt", UserMessage: "x",
+	})
+
+	deps := workerDeps{
+		store: store, sse: NewSSEBroker(),
+		activeTurns: newActiveTurnRegistry(), compactQueue: newCompactQueue(),
+		gate:       tools.NewGate(func(string, tools.Event) {}),
+		logger:     slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		httpClient: http.DefaultClient,
+		wstoken:    func(context.Context, string) (string, error) { return "t", nil },
+		workspaceSetup: func(context.Context, string, string, *workspace.S3Store) (*workspace.Workspace, error) {
+			return &workspace.Workspace{}, nil
+		},
+		workspaceTeardown: func(context.Context, *workspace.Workspace, *workspace.S3Store) error { return nil },
+		runnerRun: func(context.Context, *workspace.Workspace, string, string, runner.Config, *agentsdk.McpSdkServer) (<-chan agentsdk.SDKMessage, error) {
+			return nil, errors.New("boom")
+		},
+		callTurnFinished: func(string, string) {},
+	}
+	w := newSessionWorker(sid, deps, func(string) {})
+	turn, _ := store.PickNextPending(context.Background(), sid)
+	w.execute(context.Background(), turn)
+	got, _ := store.GetTurn(context.Background(), tid)
+	if got == nil || got.State != "failed" {
+		t.Fatalf("expected failed, got %+v", got)
 	}
 }

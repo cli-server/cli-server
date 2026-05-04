@@ -2,11 +2,13 @@ package ccbroker
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
 
 	agentsdk "github.com/agentserver/claude-agent-sdk-go"
+	"github.com/google/uuid"
 
 	"github.com/agentserver/agentserver/internal/ccbroker/runner"
 	"github.com/agentserver/agentserver/internal/ccbroker/tools"
@@ -115,7 +117,165 @@ func (w *sessionWorker) run(ctx context.Context) {
 	}
 }
 
-// execute is the production heavy path; populated in Task 5.
-func (w *sessionWorker) execute(ctx context.Context, t *AgentTurn) {
-	// Implemented in Task 5.
+// execute is the production heavy path: it owns one turn's full lifecycle
+// (workspace setup, runner.Run, SSE pump, terminal-state mark, teardown).
+// Mirrors the body of handler_turns.handleProcessTurn pre-Task 8.
+func (w *sessionWorker) execute(ctx context.Context, turn *AgentTurn) {
+	turnCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	w.deps.activeTurns.Set(turn.SessionID, turn.ID, cancel)
+	defer w.deps.activeTurns.Clear(turn.SessionID, turn.ID)
+	defer w.deps.callTurnFinished(turn.SessionID, turn.ID)
+
+	if err := w.deps.store.MarkTurnRunning(ctx, turn.ID); err != nil {
+		w.deps.logger.Error("worker mark running failed",
+			"session_id", turn.SessionID, "turn_id", turn.ID, "error", err)
+		return
+	}
+
+	wsTok, err := w.deps.wstoken(ctx, turn.WorkspaceID)
+	if err != nil {
+		w.failTurn(ctx, turn, "workspace token: "+err.Error())
+		return
+	}
+
+	ws, err := w.deps.workspaceSetup(ctx, turn.WorkspaceID, turn.SessionID, w.deps.s3)
+	if err != nil {
+		w.failTurn(ctx, turn, "workspace setup: "+err.Error())
+		return
+	}
+	defer func() {
+		_ = w.deps.workspaceTeardown(context.Background(), ws, w.deps.s3)
+	}()
+
+	// Honor compaction request queued via /compact since the previous turn.
+	turnKind := ""
+	if w.deps.compactQueue.Take(turn.SessionID) {
+		turnKind = "compaction"
+	}
+
+	// Decode metadata for per-turn settings.
+	var meta TurnMetadata
+	if len(turn.Metadata) > 0 {
+		_ = json.Unmarshal(turn.Metadata, &meta)
+	}
+	channelType := defaultStr(meta.ChannelType, "im")
+	permMode := defaultStr(meta.PermissionMode, "bypass")
+
+	tctx := &tools.Context{
+		SessionID:              turn.SessionID,
+		WorkspaceID:            turn.WorkspaceID,
+		IMChannelID:            turn.IMChannelID.String,
+		IMUserID:               turn.IMUserID.String,
+		ExecutorRegistryURL:    w.deps.config.ExecutorRegistryURL,
+		AgentserverURL:         w.deps.config.AgentserverURL,
+		IMBridgeURL:            w.deps.config.IMBridgeURL,
+		InternalAPISecret:      w.deps.config.IMBridgeSecret,
+		Workspace:              ws,
+		HTTP:                   w.deps.httpClient,
+		ChannelType:            channelType,
+		CreatorUserID:          meta.CreatorUserID,
+		PermissionMode:         permMode,
+		PreferredExecutorID:    meta.PreferredExecutorID,
+		Gate:                   w.deps.gate,
+		AgentserverInternalURL: w.deps.config.AgentserverInternalURL,
+		CurrentTurnID:          turn.ID,
+	}
+	mcp := tools.BuildMcpServer(tctx)
+
+	runCfg := runner.Config{
+		SystemPrompt:             "",
+		MaxTurns:                 0,
+		AnthropicAuthToken:       wsTok,
+		AnthropicBaseURL:         w.deps.config.LLMProxyURL,
+		DisableFileCheckpointing: true,
+		AutoCompactWindow:        165000,
+		SessionID:                turn.SessionID,
+		TurnID:                   turn.ID,
+		ChannelType:              channelType,
+		CreatorUserID:            meta.CreatorUserID,
+		PermissionMode:           permMode,
+		Model:                    meta.Model,
+		PreferredExecutorID:      meta.PreferredExecutorID,
+		TurnKind:                 turnKind,
+	}
+
+	msgCh, err := w.deps.runnerRun(turnCtx, ws, turn.SessionID, turn.UserMessage, runCfg, mcp)
+	if err != nil {
+		w.failTurn(ctx, turn, "runner.Run: "+err.Error())
+		return
+	}
+
+	epoch, err := w.deps.store.GetSessionEpoch(ctx, turn.SessionID)
+	if err != nil {
+		w.deps.logger.Warn("get epoch failed", "session_id", turn.SessionID, "error", err)
+	}
+
+	for sdkMsg := range msgCh {
+		evt, convErr := runner.ToEventPayload(sdkMsg)
+		if convErr != nil {
+			w.deps.logger.Warn("ToEventPayload failed",
+				"session_id", turn.SessionID, "error", convErr)
+			continue
+		}
+		eventID := uuid.NewString()
+		var seqNum int64
+		if !evt.Ephemeral {
+			inserted, insertErr := w.deps.store.InsertEventsWithTurn(
+				context.Background(), turn.SessionID, epoch, turn.ID,
+				[]EventInput{{EventID: eventID, Payload: evt.Payload, Ephemeral: false}},
+			)
+			if insertErr != nil {
+				w.deps.logger.Warn("InsertEventsWithTurn failed",
+					"session_id", turn.SessionID, "error", insertErr)
+			} else if len(inserted) > 0 {
+				seqNum = inserted[0].SeqNum
+			}
+		}
+		w.deps.sse.Publish(turn.SessionID, &StreamClientEvent{
+			EventID:     eventID,
+			SequenceNum: seqNum,
+			EventType:   "client_event",
+			Source:      "worker",
+			TurnID:      turn.ID,
+			Payload:     evt.Payload,
+			CreatedAt:   time.Now().Format(time.RFC3339Nano),
+		})
+	}
+
+	if turnCtx.Err() != nil {
+		_ = w.deps.store.MarkTurnCancelled(context.Background(), turn.ID)
+		w.publishTerminal(turn, "turn_cancelled")
+		return
+	}
+	_ = w.deps.store.MarkTurnDone(context.Background(), turn.ID)
+	w.publishTerminal(turn, "turn_done")
+}
+
+func (w *sessionWorker) failTurn(_ context.Context, turn *AgentTurn, msg string) {
+	w.deps.logger.Error("turn failed",
+		"session_id", turn.SessionID, "turn_id", turn.ID, "error", msg)
+	_ = w.deps.store.MarkTurnFailed(context.Background(), turn.ID, msg)
+	payload, _ := json.Marshal(map[string]string{"turn_id": turn.ID, "error": msg})
+	w.deps.sse.Publish(turn.SessionID, &StreamClientEvent{
+		EventID:   "evt_" + uuid.NewString(),
+		EventType: "turn_failed",
+		Source:    "worker",
+		TurnID:    turn.ID,
+		Payload:   payload,
+		CreatedAt: time.Now().Format(time.RFC3339Nano),
+	})
+}
+
+func (w *sessionWorker) publishTerminal(turn *AgentTurn, eventType string) {
+	payload, _ := json.Marshal(map[string]string{"turn_id": turn.ID})
+	w.deps.sse.Publish(turn.SessionID, &StreamClientEvent{
+		EventID:   "evt_" + uuid.NewString(),
+		EventType: eventType,
+		Source:    "worker",
+		TurnID:    turn.ID,
+		Payload:   payload,
+		CreatedAt: time.Now().Format(time.RFC3339Nano),
+	})
 }
