@@ -139,7 +139,7 @@ func (c *ExecutorClient) reRegister(ctx context.Context) error {
 }
 
 func (c *ExecutorClient) connectAndServe(ctx context.Context) error {
-	wsURL := httpToWS(c.session.ServerURL) + "/api/tunnel/" + c.session.ExecutorID + "?token=" + c.session.TunnelToken
+	wsURL := httpToWS(c.session.ServerURL) + "/api/executors/" + c.session.ExecutorID + "/tunnel?token=" + c.session.TunnelToken
 
 	log.Printf("connecting to %s", wsURL)
 
