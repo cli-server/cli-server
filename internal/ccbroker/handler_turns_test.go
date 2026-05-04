@@ -23,10 +23,23 @@ type fakeStore struct {
 	sessions map[string]*Session
 	events   []EventInput
 
+	// Recorded inserted events so GetTurnEvents can serve catch-up tests.
+	recordedEvents []fakeEvent
+	nextSeqNum     int64
+
 	// Queue state
 	turns      map[string]*AgentTurn // by turn_id
 	turnOrder  map[string][]string   // session_id → ordered turn_ids
 	resetCount int
+}
+
+type fakeEvent struct {
+	SeqNum    int64
+	TurnID    string
+	EventID   string
+	EventType string
+	Payload   json.RawMessage
+	CreatedAt time.Time
 }
 
 func newFakeStore() *fakeStore {
@@ -59,23 +72,39 @@ func (f *fakeStore) GetSessionEpoch(_ context.Context, sessionID string) (int, e
 	return 0, nil
 }
 
-func (f *fakeStore) InsertEvents(_ context.Context, _ string, _ int, events []EventInput) ([]InsertedEvent, error) {
+func (f *fakeStore) InsertEvents(ctx context.Context, sessionID string, epoch int, events []EventInput) ([]InsertedEvent, error) {
+	return f.InsertEventsWithTurn(ctx, sessionID, epoch, "", events)
+}
+
+func (f *fakeStore) InsertEventsWithTurn(_ context.Context, _ string, _ int, turnID string, events []EventInput) ([]InsertedEvent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.events = append(f.events, events...)
-	inserted := make([]InsertedEvent, len(events))
-	for i, e := range events {
-		inserted[i] = InsertedEvent{SeqNum: int64(i + 1), EventID: e.EventID}
-	}
-	return inserted, nil
-}
-
-func (f *fakeStore) InsertEventsWithTurn(_ context.Context, _ string, _ int, _ string, events []EventInput) ([]InsertedEvent, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	out := make([]InsertedEvent, 0, len(events))
 	for _, e := range events {
-		out = append(out, InsertedEvent{SeqNum: int64(len(out) + 1), EventID: e.EventID})
+		f.nextSeqNum++
+		seq := f.nextSeqNum
+		// Derive a synthetic event_type from the payload so tests can drive
+		// catch-up scenarios with terminal events. Production hardcodes
+		// 'client_event'; we mimic that as the default.
+		evtType := "client_event"
+		if len(e.Payload) > 0 {
+			var probe struct {
+				EventType string `json:"event_type"`
+			}
+			if json.Unmarshal(e.Payload, &probe) == nil && probe.EventType != "" {
+				evtType = probe.EventType
+			}
+		}
+		f.recordedEvents = append(f.recordedEvents, fakeEvent{
+			SeqNum:    seq,
+			TurnID:    turnID,
+			EventID:   e.EventID,
+			EventType: evtType,
+			Payload:   append(json.RawMessage(nil), e.Payload...),
+			CreatedAt: time.Now(),
+		})
+		out = append(out, InsertedEvent{SeqNum: seq, EventID: e.EventID})
 	}
 	return out, nil
 }
@@ -197,10 +226,22 @@ func (f *fakeStore) ResetRunningToQueued(_ context.Context) (int, error) {
 }
 
 func (f *fakeStore) GetTurnEvents(_ context.Context, turnID string, sinceSeqNum int64) ([]TurnEvent, error) {
-	// fakeStore doesn't track turn_id on events; return empty for tests that
-	// don't exercise catch-up. handler_turn_events_test.go installs its own
-	// fixture if needed.
-	return nil, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []TurnEvent
+	for _, e := range f.recordedEvents {
+		if e.TurnID != turnID || e.SeqNum <= sinceSeqNum {
+			continue
+		}
+		out = append(out, TurnEvent{
+			SeqNum:    e.SeqNum,
+			EventID:   e.EventID,
+			EventType: e.EventType,
+			Payload:   e.Payload,
+			CreatedAt: e.CreatedAt,
+		})
+	}
+	return out, nil
 }
 
 func (f *fakeStore) CountPending(_ context.Context, sessionID string) (int, error) {
