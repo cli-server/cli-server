@@ -384,25 +384,6 @@ func (s *Server) Router() http.Handler {
 		// Agent interaction audit trail
 		r.Get("/api/workspaces/{wid}/agent-interactions", s.handleListInteractions)
 
-		// TUI inbound (user-authenticated prompt submission for TUI sessions)
-		r.Post("/api/workspaces/{wid}/tui/inbound", s.handleTUIInbound)
-
-		// Agent-session management (TUI: create, attach, list)
-		r.Post("/api/agent-sessions", s.handleCreateAgentSession)
-		r.Post("/api/agent-sessions/{sid}/attach", s.handleAttachAgentSession)
-		r.Get("/api/agent-sessions", s.handleListAgentSessions)
-
-		// TUI SSE event stream (live events + replay)
-		r.Get("/api/agent-sessions/{sid}/events", s.handleTUIEventStream)
-
-		// TUI control commands (model, permission, compact, cost, agents)
-		r.Post("/api/agent-sessions/{sid}/control", s.handleAgentSessionControl)
-
-		// TUI proxy handlers (T18)
-		r.Post("/api/agent-sessions/{sid}/turns/{tid}/cancel", s.handleCancelTurn)
-		r.Post("/api/agent-sessions/{sid}/permissions/{pid}", s.handlePermissionDecision)
-		r.Get("/api/executors/{id}/status", s.handleExecutorStatus)
-
 		// Admin routes
 		r.Route("/api/admin", func(r chi.Router) {
 			r.Use(s.requireAdmin)
@@ -429,6 +410,38 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/workspaces/{id}/llm-quota", s.handleAdminDeleteWorkspaceLLMQuota)
 		})
 	})
+
+	// TUI / agent CLI API: Bearer token auth (Hydra introspection) only.
+	// All endpoints reachable only when HydraClient is configured.
+	if s.HydraClient != nil {
+		r.Group(func(r chi.Router) {
+			r.Use(auth.BearerMiddleware(s.HydraClient))
+
+			// Workspace listing for the TUI to auto-resolve --workspace-id.
+			r.Get("/api/agents/workspaces", s.handleListWorkspaces)
+
+			// User-authenticated prompt submission for TUI sessions.
+			r.Post("/api/agents/workspaces/{wid}/inbound", s.handleTUIInbound)
+
+			// Agent-session management (create, attach, list).
+			r.Post("/api/agents/sessions", s.handleCreateAgentSession)
+			r.Post("/api/agents/sessions/{sid}/attach", s.handleAttachAgentSession)
+			r.Get("/api/agents/sessions", s.handleListAgentSessions)
+
+			// SSE event stream (live events + replay).
+			r.Get("/api/agents/sessions/{sid}/events", s.handleTUIEventStream)
+
+			// Control commands (model, permission, compact, cost, agents).
+			r.Post("/api/agents/sessions/{sid}/control", s.handleAgentSessionControl)
+
+			// Turn cancel + permission decision.
+			r.Post("/api/agents/sessions/{sid}/turns/{tid}/cancel", s.handleCancelTurn)
+			r.Post("/api/agents/sessions/{sid}/permissions/{pid}", s.handlePermissionDecision)
+
+			// Executor status.
+			r.Get("/api/agents/executors/{id}/status", s.handleExecutorStatus)
+		})
+	}
 
 	// Bridge API (CCR V2 compatible)
 	if s.BridgeHandler != nil {

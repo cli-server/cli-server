@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/agentserver/agentserver/internal/db"
@@ -80,7 +81,8 @@ func (a *Auth) ValidateToken(token string) (string, bool) {
 	return userID, true
 }
 
-// Middleware enforces authentication and injects user ID into context.
+// Middleware authenticates web requests via session cookie. The TUI / agent
+// CLI does NOT use this — it goes through BearerMiddleware on /api/agents/*.
 func (a *Auth) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(cookieName)
@@ -96,6 +98,31 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), userIDKey, userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// BearerMiddleware authenticates TUI / agent CLI requests via OAuth Bearer
+// token, using Hydra introspection. The web app does NOT use this — it goes
+// through Middleware (cookie auth). Token must be Active and have a non-empty
+// Subject (= user ID), which is then injected into request context under the
+// same key Middleware uses.
+func BearerMiddleware(h *HydraClient) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authz := r.Header.Get("Authorization")
+			if !strings.HasPrefix(authz, "Bearer ") {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			token := strings.TrimPrefix(authz, "Bearer ")
+			intro, err := h.IntrospectToken(token)
+			if err != nil || !intro.Active || intro.Subject == "" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			ctx := context.WithValue(r.Context(), userIDKey, intro.Subject)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }
 
 // ValidateRequest checks whether a request has a valid auth cookie and returns the user ID.

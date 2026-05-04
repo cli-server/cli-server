@@ -54,7 +54,7 @@ func mustTUIRequest(t *testing.T, method, target, body string) *http.Request {
 // tuiRouter wires a chi router with only the TUI inbound route (no auth middleware).
 func tuiRouter(s *Server) *chi.Mux {
 	router := chi.NewRouter()
-	router.Post("/api/workspaces/{wid}/tui/inbound", s.handleTUIInbound)
+	router.Post("/api/agents/workspaces/{wid}/inbound", s.handleTUIInbound)
 	return router
 }
 
@@ -65,7 +65,7 @@ func TestTUIInbound_MissingExecutorID(t *testing.T) {
 	router := tuiRouter(s)
 
 	body := `{"text":"hello"}`
-	req := mustTUIRequest(t, "POST", "/api/workspaces/ws_test/tui/inbound", body)
+	req := mustTUIRequest(t, "POST", "/api/agents/workspaces/ws_test/inbound", body)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
@@ -79,7 +79,7 @@ func TestTUIInbound_MissingText(t *testing.T) {
 	router := tuiRouter(s)
 
 	body := `{"executor_id":"exe_a"}`
-	req := mustTUIRequest(t, "POST", "/api/workspaces/ws_test/tui/inbound", body)
+	req := mustTUIRequest(t, "POST", "/api/agents/workspaces/ws_test/inbound", body)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
@@ -94,7 +94,7 @@ func TestTUIInbound_NoUserID_Returns401(t *testing.T) {
 
 	body := `{"executor_id":"exe_a","text":"hi"}`
 	// Request without injected user — auth.UserIDFromContext returns "".
-	req := httptest.NewRequest("POST", "/api/workspaces/ws_test/tui/inbound", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/api/agents/workspaces/ws_test/inbound", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -118,7 +118,7 @@ func TestTUIInbound_NewSession_CreatesAndReturns202(t *testing.T) {
 
 	body := `{"executor_id":"exe_a","text":"hello","permission_responder":true,"metadata":{"channel_type":"tui"}}`
 	rr := httptest.NewRecorder()
-	req := mustTUIRequest(t, "POST", "/api/workspaces/ws_test/tui/inbound", body)
+	req := mustTUIRequest(t, "POST", "/api/agents/workspaces/ws_test/inbound", body)
 	tuiRouter(s).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusAccepted {
@@ -193,7 +193,7 @@ func TestTUIInbound_TurnInProgress_Returns409(t *testing.T) {
 
 	body := `{"session_id":"` + sid + `","executor_id":"exe_a","text":"hi"}`
 	rr := httptest.NewRecorder()
-	req := mustTUIRequest(t, "POST", "/api/workspaces/ws_test/tui/inbound", body)
+	req := mustTUIRequest(t, "POST", "/api/agents/workspaces/ws_test/inbound", body)
 	tuiRouter(s).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusConflict {

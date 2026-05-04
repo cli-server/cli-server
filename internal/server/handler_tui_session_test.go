@@ -17,9 +17,9 @@ import (
 // sessionRouter wires a chi router with the 3 agent-session routes (no auth middleware).
 func sessionRouter(s *Server) *chi.Mux {
 	router := chi.NewRouter()
-	router.Post("/api/agent-sessions", s.handleCreateAgentSession)
-	router.Post("/api/agent-sessions/{sid}/attach", s.handleAttachAgentSession)
-	router.Get("/api/agent-sessions", s.handleListAgentSessions)
+	router.Post("/api/agents/sessions", s.handleCreateAgentSession)
+	router.Post("/api/agents/sessions/{sid}/attach", s.handleAttachAgentSession)
+	router.Get("/api/agents/sessions", s.handleListAgentSessions)
 	return router
 }
 
@@ -45,7 +45,7 @@ func TestCreateAgentSession_RequiresWorkspaceID(t *testing.T) {
 	router := sessionRouter(s)
 
 	body := `{"executor_id":"exe_a"}`
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions", body)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions", body)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
@@ -62,7 +62,7 @@ func TestCreateAgentSession_NoUserID_Returns401(t *testing.T) {
 	router := sessionRouter(s)
 
 	body := `{"workspace_id":"ws_test","executor_id":"exe_a"}`
-	req := httptest.NewRequest("POST", "/api/agent-sessions", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/api/agents/sessions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -77,7 +77,7 @@ func TestAttachAgentSession_NoUserID_Returns401(t *testing.T) {
 	router := sessionRouter(s)
 
 	body := `{"executor_id":"exe_a"}`
-	req := httptest.NewRequest("POST", "/api/agent-sessions/cse_test/attach", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/api/agents/sessions/cse_test/attach", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -91,7 +91,7 @@ func TestListAgentSessions_RequiresWorkspaceID(t *testing.T) {
 	s := &Server{}
 	router := sessionRouter(s)
 
-	req := mustAuthRequest(t, "GET", "/api/agent-sessions?channel_type=tui", "")
+	req := mustAuthRequest(t, "GET", "/api/agents/sessions?channel_type=tui", "")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
@@ -107,7 +107,7 @@ func TestCreateAgentSession_TUI(t *testing.T) {
 	defer cleanup()
 
 	body := `{"workspace_id":"ws_test","executor_id":"exe_a","permission_mode":"ask"}`
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions", body)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions", body)
 	rr := httptest.NewRecorder()
 	sessionRouter(s).ServeHTTP(rr, req)
 
@@ -169,7 +169,7 @@ func TestAttachAgentSession_OperatorMode(t *testing.T) {
 
 	// Attach as operator with also_become_preferred.
 	body := `{"executor_id":"exe_b","mode":"operator","also_become_preferred":true}`
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/attach", body)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/attach", body)
 	rr := httptest.NewRecorder()
 	sessionRouter(s).ServeHTTP(rr, req)
 
@@ -223,7 +223,7 @@ func TestAttachAgentSession_ObserverMode_LeavesResponder(t *testing.T) {
 
 	// Attach as observer — should not change the responder.
 	body := `{"executor_id":"exe_c","mode":"observer"}`
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/attach", body)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/attach", body)
 	rr := httptest.NewRecorder()
 	sessionRouter(s).ServeHTTP(rr, req)
 
@@ -277,7 +277,7 @@ func TestListAgentSessions_FiltersByExecutor(t *testing.T) {
 	})
 
 	// List filtering by exe_alpha — should return only sid1.
-	req := mustAuthRequest(t, "GET", "/api/agent-sessions?workspace_id=ws_list_test&channel_type=tui&executor_id=exe_alpha", "")
+	req := mustAuthRequest(t, "GET", "/api/agents/sessions?workspace_id=ws_list_test&channel_type=tui&executor_id=exe_alpha", "")
 	rr := httptest.NewRecorder()
 	sessionRouter(s).ServeHTTP(rr, req)
 

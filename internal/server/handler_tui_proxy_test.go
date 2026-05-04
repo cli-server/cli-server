@@ -16,9 +16,9 @@ import (
 // proxyRouter wires the 3 proxy routes for unit/integration tests.
 func proxyRouter(s *Server) *chi.Mux {
 	r := chi.NewRouter()
-	r.Post("/api/agent-sessions/{sid}/turns/{tid}/cancel", s.handleCancelTurn)
-	r.Post("/api/agent-sessions/{sid}/permissions/{pid}", s.handlePermissionDecision)
-	r.Get("/api/executors/{id}/status", s.handleExecutorStatus)
+	r.Post("/api/agents/sessions/{sid}/turns/{tid}/cancel", s.handleCancelTurn)
+	r.Post("/api/agents/sessions/{sid}/permissions/{pid}", s.handlePermissionDecision)
+	r.Get("/api/agents/executors/{id}/status", s.handleExecutorStatus)
 	return r
 }
 
@@ -27,7 +27,7 @@ func proxyRouter(s *Server) *chi.Mux {
 func TestCancelTurn_NoAuth_Returns401(t *testing.T) {
 	s := &Server{}
 	r := proxyRouter(s)
-	req := httptest.NewRequest("POST", "/api/agent-sessions/cse_x/turns/trn_y/cancel", nil)
+	req := httptest.NewRequest("POST", "/api/agents/sessions/cse_x/turns/trn_y/cancel", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnauthorized {
@@ -38,7 +38,7 @@ func TestCancelTurn_NoAuth_Returns401(t *testing.T) {
 func TestCancelTurn_NoCCBroker_Returns503(t *testing.T) {
 	s := &Server{} // CCBrokerURL == ""
 	r := proxyRouter(s)
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/cse_x/turns/trn_y/cancel", "")
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/cse_x/turns/trn_y/cancel", "")
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 	if rr.Code != http.StatusServiceUnavailable {
@@ -59,7 +59,7 @@ func TestCancelTurn_ProxiesToCCBroker(t *testing.T) {
 
 	s := &Server{CCBrokerURL: cc.URL}
 	r := proxyRouter(s)
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/cse_x/turns/trn_y/cancel", "")
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/cse_x/turns/trn_y/cancel", "")
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -81,7 +81,7 @@ func TestCancelTurn_ProxiesToCCBroker(t *testing.T) {
 func TestExecutorStatus_NoAuth_Returns401(t *testing.T) {
 	s := &Server{}
 	r := proxyRouter(s)
-	req := httptest.NewRequest("GET", "/api/executors/exe_a/status", nil)
+	req := httptest.NewRequest("GET", "/api/agents/executors/exe_a/status", nil)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnauthorized {
@@ -92,7 +92,7 @@ func TestExecutorStatus_NoAuth_Returns401(t *testing.T) {
 func TestExecutorStatus_NoRegistry_Returns503(t *testing.T) {
 	s := &Server{} // ExecutorRegistryURL == ""
 	r := proxyRouter(s)
-	req := mustAuthRequest(t, "GET", "/api/executors/exe_a/status", "")
+	req := mustAuthRequest(t, "GET", "/api/agents/executors/exe_a/status", "")
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 	if rr.Code != http.StatusServiceUnavailable {
@@ -110,7 +110,7 @@ func TestExecutorStatus_StreamsUpstreamResponse(t *testing.T) {
 
 	s := &Server{ExecutorRegistryURL: registry.URL}
 	r := proxyRouter(s)
-	req := mustAuthRequest(t, "GET", "/api/executors/exe_a/status", "")
+	req := mustAuthRequest(t, "GET", "/api/agents/executors/exe_a/status", "")
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
@@ -151,7 +151,7 @@ func TestPermissionDecision_WrongResponder_Returns403(t *testing.T) {
 
 	// Try to decide with exe_b (wrong responder).
 	body := `{"decision":"allow","scope":"once","responder_executor_id":"exe_b"}`
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/permissions/perm_1", body)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/permissions/perm_1", body)
 	rr := httptest.NewRecorder()
 	proxyRouter(s).ServeHTTP(rr, req)
 
@@ -198,7 +198,7 @@ func TestPermissionDecision_CorrectResponder_ProxiesToCCBroker(t *testing.T) {
 	}
 
 	body := `{"decision":"allow","scope":"once","responder_executor_id":"exe_a"}`
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/permissions/perm_1", body)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/permissions/perm_1", body)
 	rr := httptest.NewRecorder()
 	proxyRouter(s).ServeHTTP(rr, req)
 
@@ -243,7 +243,7 @@ func TestPermissionDecision_CCBrokerConflict_Returns409(t *testing.T) {
 	}
 
 	body := `{"decision":"allow","scope":"once","responder_executor_id":"exe_a"}`
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/permissions/perm_1", body)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/permissions/perm_1", body)
 	rr := httptest.NewRecorder()
 	proxyRouter(s).ServeHTTP(rr, req)
 

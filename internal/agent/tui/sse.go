@@ -85,7 +85,7 @@ func (s *SSEConsumer) connectOnce(ctx context.Context, out chan<- SSEEvent) erro
 	if err != nil {
 		return err
 	}
-	url := s.bus.ServerURL() + "/api/agent-sessions/" + s.cfg.SessionID + "/events"
+	url := s.bus.ServerURL() + "/api/agents/sessions/" + s.cfg.SessionID + "/events"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err

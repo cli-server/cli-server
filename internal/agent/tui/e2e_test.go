@@ -38,11 +38,11 @@ func TestE2E_TUIHappyPath(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/tui/inbound"):
+		case strings.HasSuffix(r.URL.Path, "/inbound"):
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"session_id":"cse_e","turn_id":"trn_e"}`))
 			sseTriggered.Store(true)
-		case strings.Contains(r.URL.Path, "/api/agent-sessions/cse_e/events"):
+		case strings.Contains(r.URL.Path, "/api/agents/sessions/cse_e/events"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			sseW = w
 			sseFlush = w.(http.Flusher)
@@ -68,9 +68,9 @@ func TestE2E_TUIHappyPath(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&b)
 			decideRcv <- b
 			w.WriteHeader(http.StatusOK)
-		case strings.HasSuffix(r.URL.Path, "/api/agent-sessions/cse_e/attach"):
+		case strings.HasSuffix(r.URL.Path, "/api/agents/sessions/cse_e/attach"):
 			_, _ = w.Write([]byte(`{"session_id":"cse_e","permission_responder":"exe_a"}`))
-		case strings.Contains(r.URL.Path, "/api/executors/exe_a/status"):
+		case strings.Contains(r.URL.Path, "/api/agents/executors/exe_a/status"):
 			_, _ = w.Write([]byte(`{"executor_id":"exe_a","status":"online"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)

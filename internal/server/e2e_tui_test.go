@@ -79,10 +79,10 @@ func TestE2E_TUITurnFlow(t *testing.T) {
 		rr := httptest.NewRecorder()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		req := mustAuthRequest(t, "GET", "/api/agent-sessions/"+sid+"/events", "")
+		req := mustAuthRequest(t, "GET", "/api/agents/sessions/"+sid+"/events", "")
 		req = req.WithContext(ctx)
 		router := chi.NewRouter()
-		router.Get("/api/agent-sessions/{sid}/events", s.handleTUIEventStream)
+		router.Get("/api/agents/sessions/{sid}/events", s.handleTUIEventStream)
 		router.ServeHTTP(rr, req)
 		for _, line := range strings.Split(rr.Body.String(), "\n") {
 			if strings.HasPrefix(line, "event: ") {
@@ -96,9 +96,9 @@ func TestE2E_TUITurnFlow(t *testing.T) {
 	// POST inbound (use existing session).
 	body := `{"executor_id":"exe_a","text":"hi","session_id":"` + sid + `"}`
 	rr := httptest.NewRecorder()
-	req := mustAuthRequest(t, "POST", "/api/workspaces/ws_test/tui/inbound", body)
+	req := mustAuthRequest(t, "POST", "/api/agents/workspaces/ws_test/inbound", body)
 	inbR := chi.NewRouter()
-	inbR.Post("/api/workspaces/{wid}/tui/inbound", s.handleTUIInbound)
+	inbR.Post("/api/agents/workspaces/{wid}/inbound", s.handleTUIInbound)
 	inbR.ServeHTTP(rr, req)
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("inbound status %d body=%s", rr.Code, rr.Body)
@@ -122,9 +122,9 @@ func TestE2E_TUITurnFlow(t *testing.T) {
 	decBody := `{"decision":"allow","scope":"once","responder_executor_id":"exe_a"}`
 	decRR := httptest.NewRecorder()
 	decReq := mustAuthRequest(t, "POST",
-		"/api/agent-sessions/"+sid+"/permissions/perm_e", decBody)
+		"/api/agents/sessions/"+sid+"/permissions/perm_e", decBody)
 	decR := chi.NewRouter()
-	decR.Post("/api/agent-sessions/{sid}/permissions/{pid}", s.handlePermissionDecision)
+	decR.Post("/api/agents/sessions/{sid}/permissions/{pid}", s.handlePermissionDecision)
 	decR.ServeHTTP(decRR, decReq)
 	if decRR.Code != http.StatusOK {
 		t.Errorf("decide %d body=%s", decRR.Code, decRR.Body)

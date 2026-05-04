@@ -16,7 +16,7 @@ import (
 // controlRouter wires only the control route for unit/integration tests.
 func controlRouter(s *Server) *chi.Mux {
 	r := chi.NewRouter()
-	r.Post("/api/agent-sessions/{sid}/control", s.handleAgentSessionControl)
+	r.Post("/api/agents/sessions/{sid}/control", s.handleAgentSessionControl)
 	return r
 }
 
@@ -26,7 +26,7 @@ func TestControl_NoAuth_Returns401(t *testing.T) {
 	s := &Server{}
 	r := controlRouter(s)
 
-	req := httptest.NewRequest("POST", "/api/agent-sessions/cse_x/control",
+	req := httptest.NewRequest("POST", "/api/agents/sessions/cse_x/control",
 		strings.NewReader(`{"command":"model","args":{"model":"claude-3-5-sonnet"}}`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -54,7 +54,7 @@ func TestControl_UnknownCommand(t *testing.T) {
 	}
 	t.Cleanup(func() { s.DB.Exec(`DELETE FROM agent_sessions WHERE id=$1`, sid) })
 
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/control",
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/control",
 		`{"command":"does_not_exist"}`)
 	rr := httptest.NewRecorder()
 	controlRouter(s).ServeHTTP(rr, req)
@@ -87,7 +87,7 @@ func TestControl_ModelWritesPreference(t *testing.T) {
 	t.Cleanup(func() { s.DB.Exec(`DELETE FROM agent_sessions WHERE id=$1`, sid) })
 
 	body := `{"command":"model","args":{"model":"claude-opus-4-5"}}`
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/control", body)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/control", body)
 	rr := httptest.NewRecorder()
 	controlRouter(s).ServeHTTP(rr, req)
 
@@ -133,7 +133,7 @@ func TestControl_ModelMissingArg(t *testing.T) {
 	}
 	t.Cleanup(func() { s.DB.Exec(`DELETE FROM agent_sessions WHERE id=$1`, sid) })
 
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/control",
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/control",
 		`{"command":"model","args":{}}`)
 	rr := httptest.NewRecorder()
 	controlRouter(s).ServeHTTP(rr, req)
@@ -161,7 +161,7 @@ func TestControl_PermissionWritesMode(t *testing.T) {
 	t.Cleanup(func() { s.DB.Exec(`DELETE FROM agent_sessions WHERE id=$1`, sid) })
 
 	body := `{"command":"permission","args":{"mode":"bypass"}}`
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/control", body)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/control", body)
 	rr := httptest.NewRecorder()
 	controlRouter(s).ServeHTTP(rr, req)
 
@@ -208,7 +208,7 @@ func TestControl_PermissionRejectsBadMode(t *testing.T) {
 	t.Cleanup(func() { s.DB.Exec(`DELETE FROM agent_sessions WHERE id=$1`, sid) })
 
 	body := `{"command":"permission","args":{"mode":"superuser"}}`
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/control", body)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/control", body)
 	rr := httptest.NewRecorder()
 	controlRouter(s).ServeHTTP(rr, req)
 
@@ -242,7 +242,7 @@ func TestControl_CompactProxiesToCCBroker(t *testing.T) {
 	}
 	t.Cleanup(func() { s.DB.Exec(`DELETE FROM agent_sessions WHERE id=$1`, sid) })
 
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/control",
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/control",
 		`{"command":"compact"}`)
 	rr := httptest.NewRecorder()
 	controlRouter(s).ServeHTTP(rr, req)
@@ -284,7 +284,7 @@ func TestControl_CompactNoCCBroker_Returns503(t *testing.T) {
 	}
 	t.Cleanup(func() { s.DB.Exec(`DELETE FROM agent_sessions WHERE id=$1`, sid) })
 
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/control", `{"command":"compact"}`)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/control", `{"command":"compact"}`)
 	rr := httptest.NewRecorder()
 	controlRouter(s).ServeHTTP(rr, req)
 
@@ -310,7 +310,7 @@ func TestControl_CostReturnsZeroForEmptySession(t *testing.T) {
 	}
 	t.Cleanup(func() { s.DB.Exec(`DELETE FROM agent_sessions WHERE id=$1`, sid) })
 
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/control", `{"command":"cost"}`)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/control", `{"command":"cost"}`)
 	rr := httptest.NewRecorder()
 	controlRouter(s).ServeHTTP(rr, req)
 
@@ -360,7 +360,7 @@ func TestControl_AgentsProxiesToRegistry(t *testing.T) {
 	}
 	t.Cleanup(func() { s.DB.Exec(`DELETE FROM agent_sessions WHERE id=$1`, sid) })
 
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/control", `{"command":"agents"}`)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/control", `{"command":"agents"}`)
 	rr := httptest.NewRecorder()
 	controlRouter(s).ServeHTTP(rr, req)
 
@@ -396,7 +396,7 @@ func TestControl_AgentsNoRegistry_Returns503(t *testing.T) {
 	}
 	t.Cleanup(func() { s.DB.Exec(`DELETE FROM agent_sessions WHERE id=$1`, sid) })
 
-	req := mustAuthRequest(t, "POST", "/api/agent-sessions/"+sid+"/control", `{"command":"agents"}`)
+	req := mustAuthRequest(t, "POST", "/api/agents/sessions/"+sid+"/control", `{"command":"agents"}`)
 	rr := httptest.NewRecorder()
 	controlRouter(s).ServeHTTP(rr, req)
 

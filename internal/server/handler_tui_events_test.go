@@ -44,9 +44,9 @@ func newTestServerForEvents(t *testing.T, ccBrokerURL string) (*Server, func()) 
 func TestTUIEvents_NoAuth_Returns401(t *testing.T) {
 	s := &Server{}
 	r := chi.NewRouter()
-	r.Get("/api/agent-sessions/{sid}/events", s.handleTUIEventStream)
+	r.Get("/api/agents/sessions/{sid}/events", s.handleTUIEventStream)
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/agent-sessions/cse_x/events", nil)
+	req := httptest.NewRequest("GET", "/api/agents/sessions/cse_x/events", nil)
 	r.ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("status %d want 401", rr.Code)
@@ -58,10 +58,10 @@ func TestTUIEvents_UnknownSession_Returns404(t *testing.T) {
 	defer cleanup()
 
 	router := chi.NewRouter()
-	router.Get("/api/agent-sessions/{sid}/events", s.handleTUIEventStream)
+	router.Get("/api/agents/sessions/{sid}/events", s.handleTUIEventStream)
 
 	rr := httptest.NewRecorder()
-	req := mustAuthRequest(t, "GET", "/api/agent-sessions/cse_does_not_exist_xyz/events", "")
+	req := mustAuthRequest(t, "GET", "/api/agents/sessions/cse_does_not_exist_xyz/events", "")
 	router.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusNotFound {
@@ -109,10 +109,10 @@ func TestTUIEvents_BridgesCCBrokerSSE(t *testing.T) {
 		defer subWG.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
-		req := mustAuthRequest(t, "GET", "/api/agent-sessions/"+sid+"/events", "")
+		req := mustAuthRequest(t, "GET", "/api/agents/sessions/"+sid+"/events", "")
 		req = req.WithContext(ctx)
 		router := chi.NewRouter()
-		router.Get("/api/agent-sessions/{sid}/events", s.handleTUIEventStream)
+		router.Get("/api/agents/sessions/{sid}/events", s.handleTUIEventStream)
 		rr := httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
 		for _, line := range strings.Split(rr.Body.String(), "\n") {
@@ -129,9 +129,9 @@ func TestTUIEvents_BridgesCCBrokerSSE(t *testing.T) {
 	// Trigger inbound which calls cc-broker → bridges events.
 	body := `{"executor_id":"exe_a","text":"hi","session_id":"` + sid + `","permission_responder":true}`
 	inboundRR := httptest.NewRecorder()
-	inboundReq := mustAuthRequest(t, "POST", "/api/workspaces/ws_test/tui/inbound", body)
+	inboundReq := mustAuthRequest(t, "POST", "/api/agents/workspaces/ws_test/inbound", body)
 	inboundRouter := chi.NewRouter()
-	inboundRouter.Post("/api/workspaces/{wid}/tui/inbound", s.handleTUIInbound)
+	inboundRouter.Post("/api/agents/workspaces/{wid}/inbound", s.handleTUIInbound)
 	inboundRouter.ServeHTTP(inboundRR, inboundReq)
 	if inboundRR.Code != http.StatusAccepted {
 		t.Fatalf("inbound %d body=%s", inboundRR.Code, inboundRR.Body)
