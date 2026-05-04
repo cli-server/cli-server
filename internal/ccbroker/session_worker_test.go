@@ -417,6 +417,76 @@ func TestExecuteHonorsCompactQueueAndCallsTurnFinished(t *testing.T) {
 	}
 }
 
+// TestExecuteShortCircuitsOnPreCancelledTurnCtx verifies the worker bails
+// before touching wstoken/workspaceSetup when the turnCtx is already cancelled
+// after MarkTurnRunning. Cleanest setup: pass an already-cancelled parent ctx
+// so WithCancel(ctx) yields a turnCtx that's cancelled before the new check.
+func TestExecuteShortCircuitsOnPreCancelledTurnCtx(t *testing.T) {
+	sid, wid, tid := "sess_pc", "ws_pc", "trn_pc"
+	store := newFakeStore()
+	store.sessions[sid] = &Session{ID: sid, WorkspaceID: wid}
+	_ = store.EnqueueTurn(context.Background(), AgentTurn{
+		ID: tid, SessionID: sid, WorkspaceID: wid, UserEventID: "evt", UserMessage: "x",
+	})
+
+	sse := NewSSEBroker()
+	sub := sse.Subscribe(sid)
+	defer sse.Unsubscribe(sid, sub)
+
+	deps := workerDeps{
+		store: store, sse: sse,
+		activeTurns: newActiveTurnRegistry(), compactQueue: newCompactQueue(),
+		gate:       tools.NewGate(func(string, tools.Event) {}),
+		logger:     slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		httpClient: http.DefaultClient,
+		wstoken: func(context.Context, string) (string, error) {
+			t.Fatalf("wstoken must not run after pre-cancel")
+			return "", nil
+		},
+		workspaceSetup: func(context.Context, string, string, *workspace.S3Store) (*workspace.Workspace, error) {
+			t.Fatalf("workspaceSetup must not run after pre-cancel")
+			return nil, nil
+		},
+		workspaceTeardown: func(context.Context, *workspace.Workspace, *workspace.S3Store) error { return nil },
+		runnerRun: func(context.Context, *workspace.Workspace, string, string, runner.Config, *agentsdk.McpSdkServer) (<-chan agentsdk.SDKMessage, error) {
+			t.Fatalf("runnerRun must not run after pre-cancel")
+			return nil, nil
+		},
+		callTurnFinished: func(string, string) {},
+	}
+	w := newSessionWorker(sid, deps, func(string) {})
+	turn, _ := store.PickNextPending(context.Background(), sid)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel: turnCtx will be cancelled at the new guard.
+	w.execute(ctx, turn)
+
+	got, _ := store.GetTurn(context.Background(), tid)
+	if got == nil || got.State != "cancelled" {
+		t.Fatalf("expected cancelled, got %+v", got)
+	}
+
+	// Drain SSE; only terminal turn_cancelled may carry our TurnID.
+	gotCancelled := false
+loop:
+	for {
+		select {
+		case ev := <-sub.Ch:
+			if ev.TurnID == tid {
+				if ev.EventType != "turn_cancelled" {
+					t.Fatalf("unexpected event for turn before cancel terminal: %+v", ev)
+				}
+				gotCancelled = true
+			}
+		default:
+			break loop
+		}
+	}
+	if !gotCancelled {
+		t.Fatalf("expected turn_cancelled SSE event")
+	}
+}
+
 func TestExecuteRunnerError(t *testing.T) {
 	sid, wid, tid := "sess_re", "ws_re", "trn_re"
 	store := newFakeStore()

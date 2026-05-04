@@ -134,6 +134,14 @@ func (w *sessionWorker) execute(ctx context.Context, turn *AgentTurn) {
 		return
 	}
 
+	// If the turn was cancelled between activeTurns.Set and now (cancel handler
+	// races MarkTurnRunning), short-circuit before doing the S3 download.
+	if turnCtx.Err() != nil {
+		_ = w.deps.store.MarkTurnCancelled(context.Background(), turn.ID)
+		w.publishTerminal(turn, "turn_cancelled")
+		return
+	}
+
 	wsTok, err := w.deps.wstoken(ctx, turn.WorkspaceID)
 	if err != nil {
 		w.failTurn(ctx, turn, "workspace token: "+err.Error())
