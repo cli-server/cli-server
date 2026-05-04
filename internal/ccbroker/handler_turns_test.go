@@ -169,6 +169,9 @@ func (f *fakeStore) ListSessionsWithPending(_ context.Context) ([]string, error)
 }
 
 func (f *fakeStore) ListSessionTurns(_ context.Context, sessionID string, limit int) ([]AgentTurn, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := []AgentTurn{}
