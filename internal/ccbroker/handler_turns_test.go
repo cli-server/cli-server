@@ -3,6 +3,7 @@ package ccbroker
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -107,10 +108,19 @@ type fakeStore struct {
 	mu       sync.Mutex
 	sessions map[string]*Session
 	events   []EventInput
+
+	// Queue state
+	turns      map[string]*AgentTurn // by turn_id
+	turnOrder  map[string][]string   // session_id → ordered turn_ids
+	resetCount int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: make(map[string]*Session)}
+	return &fakeStore{
+		sessions:  make(map[string]*Session),
+		turns:     make(map[string]*AgentTurn),
+		turnOrder: make(map[string][]string),
+	}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id string) (*Session, error) {
@@ -144,6 +154,141 @@ func (f *fakeStore) InsertEvents(_ context.Context, _ string, _ int, events []Ev
 		inserted[i] = InsertedEvent{SeqNum: int64(i + 1), EventID: e.EventID}
 	}
 	return inserted, nil
+}
+
+func (f *fakeStore) InsertEventsWithTurn(_ context.Context, _ string, _ int, _ string, events []EventInput) ([]InsertedEvent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]InsertedEvent, 0, len(events))
+	for _, e := range events {
+		out = append(out, InsertedEvent{SeqNum: int64(len(out) + 1), EventID: e.EventID})
+	}
+	return out, nil
+}
+
+func (f *fakeStore) EnqueueTurn(_ context.Context, t AgentTurn) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cp := t
+	cp.State = "queued"
+	cp.EnqueuedAt = time.Now()
+	f.turns[t.ID] = &cp
+	f.turnOrder[t.SessionID] = append(f.turnOrder[t.SessionID], t.ID)
+	return nil
+}
+
+func (f *fakeStore) PickNextPending(_ context.Context, sessionID string) (*AgentTurn, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, tid := range f.turnOrder[sessionID] {
+		t := f.turns[tid]
+		if t.State == "queued" || t.State == "running" {
+			cp := *t
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
+
+func (f *fakeStore) MarkTurnRunning(_ context.Context, turnID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if t, ok := f.turns[turnID]; ok && t.State == "queued" {
+		t.State = "running"
+	}
+	return nil
+}
+
+func (f *fakeStore) MarkTurnDone(_ context.Context, turnID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if t, ok := f.turns[turnID]; ok {
+		t.State = "done"
+	}
+	return nil
+}
+
+func (f *fakeStore) MarkTurnCancelled(_ context.Context, turnID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if t, ok := f.turns[turnID]; ok {
+		t.State = "cancelled"
+	}
+	return nil
+}
+
+func (f *fakeStore) MarkTurnFailed(_ context.Context, turnID, errMsg string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if t, ok := f.turns[turnID]; ok {
+		t.State = "failed"
+		t.ErrorMsg = sql.NullString{String: errMsg, Valid: true}
+	}
+	return nil
+}
+
+func (f *fakeStore) GetTurn(_ context.Context, turnID string) (*AgentTurn, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.turns[turnID]
+	if !ok {
+		return nil, nil
+	}
+	cp := *t
+	return &cp, nil
+}
+
+func (f *fakeStore) ListSessionsWithPending(_ context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	seen := map[string]struct{}{}
+	var sids []string
+	for _, t := range f.turns {
+		if t.State == "queued" || t.State == "running" {
+			if _, ok := seen[t.SessionID]; !ok {
+				seen[t.SessionID] = struct{}{}
+				sids = append(sids, t.SessionID)
+			}
+		}
+	}
+	return sids, nil
+}
+
+func (f *fakeStore) ListSessionTurns(_ context.Context, sessionID string, limit int) ([]AgentTurn, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []AgentTurn{}
+	ids := f.turnOrder[sessionID]
+	for i := len(ids) - 1; i >= 0 && len(out) < limit; i-- {
+		out = append(out, *f.turns[ids[i]])
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ResetRunningToQueued(_ context.Context) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, t := range f.turns {
+		if t.State == "running" {
+			t.State = "queued"
+			n++
+		}
+	}
+	f.resetCount = n
+	return n, nil
+}
+
+func (f *fakeStore) CountPending(_ context.Context, sessionID string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, tid := range f.turnOrder[sessionID] {
+		if t := f.turns[tid]; t.State == "queued" || t.State == "running" {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // ----- test server helpers -----
