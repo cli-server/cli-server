@@ -31,11 +31,21 @@ func (s *Server) handleCancelTurn(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"code":"internal"}`, http.StatusInternalServerError)
 			return
 		}
+		// Race window: between the GetTurn above and MarkTurnCancelled here,
+		// the worker may have picked the turn and called MarkTurnRunning. The
+		// UPDATE still succeeds (state IN ('queued','running')), so we must
+		// also signal the in-mem registry to cancel the runner's turnCtx if
+		// it was promoted. Cancel is a safe no-op when the tid doesn't match.
+		s.activeTurns.Cancel(sid, tid)
 		s.gate.CancelTurn(tid)
 		s.broadcastTurnCancelled(sid, tid)
 		w.WriteHeader(http.StatusAccepted)
 		w.Write([]byte(`{"cancelled":true,"was":"queued"}`))
 	case "running":
+		if err := s.store.MarkTurnCancelled(r.Context(), tid); err != nil {
+			http.Error(w, `{"code":"internal"}`, http.StatusInternalServerError)
+			return
+		}
 		s.activeTurns.Cancel(sid, tid)
 		s.gate.CancelTurn(tid)
 		s.broadcastTurnCancelled(sid, tid)
