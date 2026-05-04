@@ -51,6 +51,7 @@ func (s *Server) handleTurnEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			data, _ := json.Marshal(evt)
 			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
 			seenSeqs[e.SeqNum] = struct{}{}
 			if isTerminalEventType(e.EventType) {
 				fmt.Fprintf(w, "data: {\"event_type\":\"done\",\"turn_id\":%q}\n\n", tid)
@@ -58,7 +59,6 @@ func (s *Server) handleTurnEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		flusher.Flush()
 	} else {
 		s.logger.Warn("turn events catch-up failed; continuing with live tail only", "turn_id", tid, "error", err)
 	}
