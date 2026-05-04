@@ -1,7 +1,6 @@
 package ccbroker
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -184,5 +183,3 @@ func isTerminalEventType(t string) bool {
 	}
 	return false
 }
-
-var _ = context.Background
