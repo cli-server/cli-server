@@ -160,6 +160,7 @@ func (s *Server) callCCBrokerForTUI(ctx context.Context, sid, turnID, wid, userI
 		"session_id":   sid,
 		"workspace_id": wid,
 		"user_message": req.Text,
+		"turn_id":      turnID, // unify with agentserver's CAS-claimed id
 		"metadata": map[string]any{
 			"channel_type":          "tui",
 			"creator_user_id":       userID,
@@ -169,28 +170,29 @@ func (s *Server) callCCBrokerForTUI(ctx context.Context, sid, turnID, wid, userI
 			"turn_kind":             turnKind,
 		},
 	})
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", s.CCBrokerURL+"/api/turns", bytes.NewReader(body))
-	if err != nil {
-		log.Printf("tui_inbound: build cc-broker request: %v", err)
-		_ = s.DB.ClearActiveTurn(ctx, sid, turnID)
-		return
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	resp, err := http.DefaultClient.Do(httpReq)
+	returnedTurnID, err := ccbrokerV2Submit(ctx, s.CCBrokerURL, body)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			log.Printf("tui_inbound: cc-broker turn timed out after 30m sid=%s", sid)
+			log.Printf("tui_inbound: cc-broker v2 submit timed out sid=%s tid=%s", sid, turnID)
 		} else {
-			log.Printf("tui_inbound: cc-broker call failed: %v", err)
+			log.Printf("tui_inbound: cc-broker v2 submit failed sid=%s tid=%s: %v", sid, turnID, err)
 		}
 		_ = s.DB.ClearActiveTurn(ctx, sid, turnID)
 		return
 	}
-	defer resp.Body.Close()
+	if returnedTurnID != turnID {
+		log.Printf("tui_inbound: cc-broker returned turn_id=%s, expected %s — proceeding with returned id", returnedTurnID, turnID)
+	}
+	stream, err := ccbrokerOpenEventStream(ctx, s.CCBrokerURL, returnedTurnID)
+	if err != nil {
+		log.Printf("tui_inbound: open events stream failed sid=%s tid=%s: %v", sid, returnedTurnID, err)
+		_ = s.DB.ClearActiveTurn(ctx, sid, turnID)
+		return
+	}
+	defer stream.Close()
 
 	// Stream and bridge SSE events from cc-broker → agent_session_events + SSE broker.
-	sc := bufio.NewScanner(resp.Body)
+	sc := bufio.NewScanner(stream)
 	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
 	var (
 		eventType string

@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -72,14 +74,27 @@ func TestTUIEvents_UnknownSession_Returns404(t *testing.T) {
 func TestTUIEvents_BridgesCCBrokerSSE(t *testing.T) {
 	// Start a fake cc-broker that streams 3 events.
 	ccBroker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/api/turns") {
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		f := w.(http.Flusher)
-		for i, ev := range []string{"tool_use", "tool_result", "turn_done"} {
-			fmt.Fprintf(w, "event: %s\ndata: {\"seq\":%d}\n\n", ev, i+1)
-			f.Flush()
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/api/v2/turns"):
+			// Echo the caller-supplied turn_id so the GET-events path uses the
+			// expected URL.
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]any
+			_ = json.Unmarshal(body, &req)
+			tid, _ := req["turn_id"].(string)
+			if tid == "" {
+				tid = "trn_stub"
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprintf(w, `{"turn_id":%q,"events_url":"/api/turns/%s/events"}`, tid, tid)
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/turns/") && strings.HasSuffix(r.URL.Path, "/events"):
+			w.Header().Set("Content-Type", "text/event-stream")
+			f := w.(http.Flusher)
+			for i, ev := range []string{"tool_use", "tool_result", "turn_done"} {
+				fmt.Fprintf(w, "event: %s\ndata: {\"seq\":%d}\n\n", ev, i+1)
+				f.Flush()
+			}
 		}
 	}))
 	defer ccBroker.Close()

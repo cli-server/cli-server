@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,7 +30,18 @@ func TestE2E_TUITurnFlow(t *testing.T) {
 
 	cc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/api/turns"):
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/api/v2/turns"):
+			body, _ := io.ReadAll(r.Body)
+			var req map[string]any
+			_ = json.Unmarshal(body, &req)
+			tid, _ := req["turn_id"].(string)
+			if tid == "" {
+				tid = "trn_stub_e2e"
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprintf(w, `{"turn_id":%q,"events_url":"/api/turns/%s/events"}`, tid, tid)
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/turns/") && strings.HasSuffix(r.URL.Path, "/events"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			f := w.(http.Flusher)
 			fmt.Fprint(w, "event: tool_use\ndata: {\"tool\":\"remote_bash\",\"executor_id\":\"exe_a\"}\n\n")
