@@ -238,6 +238,35 @@ func (s *Store) InsertEventsWithTurn(ctx context.Context, sessionID string, epoc
 	return inserted, nil
 }
 
+type TurnEvent struct {
+	SeqNum    int64
+	EventID   string
+	EventType string
+	Payload   json.RawMessage
+	CreatedAt time.Time
+}
+
+func (s *Store) GetTurnEvents(ctx context.Context, turnID string, sinceSeqNum int64) ([]TurnEvent, error) {
+	rows, err := s.QueryContext(ctx,
+		`SELECT id, event_id, event_type, payload, created_at
+		 FROM agent_session_events
+		 WHERE turn_id=$1 AND id > $2
+		 ORDER BY id ASC`, turnID, sinceSeqNum)
+	if err != nil {
+		return nil, fmt.Errorf("get turn events: %w", err)
+	}
+	defer rows.Close()
+	var out []TurnEvent
+	for rows.Next() {
+		var e TurnEvent
+		if err := rows.Scan(&e.SeqNum, &e.EventID, &e.EventType, &e.Payload, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan turn event: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func nullableString(v sql.NullString) interface{} {
 	if !v.Valid {
 		return nil

@@ -39,6 +39,7 @@ type storer interface {
 	ListSessionTurns(ctx context.Context, sessionID string, limit int) ([]AgentTurn, error)
 	ResetRunningToQueued(ctx context.Context) (int, error)
 	CountPending(ctx context.Context, sessionID string) (int, error)
+	GetTurnEvents(ctx context.Context, turnID string, sinceSeqNum int64) ([]TurnEvent, error)
 }
 
 type Server struct {

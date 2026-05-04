@@ -193,6 +193,13 @@ func (f *fakeStore) ResetRunningToQueued(_ context.Context) (int, error) {
 	return n, nil
 }
 
+func (f *fakeStore) GetTurnEvents(_ context.Context, turnID string, sinceSeqNum int64) ([]TurnEvent, error) {
+	// fakeStore doesn't track turn_id on events; return empty for tests that
+	// don't exercise catch-up. handler_turn_events_test.go installs its own
+	// fixture if needed.
+	return nil, nil
+}
+
 func (f *fakeStore) CountPending(_ context.Context, sessionID string) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
