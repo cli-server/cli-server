@@ -116,22 +116,21 @@ func (s *Server) processWithCCBroker(ctx context.Context, session *db.AgentSessi
 		"im_user_id":    toUserID,
 	})
 
-	req, err := http.NewRequestWithContext(ctx, "POST", s.CCBrokerURL+"/api/turns", bytes.NewReader(body))
+	tid, err := ccbrokerV2Submit(ctx, s.CCBrokerURL, body)
 	if err != nil {
+		log.Printf("im_inbound: cc-broker v2 submit failed sid=%s: %v", session.ID, err)
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
+	stream, err := ccbrokerOpenEventStream(ctx, s.CCBrokerURL, tid)
 	if err != nil {
-		// Log error but don't crash — user already got 202
+		log.Printf("im_inbound: open events stream failed sid=%s tid=%s: %v", session.ID, tid, err)
 		return
 	}
-	defer resp.Body.Close()
+	defer stream.Close()
 
-	// Read SSE stream from cc-broker — events are persisted by cc-broker itself.
-	// We just need to wait for completion and extract the final text response.
-	finalResponse := extractFinalText(resp.Body)
+	// Read SSE stream from cc-broker — events are persisted by cc-broker
+	// itself; we just need the final assistant text to relay back to IM.
+	finalResponse := extractFinalText(stream)
 
 	// Reply to IM via imbridge.
 	if finalResponse == "" {
