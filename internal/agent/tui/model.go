@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Mode tracks which input handler owns the keypress stream right now.
@@ -88,8 +89,12 @@ type Model struct {
 
 func NewModel(cfg ModelConfig) *Model {
 	ta := textarea.New()
-	ta.Placeholder = "Type a message…"
+	ta.Placeholder = "Type a message, or /login to sign in…"
+	ta.Prompt = "> "
+	ta.ShowLineNumbers = false
 	ta.SetHeight(3)
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
 	ta.Focus()
 	vp := viewport.New(80, 20)
 	return &Model{

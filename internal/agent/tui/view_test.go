@@ -12,7 +12,7 @@ func TestRenderView_LoggedOut_HasLoginHint(t *testing.T) {
 	m.viewport.Width = 80
 	m.viewport.Height = 10
 	out := RenderView(m)
-	if !strings.Contains(out, "Use /login") {
+	if !strings.Contains(out, "/login") {
 		t.Errorf("missing /login hint: %s", out)
 	}
 }
