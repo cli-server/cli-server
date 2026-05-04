@@ -150,6 +150,7 @@ func (s *Server) Routes() http.Handler {
 	})
 
 	r.Post("/api/turns", s.handleProcessTurn)
+	r.Post("/api/v2/turns", s.handleProcessTurnV2)
 	r.Post("/v1/sessions", s.handleCreateSession)
 
 	// Task 12: TUI control endpoints
