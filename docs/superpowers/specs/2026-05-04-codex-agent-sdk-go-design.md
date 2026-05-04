@@ -605,7 +605,7 @@ Three test layers:
    table-driven JSON → typed-event roundtrips. Forward-compat assertions
    (unknown type → UnknownEvent, no panic).
 
-2. **Mocked CLI** — `exec_test.go`: replace `BinaryPath` with a Bash script
+2. **Mocked CLI** — `exec_test.go`: replace `CodexPathOverride` with a Bash script
    in `t.TempDir()` that emits scripted JSONL on stdout, sleeps, exits with
    chosen code. Covers: clean turn, turn.failed event, non-zero exit,
    stderr capture, ctx cancel kills child, large lines, malformed lines.
@@ -625,10 +625,13 @@ listed here MUST match TS exactly.
 
 | # | Area | TS behavior | Go behavior | Why |
 |---|---|---|---|---|
-| 1 | Binary discovery | npm platform-package fallback (`@openai/codex-linux-x64` etc.) before PATH | PATH lookup; `BinaryPath` override | No npm equivalent in Go. Consumers wanting bundled binaries can vendor / Bazel / custom path. |
+| 1 | Binary discovery | npm platform-package fallback (`@openai/codex-linux-x64` etc.) before PATH | PATH lookup; `CodexPathOverride` field | No npm equivalent in Go. Consumers wanting bundled binaries can vendor / Bazel / custom path. |
 | 2 | ctx cancel | `child.kill()` (SIGTERM, no escalation) — can hang on uncooperative codex | SIGTERM → 2s grace → SIGKILL via `cmd.WaitDelay` | Defensive. TS pattern is a latent deadlock; Go fixes it. |
 | 3 | Originator value | `"codex_sdk_ts"` | `"codex_sdk_go"` | Identifies the language wrapper. Cosmetic. |
 | 4 | Concurrency on `Thread` | Single-threaded JS; no concurrent-Run guard documented | `Thread.RunStreamed` not safe for concurrent calls; explicitly documented | Idiomatic Go; ccbroker serializes via session_worker anyway. |
+| 5 | Cancellation surface | `TurnOptions.signal: AbortSignal` per-turn | `ctx context.Context` parameter on `Run` / `RunStreamed` | Idiomatic Go; AbortSignal has no portable equivalent. Behavior is identical (cancellation kills the subprocess). |
+| 6 | `StreamedTurn.Wait()` | Generator throws; consumer catches via `try/for await` | Explicit `Wait() error` method on `*StreamedTurn` | Go channels can't carry errors. The `Wait()` method is the natural place to surface SpawnError / NonZeroExitError / ctx.Err / ParseEventError. Consumer pattern: `for evt := range stream.Events() {}; if err := stream.Wait(); err != nil {}`. |
+| 7 | Unknown event/item type | TS yields the parsed object as-is (consumer's `switch` misses it silently) | Go returns `*UnknownEvent` or `*UnknownItem` carrying the raw JSON | Go has typed sealed interfaces; a discriminator the SDK doesn't recognize must be representable as *something*. The Unknown* types preserve forward-compat without crashing or silently dropping. |
 
 ## Out-of-scope (deferred, but reserved API real estate)
 
