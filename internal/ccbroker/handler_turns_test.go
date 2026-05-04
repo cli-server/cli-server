@@ -363,3 +363,51 @@ func TestHandleProcessTurn_DepthLimit(t *testing.T) {
 		t.Fatalf("expected 429, got %d (body=%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// TestHandleProcessTurn_RespectsCallerTurnID asserts that when the request
+// body includes a non-empty turn_id, cc-broker uses it as agent_turns.id
+// instead of generating a new one. Used by the TUI inbound caller which
+// pre-CASes its active_turn_id agentserver-side.
+func TestHandleProcessTurn_RespectsCallerTurnID(t *testing.T) {
+	store := newFakeStore()
+	sse := NewSSEBroker()
+	registry := newWorkerRegistry(workerDeps{
+		store: store, sse: sse,
+		activeTurns: newActiveTurnRegistry(), compactQueue: newCompactQueue(),
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	registry.executeOverride = func(_ context.Context, turn *AgentTurn) {
+		_ = store.MarkTurnDone(context.Background(), turn.ID)
+		sse.Publish(turn.SessionID, &StreamClientEvent{
+			EventID:   "evt_t",
+			EventType: "turn_done",
+			TurnID:    turn.ID,
+			Payload:   json.RawMessage(`{}`),
+			CreatedAt: time.Now().Format(time.RFC3339Nano),
+		})
+	}
+	defer registry.Shutdown(context.Background())
+
+	srv := &Server{
+		store: store, sse: sse,
+		activeTurns:    newActiveTurnRegistry(),
+		compactQueue:   newCompactQueue(),
+		workerRegistry: registry,
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	body := bytes.NewBufferString(`{"session_id":"sess_c","workspace_id":"ws","user_message":"hi","turn_id":"trn_caller_supplied"}`)
+	req := httptest.NewRequest("POST", "/api/turns", body)
+	rec := httptest.NewRecorder()
+	srv.handleProcessTurn(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d body=%s", rec.Code, rec.Body.String())
+	}
+	turns, _ := store.ListSessionTurns(context.Background(), "sess_c", 10)
+	if len(turns) != 1 || turns[0].ID != "trn_caller_supplied" {
+		t.Fatalf("expected caller-supplied id, got %+v", turns)
+	}
+	if !strings.Contains(rec.Body.String(), `"turn_id":"trn_caller_supplied"`) {
+		t.Fatalf("expected turn_started prelude to echo caller turn_id, got %s", rec.Body.String())
+	}
+}
