@@ -57,6 +57,8 @@ type Server struct {
 	// Task 12: TUI control endpoints
 	activeTurns  *activeTurnRegistry
 	compactQueue *compactQueue
+
+	workerRegistry *workerRegistry
 }
 
 func NewServer(cfg Config, store *Store) (*Server, error) {
