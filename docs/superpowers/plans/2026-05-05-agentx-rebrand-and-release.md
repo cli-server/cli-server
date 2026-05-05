@@ -1160,18 +1160,19 @@ git diff --stat codex-rs/Cargo.toml codex-rs/Cargo.lock
 ```
 Expected: both files show changes (Cargo.toml has the version line; Cargo.lock has the workspace member version updates).
 
-- [ ] **Step 5: Commit and push the bump + tag**
+- [ ] **Step 5: Commit and push the bump + tag (on the feature branch)**
 
 ```bash
 cd /root/codex
+git status                                             # confirm we're on feature/agentx-release-pipeline
 git add codex-rs/Cargo.toml codex-rs/Cargo.lock
 git commit -m "chore(release): agentx 0.128.0-agentx.0 (dry-run prerelease)"
 git tag agentx-v0.128.0-agentx.0
-git push agentserver-fork main
+git push agentserver-fork feature/agentx-release-pipeline
 git push agentserver-fork agentx-v0.128.0-agentx.0
 ```
 
-(Remote name is `agentserver-fork` per `git remote -v` in /root/codex.)
+(Remote name is `agentserver-fork` per `git remote -v` in /root/codex. The workflow triggers on the tag push regardless of which branch it points at, so this validates the pipeline end-to-end without merging to main first.)
 
 - [ ] **Step 6: Watch the workflow run**
 
@@ -1217,23 +1218,41 @@ Expand-Archive agentx-x86_64-pc-windows-msvc.exe.zip -DestinationPath .
 ```
 Expected: SmartScreen warning on first run (click "More info" → "Run anyway"); agentx prints its help text.
 
-- [ ] **Step 8: Cut iteration releases (GitHub-Release-only) as needed**
+- [ ] **Step 8: Open PR and merge to main**
+
+Once the dry-run validates, open a PR from `feature/agentx-release-pipeline` to `main`:
+
+```bash
+cd /root/codex
+gh pr create --base main --head feature/agentx-release-pipeline \
+  --title "feat(release): agentx release pipeline + rebrand" \
+  --body "Implements docs/superpowers/specs/2026-05-05-agentx-rebrand-and-release-design.md.
+
+Validated end-to-end via dry-run prerelease tag agentx-v0.128.0-agentx.0
+(see GitHub Release for artifacts)."
+```
+
+After PR review + merge, all subsequent release work happens on `main`.
+
+- [ ] **Step 9: Cut iteration releases (GitHub-Release-only) as needed**
 
 Iteration releases keep the `-agentx.N` suffix. Their `is_stable` evaluates to `false` (because the version contains a `-`), so the `winget` and `choco` jobs are skipped. Use this for any release where you don't (yet) want to publish to package managers — bug-fix iterations, reflowing upstream merges, etc.:
 
 ```bash
 cd /root/codex
+git checkout main && git pull agentserver-fork main
 make agentx-release VERSION=0.128.0-agentx.1
 git push agentserver-fork main
 git push agentserver-fork agentx-v0.128.0-agentx.1
 ```
 
-- [ ] **Step 9: Cut the first stable release (publishes to winget + choco)**
+- [ ] **Step 10: Cut the first stable release (publishes to winget + choco)**
 
 Stable releases use the bare `x.y.z` form with no suffix, which makes `is_stable=true` and triggers `winget` + `choco`. Pick a version that doesn't collide with what upstream codex itself ships at the same triple (e.g., if upstream is at `0.128.0`, you can still ship agentx `0.128.0` because the package names — `OpenAI.Codex` vs `Agentserver.AgentX`, `codex` vs `agentx` — are distinct namespaces; the Cargo.toml conflict on merge is trivial since both contents are the same value).
 
 ```bash
 cd /root/codex
+git checkout main && git pull agentserver-fork main
 make agentx-release VERSION=0.128.0
 git push agentserver-fork main
 git push agentserver-fork agentx-v0.128.0
@@ -1247,7 +1266,7 @@ After the run completes, verify:
 
 ## Plan complete
 
-After Task 13 Step 9 confirms winget + choco are live, the agentx release pipeline is fully operational. Subsequent releases are a single `make agentx-release VERSION=...` + `git push` per the spec's "Release flow" section.
+After Task 13 Step 10 confirms winget + choco are live, the agentx release pipeline is fully operational. Subsequent releases are a single `make agentx-release VERSION=...` + `git push` per the spec's "Release flow" section.
 
 **Files created (all in /root/codex):**
 - `.github/workflows/agentx-release.yml`
