@@ -16,7 +16,7 @@ a pure mapper into `ServerNotification`s → persist + push → POST revoke →
 clean up. Recovery on startup resets stale `running` rows back to `queued`
 and pings affected workers.
 
-**Tech Stack:** Go 1.22; `github.com/agentserver/codex-agent-sdk-go`
+**Tech Stack:** Go 1.26; `github.com/agentserver/codex-agent-sdk-go`
 (driver); `nhooyr.io/websocket` (transport, established in 2a);
 `net/http` (egress to codex-exec-gateway); `database/sql` via 2a's
 `store.Store`. No new external deps beyond what 2a introduces.
@@ -44,8 +44,8 @@ plan assumes 2a has shipped:
   `Teardown(ctx, layout)`. Layout exposes `TmpRoot` so the manifest
   writer can place `exec_servers.json` alongside the workspace dirs.
 - `internal/codexappgateway/exectoken`: `Mint(MintInput) (string, error)`,
-  `Verify(secret string, token string) (Claims, error)`,
-  `MintInput{Secret string, TurnID, WorkspaceID string, ExeIDs []string, TTL time.Duration, Now time.Time}`,
+  `Verify(secret []byte, token string) (Claims, error)`,
+  `MintInput{Secret []byte, TurnID, WorkspaceID string, ExeIDs []string, TTL time.Duration, Now time.Time}`,
   `Claims{TurnID, WorkspaceID string, ExeIDs []string, IssuedAt, ExpiresAt int64}`.
 - `internal/codexappgateway/server.go` exposing a `*Server` with
   `Store`, `Workspace`, `WSToken func(ctx, wid) (string, error)`,
@@ -257,7 +257,7 @@ func (f *fakeStore) ListThreads(_ context.Context, wid string, _, _ int) ([]stor
 func (f *fakeStore) ListTurns(_ context.Context, tid string, _, _ int) ([]store.AgentTurn, error) {
 	return f.turns[tid], nil
 }
-func (f *fakeStore) ListEvents(_ context.Context, turnID string) ([]store.TurnEvent, error) {
+func (f *fakeStore) ListEvents(_ context.Context, turnID string, _ int64) ([]store.TurnEvent, error) {
 	return f.events[turnID], nil
 }
 
@@ -284,7 +284,7 @@ func TestThreadResume_RequiresOwnership(t *testing.T) {
 	fs.threads["thr_x"] = store.Thread{ID: "thr_x", WorkspaceID: "ws_other", UserID: "u_other"}
 	h := NewThreadHandlers(fs, nil, fixedClock(time.Now()))
 	st := &ConnState{UserID: "u_1", WorkspaceID: "ws_1", Initialized: true}
-	body := json.RawMessage(`{"thread_id":"thr_x"}`)
+	body := json.RawMessage(`{"threadId":"thr_x"}`)
 	_, err := h.Resume(context.Background(), st, body)
 	if err == nil {
 		t.Fatalf("want forbidden error, got nil")
@@ -300,7 +300,7 @@ func TestThreadRead_ReturnsPersistedEvents(t *testing.T) {
 	}
 	h := NewThreadHandlers(fs, nil, fixedClock(time.Now()))
 	st := &ConnState{UserID: "u_1", WorkspaceID: "ws_1", Initialized: true}
-	resp, err := h.Read(context.Background(), st, json.RawMessage(`{"thread_id":"thr_1"}`))
+	resp, err := h.Read(context.Background(), st, json.RawMessage(`{"threadId":"thr_1"}`))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestThreadTurnsList_OK(t *testing.T) {
 	fs.turns["thr_1"] = []store.AgentTurn{{ID: "trn_1"}, {ID: "trn_2"}}
 	h := NewThreadHandlers(fs, nil, fixedClock(time.Now()))
 	st := &ConnState{UserID: "u_1", WorkspaceID: "ws_1", Initialized: true}
-	resp, _ := h.TurnsList(context.Background(), st, json.RawMessage(`{"thread_id":"thr_1"}`))
+	resp, _ := h.TurnsList(context.Background(), st, json.RawMessage(`{"threadId":"thr_1"}`))
 	tr := resp.(protocol.TurnListResponse)
 	if len(tr.Turns) != 2 {
 		t.Errorf("want 2 turns, got %d", len(tr.Turns))
@@ -372,7 +372,7 @@ type ThreadStore interface {
 	GetThread(ctx context.Context, id string) (store.Thread, error)
 	ListThreads(ctx context.Context, workspaceID string, limit, offset int) ([]store.Thread, error)
 	ListTurns(ctx context.Context, threadID string, limit, offset int) ([]store.AgentTurn, error)
-	ListEvents(ctx context.Context, turnID string) ([]store.TurnEvent, error)
+	ListEvents(ctx context.Context, turnID string, sinceSeq int64) ([]store.TurnEvent, error)
 }
 
 // WorkspaceFetcher is the subset of agentworkspace used by `thread/resume`.
@@ -428,7 +428,7 @@ func (h *ThreadHandlers) Start(ctx context.Context, st *ConnState, raw json.RawM
 }
 
 type threadResumeReq struct {
-	ThreadID string `json:"thread_id"`
+	ThreadID string `json:"threadId"`
 }
 
 func (h *ThreadHandlers) Resume(ctx context.Context, st *ConnState, raw json.RawMessage) (any, error) {
@@ -461,7 +461,7 @@ func (h *ThreadHandlers) Resume(ctx context.Context, st *ConnState, raw json.Raw
 }
 
 type threadReadReq struct {
-	ThreadID string `json:"thread_id"`
+	ThreadID string `json:"threadId"`
 }
 
 func (h *ThreadHandlers) Read(ctx context.Context, st *ConnState, raw json.RawMessage) (any, error) {
@@ -485,7 +485,7 @@ func (h *ThreadHandlers) Read(ctx context.Context, st *ConnState, raw json.RawMe
 	}
 	var events []protocol.PersistedEvent
 	for _, tn := range turns {
-		evs, err := h.store.ListEvents(ctx, tn.ID)
+		evs, err := h.store.ListEvents(ctx, tn.ID, 0)
 		if err != nil {
 			return nil, fmt.Errorf("list events for %s: %w", tn.ID, err)
 		}
@@ -532,7 +532,7 @@ func (h *ThreadHandlers) List(ctx context.Context, st *ConnState, raw json.RawMe
 }
 
 type turnsListReq struct {
-	ThreadID string `json:"thread_id"`
+	ThreadID string `json:"threadId"`
 	Limit    int    `json:"limit,omitempty"`
 	Offset   int    `json:"offset,omitempty"`
 }
@@ -631,7 +631,7 @@ git commit -m "feat(codex-app-gateway): thread handlers (start/resume/read/list/
 
 `turn/start` is intentionally lightweight: validate, INSERT
 `codex_turns` row, notify the per-thread worker, return
-`TurnStartResponse{turn:{id, status:"in_progress"}}` synchronously.
+`TurnStartResponse{turn:{id, status:"inProgress"}}` synchronously.
 The session worker (Task 8) does the actual work asynchronously.
 
 - [ ] **Step 1: Write the failing test**
@@ -695,14 +695,14 @@ func TestTurnStart_EnqueuesAndReturnsInProgress(t *testing.T) {
 	notif := newFakeNotifier()
 	h := NewTurnHandlers(fs, notif, fixedClock(timeFromUnix(1714867200)))
 	st := &ConnState{UserID: "u_1", WorkspaceID: "ws_1", ConnID: "c_1", Initialized: true}
-	body := json.RawMessage(`{"thread_id":"thr_1","input":[{"type":"text","text":"hi"}]}`)
+	body := json.RawMessage(`{"threadId":"thr_1","input":[{"type":"text","text":"hi"}]}`)
 	resp, err := h.Start(context.Background(), st, body)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	tr := resp.(protocol.TurnStartResponse)
-	if tr.Turn.Status != "in_progress" {
-		t.Errorf("status: got %q want in_progress", tr.Turn.Status)
+	if tr.Turn.Status != "inProgress" {
+		t.Errorf("status: got %q want inProgress", tr.Turn.Status)
 	}
 	if len(fs.enqueued) != 1 || fs.enqueued[0].ThreadID != "thr_1" {
 		t.Errorf("enqueue: %+v", fs.enqueued)
@@ -719,7 +719,7 @@ func TestTurnStart_EnqueueErrorBubbles(t *testing.T) {
 	h := NewTurnHandlers(fs, notif, fixedClock(timeFromUnix(0)))
 	st := &ConnState{UserID: "u_1", WorkspaceID: "ws_1", Initialized: true}
 	_, err := h.Start(context.Background(), st,
-		json.RawMessage(`{"thread_id":"thr_1","input":[{"type":"text","text":"hi"}]}`))
+		json.RawMessage(`{"threadId":"thr_1","input":[{"type":"text","text":"hi"}]}`))
 	if err == nil {
 		t.Fatalf("want error")
 	}
@@ -731,7 +731,7 @@ func TestTurnStart_RejectsForeignThread(t *testing.T) {
 	h := NewTurnHandlers(fs, newFakeNotifier(), fixedClock(timeFromUnix(0)))
 	st := &ConnState{UserID: "u_1", WorkspaceID: "ws_1", Initialized: true}
 	_, err := h.Start(context.Background(), st,
-		json.RawMessage(`{"thread_id":"thr_x","input":[{"type":"text","text":"hi"}]}`))
+		json.RawMessage(`{"threadId":"thr_x","input":[{"type":"text","text":"hi"}]}`))
 	if err == nil {
 		t.Fatalf("want forbidden")
 	}
@@ -791,11 +791,11 @@ func NewTurnHandlers(s TurnStore, n WorkerNotifier, now func() time.Time) *TurnH
 }
 
 type turnStartReq struct {
-	ThreadID     string          `json:"thread_id"`
+	ThreadID     string          `json:"threadId"`
 	Input        json.RawMessage `json:"input"`
 	Cwd          string          `json:"cwd,omitempty"`
 	Model        string          `json:"model,omitempty"`
-	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
 	Environments []string        `json:"environments,omitempty"`
 }
 
@@ -808,7 +808,7 @@ func (h *TurnHandlers) Start(ctx context.Context, st *ConnState, raw json.RawMes
 		return nil, fmt.Errorf("decode turn/start: %w", err)
 	}
 	if req.ThreadID == "" {
-		return nil, errors.New("thread_id required")
+		return nil, errors.New("threadId required")
 	}
 	if len(req.Input) == 0 {
 		return nil, errors.New("input required")
@@ -821,6 +821,9 @@ func (h *TurnHandlers) Start(ctx context.Context, st *ConnState, raw json.RawMes
 		return nil, errForbidden("thread not owned by caller")
 	}
 	turnID := newID("trn_")
+	// Internal blob persisted to codex_turns.turn_options (JSONB) — not on
+	// the wire to clients. Keep keys snake_case to match the SQL column
+	// convention; the worker reads them back into `opts` below.
 	options, _ := json.Marshal(map[string]any{
 		"cwd":           req.Cwd,
 		"model":         req.Model,
@@ -845,15 +848,15 @@ func (h *TurnHandlers) Start(ctx context.Context, st *ConnState, raw json.RawMes
 		Turn: protocol.Turn{
 			ID:         turnID,
 			ThreadID:   req.ThreadID,
-			Status:     "in_progress",
+			Status:     "inProgress",
 			EnqueuedAt: turn.EnqueuedAt,
 		},
 	}, nil
 }
 
 type turnInterruptReq struct {
-	TurnID   string `json:"turn_id"`
-	ThreadID string `json:"thread_id"`
+	TurnID   string `json:"turnId"`
+	ThreadID string `json:"threadId"`
 }
 
 func (h *TurnHandlers) Interrupt(ctx context.Context, st *ConnState, raw json.RawMessage) (any, error) {
@@ -912,7 +915,7 @@ func TestTurnInterrupt_HitsActiveTurn(t *testing.T) {
 	h := NewTurnHandlers(fs, notif, fixedClock(timeFromUnix(0)))
 	st := &ConnState{UserID: "u_1", WorkspaceID: "ws_1", Initialized: true}
 	resp, err := h.Interrupt(context.Background(), st,
-		json.RawMessage(`{"turn_id":"trn_a","thread_id":"thr_1"}`))
+		json.RawMessage(`{"turnId":"trn_a","threadId":"thr_1"}`))
 	if err != nil {
 		t.Fatalf("interrupt: %v", err)
 	}
@@ -927,7 +930,7 @@ func TestTurnInterrupt_MissesUnknownTurn(t *testing.T) {
 	h := NewTurnHandlers(fs, newFakeNotifier(), fixedClock(timeFromUnix(0)))
 	st := &ConnState{UserID: "u_1", WorkspaceID: "ws_1", Initialized: true}
 	resp, _ := h.Interrupt(context.Background(), st,
-		json.RawMessage(`{"turn_id":"trn_x","thread_id":"thr_1"}`))
+		json.RawMessage(`{"turnId":"trn_x","threadId":"thr_1"}`))
 	if resp.(protocol.TurnInterruptResponse).Cancelled {
 		t.Errorf("want cancelled:false")
 	}
@@ -998,13 +1001,13 @@ func TestBuildAndWriteManifest_EmitsExpectedSpec(t *testing.T) {
 	defer srv.Close()
 
 	mw := NewManifestWriter(ManifestConfig{
-		ExecGatewayHTTPURL: srv.URL,
-		ExecGatewayWSURL:   "ws://codex-exec-gateway:6060",
-		AuthSecret:         "internal-shared",
-		HMACSecret:         "hmac-secret",
-		TmpRoot:            t.TempDir(),
-		HTTP:               srv.Client(),
-		Now:                func() time.Time { return time.Unix(1714867200, 0).UTC() },
+		ExecGatewayHTTPURL:   srv.URL,
+		ExecGatewayWSURL:     "ws://codex-exec-gateway:6060",
+		InternalSharedSecret: "internal-shared",
+		CapTokenHMACSecret:   []byte("hmac-secret"),
+		TmpRoot:              t.TempDir(),
+		HTTP:                 srv.Client(),
+		Now:                  func() time.Time { return time.Unix(1714867200, 0).UTC() },
 	})
 
 	res, err := mw.BuildAndWrite(context.Background(), BuildInput{
@@ -1042,7 +1045,7 @@ func TestBuildAndWriteManifest_EmitsExpectedSpec(t *testing.T) {
 		t.Errorf("auth_token_env: %s", spec.Environments[0].AuthTokenEnv)
 	}
 	// Token payload exe_ids must equal manifest ids (both order-preserving).
-	claims, err := exectoken.Verify("hmac-secret", res.CapToken)
+	claims, err := exectoken.Verify([]byte("hmac-secret"), res.CapToken)
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
@@ -1061,7 +1064,7 @@ func TestBuildAndWriteManifest_NoLiveExecutors_ReturnsEmptyManifest(t *testing.T
 	defer srv.Close()
 	mw := NewManifestWriter(ManifestConfig{
 		ExecGatewayHTTPURL: srv.URL, ExecGatewayWSURL: "ws://x",
-		AuthSecret: "s", HMACSecret: "k",
+		InternalSharedSecret: "s", CapTokenHMACSecret: []byte("k"),
 		TmpRoot: t.TempDir(), HTTP: srv.Client(),
 		Now: time.Now,
 	})
@@ -1129,14 +1132,14 @@ type ManifestEnvironment struct {
 }
 
 type ManifestConfig struct {
-	ExecGatewayHTTPURL string        // e.g. "http://codex-exec-gateway:6060"
-	ExecGatewayWSURL   string        // e.g. "ws://codex-exec-gateway:6060"
-	AuthSecret         string        // shared bearer for /api/exec-gateway/*
-	HMACSecret         string        // CODEX_EXEC_GATEWAY_TOKEN signing key
-	TmpRoot            string        // default "/tmp/codex-app-gateway"
-	HTTP               *http.Client
-	Now                func() time.Time
-	TokenTTL           time.Duration // default 1h
+	ExecGatewayHTTPURL   string        // e.g. "http://codex-exec-gateway:6060"
+	ExecGatewayWSURL     string        // e.g. "ws://codex-exec-gateway:6060"
+	InternalSharedSecret string        // shared bearer for /api/exec-gateway/* (CXG_INTERNAL_SHARED_SECRET)
+	CapTokenHMACSecret   []byte        // CODEX_EXEC_GATEWAY_TOKEN signing key (matches exectoken.MintInput.Secret)
+	TmpRoot              string        // default "/tmp/codex-app-gateway"
+	HTTP                 *http.Client
+	Now                  func() time.Time
+	TokenTTL             time.Duration // default 1h
 }
 
 type BuildInput struct {
@@ -1213,7 +1216,7 @@ func (m *ManifestWriter) BuildAndWrite(ctx context.Context, in BuildInput) (Buil
 
 	now := m.cfg.Now().UTC()
 	tok, err := exectoken.Mint(exectoken.MintInput{
-		Secret:      m.cfg.HMACSecret,
+		Secret:      m.cfg.CapTokenHMACSecret,
 		TurnID:      in.TurnID,
 		WorkspaceID: in.WorkspaceID,
 		ExeIDs:      exeIDs,
@@ -1233,7 +1236,7 @@ func (m *ManifestWriter) probeConnected(ctx context.Context, workspaceID string)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+m.cfg.AuthSecret)
+	req.Header.Set("Authorization", "Bearer "+m.cfg.InternalSharedSecret)
 	resp, err := m.cfg.HTTP.Do(req)
 	if err != nil {
 		return nil, err
@@ -1530,46 +1533,56 @@ mapper struct, NOT a pure function).
 package runner
 
 import (
-	"encoding/json"
+	"strings"
 	"testing"
 
 	codex "github.com/agentserver/codex-agent-sdk-go"
 	"github.com/agentserver/agentserver/internal/codexappgateway/protocol"
 )
 
+func encodedMethod(t *testing.T, n protocol.ServerNotification) string {
+	t.Helper()
+	method, _, err := n.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	return method
+}
+
+func encodedParams(t *testing.T, n protocol.ServerNotification) []byte {
+	t.Helper()
+	_, body, err := n.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	return body
+}
+
 func TestEventMapper_ThreadStarted(t *testing.T) {
 	m := NewEventMapper("trn_1", "")
 	got := m.Map(&codex.ThreadStartedEvent{Type: "thread.started", ThreadID: "thr_new"})
-	if len(got) != 1 || got[0].Method != "thread/started" {
+	if len(got) != 1 || encodedMethod(t, got[0]) != "thread/started" {
 		t.Fatalf("notif: %+v", got)
 	}
-	var p struct {
-		ThreadID string `json:"thread_id"`
-	}
-	_ = json.Unmarshal(got[0].Params, &p)
-	if p.ThreadID != "thr_new" {
-		t.Errorf("thread_id: %q", p.ThreadID)
+	if got[0].ThreadStarted == nil || got[0].ThreadStarted.Thread.ID != "thr_new" {
+		t.Errorf("thread.id: %+v", got[0].ThreadStarted)
 	}
 }
 
 func TestEventMapper_TurnStartedAndCompleted(t *testing.T) {
 	m := NewEventMapper("trn_1", "thr_1")
-	if got := m.Map(&codex.TurnStartedEvent{Type: "turn.started"}); got[0].Method != "turn/started" {
-		t.Errorf("turn/started: %s", got[0].Method)
+	if got := m.Map(&codex.TurnStartedEvent{Type: "turn.started"}); encodedMethod(t, got[0]) != "turn/started" {
+		t.Errorf("turn/started: %s", encodedMethod(t, got[0]))
 	}
 	got := m.Map(&codex.TurnCompletedEvent{
 		Type:  "turn.completed",
 		Usage: codex.Usage{InputTokens: 100, OutputTokens: 30},
 	})
-	if got[0].Method != "turn/completed" {
-		t.Errorf("turn/completed: %s", got[0].Method)
+	if encodedMethod(t, got[0]) != "turn/completed" {
+		t.Errorf("turn/completed: %s", encodedMethod(t, got[0]))
 	}
-	var p struct {
-		Usage codex.Usage `json:"usage"`
-	}
-	_ = json.Unmarshal(got[0].Params, &p)
-	if p.Usage.InputTokens != 100 {
-		t.Errorf("usage missing")
+	if got[0].TurnCompleted == nil || got[0].TurnCompleted.Usage.InputTokens != 100 {
+		t.Errorf("usage missing: %+v", got[0].TurnCompleted)
 	}
 }
 
@@ -1577,31 +1590,35 @@ func TestEventMapper_ItemStartedAndCompleted_AgentMessage(t *testing.T) {
 	m := NewEventMapper("trn_1", "thr_1")
 	item := &codex.AgentMessageItem{ID: "itm_1", Type: "agent_message", Text: "hello"}
 	starts := m.Map(&codex.ItemStartedEvent{Type: "item.started", Item: item})
-	if starts[0].Method != "item/started" {
-		t.Errorf("item/started: %s", starts[0].Method)
+	if encodedMethod(t, starts[0]) != "item/started" {
+		t.Errorf("item/started: %s", encodedMethod(t, starts[0]))
 	}
 	completes := m.Map(&codex.ItemCompletedEvent{Type: "item.completed", Item: item})
-	if completes[0].Method != "item/completed" {
-		t.Errorf("item/completed: %s", completes[0].Method)
+	if encodedMethod(t, completes[0]) != "item/completed" {
+		t.Errorf("item/completed: %s", encodedMethod(t, completes[0]))
 	}
 }
 
 func TestEventMapper_ItemUpdated_AgentMessage_EmitsDelta(t *testing.T) {
 	m := NewEventMapper("trn_1", "thr_1")
 	first := &codex.AgentMessageItem{ID: "itm_1", Type: "agent_message", Text: "hel"}
-	if got := m.Map(&codex.ItemUpdatedEvent{Type: "item.updated", Item: first}); got[0].Method != "item/agentMessage/delta" {
-		t.Fatalf("first delta method: %s", got[0].Method)
+	if got := m.Map(&codex.ItemUpdatedEvent{Type: "item.updated", Item: first}); encodedMethod(t, got[0]) != "item/agentMessage/delta" {
+		t.Fatalf("first delta method: %s", encodedMethod(t, got[0]))
 	}
 	// Second update growing the text → delta is just the new suffix.
 	second := &codex.AgentMessageItem{ID: "itm_1", Type: "agent_message", Text: "hello world"}
 	got := m.Map(&codex.ItemUpdatedEvent{Type: "item.updated", Item: second})
-	var p struct {
-		ItemID string `json:"item_id"`
-		Delta  string `json:"delta"`
+	if got[0].AgentMessageDelta == nil ||
+		got[0].AgentMessageDelta.ItemID != "itm_1" ||
+		got[0].AgentMessageDelta.Delta != "lo world" {
+		t.Errorf("delta: %+v", got[0].AgentMessageDelta)
 	}
-	_ = json.Unmarshal(got[0].Params, &p)
-	if p.ItemID != "itm_1" || p.Delta != "lo world" {
-		t.Errorf("delta: %+v", p)
+	// Wire-level sanity: encoded params must use camelCase keys.
+	body := encodedParams(t, got[0])
+	for _, want := range []string{`"itemId":`, `"turnId":`, `"delta":`} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("encoded delta missing %s: %s", want, body)
+		}
 	}
 }
 
@@ -1619,16 +1636,16 @@ func TestEventMapper_ItemUpdated_NonAgentMessage_DropsSilently(t *testing.T) {
 func TestEventMapper_ThreadError(t *testing.T) {
 	m := NewEventMapper("trn_1", "thr_1")
 	got := m.Map(&codex.ThreadErrorEvent{Type: "error", Message: "boom"})
-	if got[0].Method != "error" {
-		t.Errorf("method: %s", got[0].Method)
+	if encodedMethod(t, got[0]) != "error" {
+		t.Errorf("method: %s", encodedMethod(t, got[0]))
 	}
 }
 
 func TestEventMapper_TurnFailed_IsErrorNotification(t *testing.T) {
 	m := NewEventMapper("trn_1", "thr_1")
 	got := m.Map(&codex.TurnFailedEvent{Type: "turn.failed", Error: codex.ThreadError{Message: "denied"}})
-	if got[0].Method != "error" {
-		t.Errorf("method: %s", got[0].Method)
+	if encodedMethod(t, got[0]) != "error" {
+		t.Errorf("method: %s", encodedMethod(t, got[0]))
 	}
 }
 
@@ -1655,7 +1672,6 @@ Expected: FAIL — `NewEventMapper` undefined.
 package runner
 
 import (
-	"encoding/json"
 	"strings"
 
 	codex "github.com/agentserver/codex-agent-sdk-go"
@@ -1683,40 +1699,65 @@ func NewEventMapper(turnID, threadID string) *EventMapper {
 
 // Map returns zero or more ServerNotifications for the given event.
 // Pure with respect to its receiver state (which is single-goroutine
-// per turn, written only by the worker's pump loop).
+// per turn, written only by the worker's pump loop). Each branch
+// constructs a typed `protocol.ServerNotification` variant directly so
+// the union's `Encode()` (defined in 2a) emits the correct method +
+// camelCase JSON params. There is intentionally no untyped helper that
+// takes (method, body) — that shape silently bypassed the sum-type and
+// caused snake_case keys to leak onto the wire (see post-recon audit
+// P0-1).
 func (m *EventMapper) Map(evt codex.ThreadEvent) []protocol.ServerNotification {
 	switch e := evt.(type) {
 	case *codex.ThreadStartedEvent:
 		if m.threadID == "" {
 			m.threadID = e.ThreadID
 		}
-		return []protocol.ServerNotification{m.notif("thread/started", map[string]any{
-			"thread_id": e.ThreadID,
-		})}
+		return []protocol.ServerNotification{{
+			ThreadStarted: &protocol.ThreadStartedParams{
+				Thread: protocol.Thread{ID: e.ThreadID},
+			},
+		}}
 
 	case *codex.TurnStartedEvent:
-		return []protocol.ServerNotification{m.notif("turn/started", map[string]any{
-			"turn_id":   m.turnID,
-			"thread_id": m.threadID,
-		})}
+		return []protocol.ServerNotification{{
+			TurnStarted: &protocol.TurnStartedParams{
+				ThreadID: m.threadID,
+				Turn:     protocol.Turn{ID: m.turnID, Status: protocol.TurnInProgress, Items: []protocol.ThreadItem{}},
+			},
+		}}
 
 	case *codex.TurnCompletedEvent:
-		return []protocol.ServerNotification{m.notif("turn/completed", map[string]any{
-			"turn_id":   m.turnID,
-			"thread_id": m.threadID,
-			"usage":     e.Usage,
-		})}
+		usage := protocol.Usage{
+			InputTokens:           e.Usage.InputTokens,
+			CachedInputTokens:     e.Usage.CachedInputTokens,
+			OutputTokens:          e.Usage.OutputTokens,
+			ReasoningOutputTokens: e.Usage.ReasoningOutputTokens,
+		}
+		return []protocol.ServerNotification{{
+			TurnCompleted: &protocol.TurnCompletedParams{
+				ThreadID: m.threadID,
+				Turn:     protocol.Turn{ID: m.turnID, Status: protocol.TurnCompleted, Items: []protocol.ThreadItem{}, Usage: &usage},
+			},
+		}}
 
 	case *codex.TurnFailedEvent:
-		return []protocol.ServerNotification{m.notif("error", map[string]any{
-			"turn_id":   m.turnID,
-			"thread_id": m.threadID,
-			"message":   e.Error.Message,
-			"source":    "turn.failed",
-		})}
+		return []protocol.ServerNotification{{
+			Error: &protocol.ErrorParams{
+				ThreadID:  m.threadID,
+				TurnID:    m.turnID,
+				WillRetry: false,
+				Error:     protocol.ThreadError{Message: e.Error.Message},
+			},
+		}}
 
 	case *codex.ItemStartedEvent:
-		return []protocol.ServerNotification{m.notif("item/started", m.itemPayload(e.Item))}
+		pi := translateItem(e.Item)
+		if pi == nil {
+			return nil
+		}
+		return []protocol.ServerNotification{{
+			ItemStarted: &protocol.ItemEnvelope{ThreadID: m.threadID, TurnID: m.turnID, Item: pi},
+		}}
 
 	case *codex.ItemUpdatedEvent:
 		// Only AgentMessage updates produce a streamable delta; everything
@@ -1731,24 +1772,35 @@ func (m *EventMapper) Map(evt codex.ThreadEvent) []protocol.ServerNotification {
 			if delta == "" {
 				return nil
 			}
-			return []protocol.ServerNotification{m.notif("item/agentMessage/delta", map[string]any{
-				"turn_id":   m.turnID,
-				"thread_id": m.threadID,
-				"item_id":   am.ID,
-				"delta":     delta,
-			})}
+			return []protocol.ServerNotification{{
+				AgentMessageDelta: &protocol.AgentMessageDeltaParams{
+					ThreadID: m.threadID,
+					TurnID:   m.turnID,
+					ItemID:   am.ID,
+					Delta:    delta,
+				},
+			}}
 		}
 		return nil
 
 	case *codex.ItemCompletedEvent:
-		return []protocol.ServerNotification{m.notif("item/completed", m.itemPayload(e.Item))}
+		pi := translateItem(e.Item)
+		if pi == nil {
+			return nil
+		}
+		return []protocol.ServerNotification{{
+			ItemCompleted: &protocol.ItemEnvelope{ThreadID: m.threadID, TurnID: m.turnID, Item: pi},
+		}}
 
 	case *codex.ThreadErrorEvent:
-		return []protocol.ServerNotification{m.notif("error", map[string]any{
-			"thread_id": m.threadID,
-			"message":   e.Message,
-			"source":    "thread.error",
-		})}
+		return []protocol.ServerNotification{{
+			Error: &protocol.ErrorParams{
+				ThreadID:  m.threadID,
+				TurnID:    m.turnID,
+				WillRetry: false,
+				Error:     protocol.ThreadError{Message: e.Message},
+			},
+		}}
 
 	case *codex.UnknownEvent:
 		// Drop; logging happens at the worker layer with full slog.
@@ -1757,17 +1809,98 @@ func (m *EventMapper) Map(evt codex.ThreadEvent) []protocol.ServerNotification {
 	return nil
 }
 
-func (m *EventMapper) itemPayload(item codex.ThreadItem) map[string]any {
-	return map[string]any{
-		"turn_id":   m.turnID,
-		"thread_id": m.threadID,
-		"item":      item,
+// translateItem converts an SDK codex.ThreadItem into the gateway's
+// protocol.ThreadItem. Two distinct interfaces (sealed by different
+// itemSeal()s in their respective packages) so a direct assignment
+// won't compile — translation happens here. Unknown / unrepresentable
+// variants return nil and the caller drops the event (parity with the
+// gateway's strict DecodeThreadItem policy).
+func translateItem(in codex.ThreadItem) protocol.ThreadItem {
+	switch v := in.(type) {
+	case *codex.AgentMessageItem:
+		return &protocol.AgentMessageItem{ID: v.ID, Type: "agentMessage", Text: v.Text}
+	case *codex.ReasoningItem:
+		return &protocol.ReasoningItem{ID: v.ID, Type: "reasoning", Text: v.Text}
+	case *codex.CommandExecutionItem:
+		out := &protocol.CommandExecutionItem{
+			ID:               v.ID,
+			Type:             "commandExecution",
+			Command:          v.Command,
+			AggregatedOutput: v.AggregatedOutput,
+			Status:           v.Status,
+		}
+		if v.ExitCode != nil {
+			ec := *v.ExitCode
+			out.ExitCode = &ec
+		}
+		return out
+	case *codex.FileChangeItem:
+		changes := make([]protocol.FileUpdateChange, 0, len(v.Changes))
+		for _, c := range v.Changes {
+			changes = append(changes, protocol.FileUpdateChange{Path: c.Path, Kind: c.Kind})
+		}
+		return &protocol.FileChangeItem{ID: v.ID, Type: "fileChange", Changes: changes, Status: v.Status}
+	case *codex.McpToolCallItem:
+		return &protocol.McpToolCallItem{
+			ID:        v.ID,
+			Type:      "mcpToolCall",
+			Server:    v.Server,
+			Tool:      v.Tool,
+			Arguments: v.Arguments,
+			Status:    v.Status,
+		}
+	case *codex.WebSearchItem:
+		return &protocol.WebSearchItem{ID: v.ID, Type: "webSearch", Query: v.Query}
+	case *codex.TodoListItem:
+		entries := make([]protocol.TodoEntry, 0, len(v.Items))
+		for _, e := range v.Items {
+			entries = append(entries, protocol.TodoEntry{Text: e.Text, Completed: e.Completed})
+		}
+		return &protocol.TodoListItem{ID: v.ID, Type: "todoList", Items: entries}
+	case *codex.ErrorItem:
+		return &protocol.ErrorItem{ID: v.ID, Type: "error", Message: v.Message}
+	case *codex.UnknownItem:
+		// Strict policy: drop. Worker logs the raw payload at INFO before this point.
+		return nil
 	}
+	return nil
 }
+```
 
-func (m *EventMapper) notif(method string, params any) protocol.ServerNotification {
-	body, _ := json.Marshal(params)
-	return protocol.ServerNotification{Method: method, Params: body}
+Add a unit test that exercises every translation branch:
+
+```go
+// internal/codexappgateway/runner/event_mapper_test.go (append)
+
+func TestTranslateItem_AllVariants(t *testing.T) {
+	exit := 0
+	cases := []struct {
+		name string
+		in   codex.ThreadItem
+		want string // expected protocol.ThreadItem.ItemType()
+	}{
+		{"agentMessage", &codex.AgentMessageItem{ID: "a", Text: "x"}, "agentMessage"},
+		{"reasoning", &codex.ReasoningItem{ID: "r", Text: "t"}, "reasoning"},
+		{"commandExecution", &codex.CommandExecutionItem{ID: "c", Command: "ls", ExitCode: &exit, Status: "completed"}, "commandExecution"},
+		{"fileChange", &codex.FileChangeItem{ID: "f", Status: "completed"}, "fileChange"},
+		{"mcpToolCall", &codex.McpToolCallItem{ID: "m", Server: "s", Tool: "t", Status: "completed"}, "mcpToolCall"},
+		{"webSearch", &codex.WebSearchItem{ID: "w", Query: "go"}, "webSearch"},
+		{"todoList", &codex.TodoListItem{ID: "t"}, "todoList"},
+		{"error", &codex.ErrorItem{ID: "e", Message: "boom"}, "error"},
+	}
+	for _, c := range cases {
+		out := translateItem(c.in)
+		if out == nil {
+			t.Errorf("%s: translateItem returned nil", c.name)
+			continue
+		}
+		if out.ItemType() != c.want {
+			t.Errorf("%s: ItemType()=%q want %q", c.name, out.ItemType(), c.want)
+		}
+	}
+	if got := translateItem(&codex.UnknownItem{Type: "future"}); got != nil {
+		t.Errorf("UnknownItem: want nil, got %T", got)
+	}
 }
 ```
 
@@ -2337,7 +2470,11 @@ func (w *sessionWorker) execute(ctx context.Context, turn *store.AgentTurn) {
 	mapper := runner.NewEventMapper(turn.ID, turn.ThreadID)
 	for evt := range stream.Events() {
 		for _, n := range mapper.Map(evt) {
-			payload, _ := json.Marshal(n)
+			payload, err := encodeNotification(n)
+			if err != nil {
+				w.deps.Logger.Warn("ServerNotification.Encode failed", "turn_id", turn.ID, "error", err)
+				continue
+			}
 			if _, err := w.deps.Store.InsertEvent(context.Background(), turn.ID, payload); err != nil {
 				w.deps.Logger.Warn("InsertEvent failed", "turn_id", turn.ID, "error", err)
 			}
@@ -2364,15 +2501,43 @@ func (w *sessionWorker) fail(turn *store.AgentTurn, msg string) {
 }
 
 func (w *sessionWorker) publishTerminal(turn *store.AgentTurn, kind, msg string) {
-	body, _ := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "turn/" + kind,
-		"params": map[string]any{
-			"turn_id":   turn.ID,
-			"thread_id": turn.ThreadID,
-			"message":   msg,
-		},
-	})
+	// Build the appropriate typed `protocol.ServerNotification` variant for
+	// the terminal kind. `done` and `cancelled` map to `turn/completed`;
+	// `failed` maps to `error` (since codex itself emits a TurnFailedEvent
+	// translated to `error` upstream of this hook). All variants encode
+	// camelCase params via the sum-type's Encode() — never hand-marshal
+	// the wire body via map[string]any (see post-recon audit P0-1: that
+	// shape silently bypassed the sum-type and leaked snake_case keys).
+	var n protocol.ServerNotification
+	switch kind {
+	case "failed":
+		n = protocol.ServerNotification{
+			Error: &protocol.ErrorParams{
+				ThreadID:  turn.ThreadID,
+				TurnID:    turn.ID,
+				WillRetry: false,
+				Error:     protocol.ThreadError{Message: msg},
+			},
+		}
+	default: // "done" | "cancelled" (internal labels; "cancelled"
+		// becomes the wire/DB value "interrupted" via TurnInterrupted —
+		// codex's terminology has no "cancelled", only "interrupted").
+		status := protocol.TurnCompleted
+		if kind == "cancelled" {
+			status = protocol.TurnInterrupted
+		}
+		n = protocol.ServerNotification{
+			TurnCompleted: &protocol.TurnCompletedParams{
+				ThreadID: turn.ThreadID,
+				Turn:     protocol.Turn{ID: turn.ID, Status: status, Items: []protocol.ThreadItem{}},
+			},
+		}
+	}
+	body, err := encodeNotification(n)
+	if err != nil {
+		w.deps.Logger.Warn("publishTerminal encode failed", "turn_id", turn.ID, "error", err)
+		return
+	}
 	w.deps.Broadcaster.Push(turn.ThreadID, body)
 	// Mirror the terminal exit as a thread/status/changed lifecycle
 	// notification. Failed turns surface as `errored`; done/cancelled
@@ -2388,17 +2553,38 @@ func (w *sessionWorker) publishTerminal(turn *store.AgentTurn, kind, msg string)
 // notification keyed by threadID. The envelope is pushed to live
 // connections via the broadcaster but deliberately NOT persisted to
 // `codex_turn_events` — it reflects worker state, not codex history,
-// and is reconstructable from `codex_turns.status` on resume.
+// and is reconstructable from `codex_turns.status` on resume. Goes
+// through the typed sum-type `Encode()` like every other ServerNotification
+// site (no bespoke map[string]any envelope).
 func (w *sessionWorker) publishStatus(threadID, status string) {
-	body, _ := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "thread/status/changed",
-		"params": protocol.ThreadStatusChangedParams{
+	n := protocol.ServerNotification{
+		ThreadStatusChanged: &protocol.ThreadStatusChangedParams{
 			ThreadID: threadID,
 			Status:   status,
 		},
-	})
+	}
+	body, err := encodeNotification(n)
+	if err != nil {
+		w.deps.Logger.Warn("publishStatus encode failed", "thread_id", threadID, "error", err)
+		return
+	}
 	w.deps.Broadcaster.Push(threadID, body)
+}
+
+// encodeNotification wraps a typed ServerNotification in the canonical
+// JSON-RPC envelope `{jsonrpc, method, params}`. Single helper, single
+// place where the envelope shape lives — so the worker, the broadcaster,
+// and tests all agree.
+func encodeNotification(n protocol.ServerNotification) ([]byte, error) {
+	method, params, err := n.Encode()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		JSONRPC string          `json:"jsonrpc"`
+		Method  string          `json:"method"`
+		Params  json.RawMessage `json:"params"`
+	}{JSONRPC: "2.0", Method: method, Params: params})
 }
 
 // decodeInput converts a raw JSON `input` payload (an array of UserInput)
@@ -2623,7 +2809,7 @@ func TestRevoker_FansOutToAllReplicas(t *testing.T) {
 	b := mkSrv(&hitsB); defer b.Close()
 	r := NewRevoker(RevokerConfig{
 		ExecGatewayURLs: []string{a.URL, b.URL},
-		AuthSecret:      "s",
+		InternalSharedSecret: "s",
 		HTTP:            a.Client(),
 		Logger:          discardLogger(),
 		Timeout:         time.Second,
@@ -2645,7 +2831,7 @@ func TestRevoker_OneReplicaDown_OthersStillFire(t *testing.T) {
 	bad := "http://127.0.0.1:1" // refused
 	r := NewRevoker(RevokerConfig{
 		ExecGatewayURLs: []string{bad, ok.URL},
-		AuthSecret:      "s",
+		InternalSharedSecret: "s",
 		HTTP:            ok.Client(),
 		Logger:          discardLogger(),
 		Timeout:         200 * time.Millisecond,
@@ -2683,11 +2869,11 @@ import (
 )
 
 type RevokerConfig struct {
-	ExecGatewayURLs []string // e.g. ["http://codex-exec-gateway-0:6060","http://...-1:6060"]
-	AuthSecret      string
-	HTTP            *http.Client
-	Logger          *slog.Logger
-	Timeout         time.Duration
+	ExecGatewayURLs      []string // e.g. ["http://codex-exec-gateway-0:6060","http://...-1:6060"]
+	InternalSharedSecret string   // bearer for exec-gateway internal API (CXG_INTERNAL_SHARED_SECRET)
+	HTTP                 *http.Client
+	Logger               *slog.Logger
+	Timeout              time.Duration
 }
 
 type httpRevoker struct{ cfg RevokerConfig }
@@ -2718,7 +2904,7 @@ func (r *httpRevoker) Revoke(parent context.Context, turnID string) {
 				return
 			}
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Authorization", "Bearer "+r.cfg.AuthSecret)
+			req.Header.Set("Authorization", "Bearer "+r.cfg.InternalSharedSecret)
 			resp, err := r.cfg.HTTP.Do(req)
 			if err != nil {
 				r.cfg.Logger.Warn("revoke POST", "url", url, "turn_id", turnID, "error", err)
@@ -2761,7 +2947,7 @@ and the in-memory store from Task 8. Asserts:
 
 1. `initialize` → `InitializeResponse` with phase-1 caps.
 2. `thread/start` → persisted thread row.
-3. `turn/start` → `TurnStartResponse{status:"in_progress"}` synchronously.
+3. `turn/start` → `TurnStartResponse{status:"inProgress"}` synchronously.
 4. The pumped notifications arrive on the `Broadcaster` in the expected
    order (`thread/started`, `turn/started`, `item/started`,
    `item/completed`, `turn/completed`).
@@ -2829,7 +3015,7 @@ func (s *e2eFakeStore) ListThreads(_ context.Context, _ string, _, _ int) ([]sto
 func (s *e2eFakeStore) ListTurns(_ context.Context, tid string, _, _ int) ([]store.AgentTurn, error) {
 	return s.turns[tid], nil
 }
-func (s *e2eFakeStore) ListEvents(_ context.Context, tid string) ([]store.TurnEvent, error) {
+func (s *e2eFakeStore) ListEvents(_ context.Context, tid string, _ int64) ([]store.TurnEvent, error) {
 	s.mu.Lock(); defer s.mu.Unlock()
 	out := make([]store.TurnEvent, 0, len(s.events[tid]))
 	for i, p := range s.events[tid] {
@@ -2931,19 +3117,19 @@ func TestE2E_OneTurnFullRoundTrip(t *testing.T) {
 
 	// Manifest writer using the fake exec-gateway.
 	mw := runner.NewManifestWriter(runner.ManifestConfig{
-		ExecGatewayHTTPURL: exgw.URL,
-		ExecGatewayWSURL:   "ws://example",
-		AuthSecret:         "s",
-		HMACSecret:         "k",
-		TmpRoot:            t.TempDir(),
-		HTTP:               exgw.Client(),
-		Now:                time.Now,
+		ExecGatewayHTTPURL:   exgw.URL,
+		ExecGatewayWSURL:     "ws://example",
+		InternalSharedSecret: "s",
+		CapTokenHMACSecret:   []byte("k"),
+		TmpRoot:              t.TempDir(),
+		HTTP:                 exgw.Client(),
+		Now:                  time.Now,
 	})
 
 	bcast := &e2eBroadcaster{}
 	rev := NewRevoker(RevokerConfig{
 		ExecGatewayURLs: []string{exgw.URL},
-		AuthSecret:      "s", HTTP: exgw.Client(),
+		InternalSharedSecret: "s", HTTP: exgw.Client(),
 		Logger: discardLogger(), Timeout: time.Second,
 	})
 	deps := WorkerDeps{
@@ -2977,15 +3163,15 @@ func TestE2E_OneTurnFullRoundTrip(t *testing.T) {
 	// 3. turn/start
 	tnH := handlers.NewTurnHandlers(store, reg, time.Now)
 	body, _ := json.Marshal(map[string]any{
-		"thread_id": threadID,
-		"input":     []map[string]string{{"type": "text", "text": "hello"}},
+		"threadId": threadID,
+		"input":    []map[string]string{{"type": "text", "text": "hello"}},
 	})
 	turnResp, err := tnH.Start(context.Background(), st, body)
 	if err != nil {
 		t.Fatalf("turn/start: %v", err)
 	}
 	turnID := turnResp.(protocol.TurnStartResponse).Turn.ID
-	if turnResp.(protocol.TurnStartResponse).Turn.Status != "in_progress" {
+	if turnResp.(protocol.TurnStartResponse).Turn.Status != "inProgress" {
 		t.Fatalf("status: %s", turnResp.(protocol.TurnStartResponse).Turn.Status)
 	}
 
@@ -3004,11 +3190,23 @@ func TestE2E_OneTurnFullRoundTrip(t *testing.T) {
 		t.Fatalf("turn never reached done; state=%q", got)
 	}
 
-	// 5. assert pushed notifications in expected order
+	// 5. assert pushed notifications in expected order. Sequence is:
+	//   thread/status/changed=running   (publishStatus, worker takeover)
+	//   thread/started, turn/started, item/started, item/completed,
+	//   turn/completed                   (mapper, from codex events)
+	//   turn/completed                   (publishTerminal, worker exit)
+	//   thread/status/changed=idle       (publishStatus, mirror terminal)
+	// The duplicate `turn/completed` is deliberate: one from codex's own
+	// TurnCompletedEvent (mapper), one synthetic from the worker's
+	// publishTerminal so a TUI's "wait for end" select unblocks even if
+	// codex never emits a terminal event (e.g. crash mid-stream).
 	pushed := bcast.snapshot()
 	wantMethods := []string{
+		"thread/status/changed",
 		"thread/started", "turn/started", "item/started", "item/completed",
-		"turn/completed", "turn/done",
+		"turn/completed",
+		"turn/completed",
+		"thread/status/changed",
 	}
 	if len(pushed) != len(wantMethods) {
 		t.Fatalf("pushed: got %d want %d (%v)", len(pushed), len(wantMethods), pushed)
@@ -3106,8 +3304,8 @@ defining them:
   StartedAt, FinishedAt}`.
 - `store.TurnEvent{TurnID, SeqNum int64, Payload json.RawMessage}`.
 - `exectoken.Mint(MintInput) (string, error)`,
-  `exectoken.Verify(secret string, token string) (Claims, error)`,
-  `exectoken.MintInput{Secret string, TurnID, WorkspaceID string,
+  `exectoken.Verify(secret []byte, token string) (Claims, error)`,
+  `exectoken.MintInput{Secret []byte, TurnID, WorkspaceID string,
   ExeIDs []string, TTL time.Duration, Now time.Time}`,
   `exectoken.Claims{TurnID, WorkspaceID string, ExeIDs []string,
   IssuedAt, ExpiresAt int64}`.
@@ -3129,8 +3327,12 @@ plan's import / type-assertion sites. No structural changes needed.
 - Spec is silent on whether `turn/done` / `turn/cancelled` /
   `turn/failed` are themselves ServerNotifications (the 8-method table
   lists `turn/completed` as the only positive terminal). **Resolved**
-  in Task 8: the worker emits a synthetic `turn/<kind>` notification
-  to the broadcaster on every terminal exit so a connected TUI can
-  unblock its "wait for turn end" select without polling. These
-  envelopes are pushed but not persisted (they reflect connection-
-  visible state, not codex-emitted history).
+  in Task 8: the worker emits a typed `turn/completed` (or `error` for
+  failures) on every terminal exit via the same sum-type that the mapper
+  uses, so a connected TUI's "wait for turn end" select unblocks even
+  if codex never emits a TurnCompletedEvent. These envelopes are pushed
+  but not persisted (they reflect connection-visible state, not
+  codex-emitted history). No bespoke `turn/done` / `turn/cancelled`
+  methods are introduced — both terminal kinds carry through the
+  existing `turn/completed` notification with the appropriate
+  `Turn.Status`.

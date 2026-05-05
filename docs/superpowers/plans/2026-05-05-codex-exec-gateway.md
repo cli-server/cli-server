@@ -88,7 +88,7 @@ import (
 
 func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	t.Setenv("CXG_DATABASE_URL", "postgres://x")
-	t.Setenv("CXG_HMAC_SECRET", "s3cret")
+	t.Setenv("CXG_CAPTOKEN_HMAC_SECRET", "s3cret")
 	t.Setenv("CXG_INTERNAL_SHARED_SECRET", "intern")
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
@@ -107,7 +107,7 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 
 func TestLoadConfigFromEnv_RequiresDB(t *testing.T) {
 	os.Unsetenv("CXG_DATABASE_URL")
-	t.Setenv("CXG_HMAC_SECRET", "s3cret")
+	t.Setenv("CXG_CAPTOKEN_HMAC_SECRET", "s3cret")
 	t.Setenv("CXG_INTERNAL_SHARED_SECRET", "intern")
 	if _, err := LoadConfigFromEnv(); err == nil {
 		t.Fatal("expected error when CXG_DATABASE_URL unset")
@@ -116,7 +116,7 @@ func TestLoadConfigFromEnv_RequiresDB(t *testing.T) {
 
 func TestLoadConfigFromEnv_OverridesDuration(t *testing.T) {
 	t.Setenv("CXG_DATABASE_URL", "postgres://x")
-	t.Setenv("CXG_HMAC_SECRET", "s3cret")
+	t.Setenv("CXG_CAPTOKEN_HMAC_SECRET", "s3cret")
 	t.Setenv("CXG_INTERNAL_SHARED_SECRET", "intern")
 	t.Setenv("CXG_PING_INTERVAL", "10s")
 	t.Setenv("CXG_IDLE_TIMEOUT", "2m")
@@ -155,7 +155,7 @@ import (
 type Config struct {
 	Port                 string
 	DatabaseURL          string
-	HMACSecret           []byte
+	CapTokenHMACSecret           []byte
 	InternalSharedSecret string
 	PingInterval         time.Duration
 	IdleTimeout          time.Duration
@@ -166,7 +166,7 @@ func LoadConfigFromEnv() (Config, error) {
 	cfg := Config{
 		Port:                 envOr("CXG_PORT", "6060"),
 		DatabaseURL:          os.Getenv("CXG_DATABASE_URL"),
-		HMACSecret:           []byte(os.Getenv("CXG_HMAC_SECRET")),
+		CapTokenHMACSecret:           []byte(os.Getenv("CXG_CAPTOKEN_HMAC_SECRET")),
 		InternalSharedSecret: os.Getenv("CXG_INTERNAL_SHARED_SECRET"),
 		PingInterval:         30 * time.Second,
 		IdleTimeout:          5 * time.Minute,
@@ -175,8 +175,8 @@ func LoadConfigFromEnv() (Config, error) {
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("CXG_DATABASE_URL is required")
 	}
-	if len(cfg.HMACSecret) == 0 {
-		return cfg, fmt.Errorf("CXG_HMAC_SECRET is required")
+	if len(cfg.CapTokenHMACSecret) == 0 {
+		return cfg, fmt.Errorf("CXG_CAPTOKEN_HMAC_SECRET is required")
 	}
 	if cfg.InternalSharedSecret == "" {
 		return cfg, fmt.Errorf("CXG_INTERNAL_SHARED_SECRET is required")
@@ -1546,7 +1546,7 @@ import (
 func newInboundTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
 	store := newTestStore(t)
-	cfg := Config{HMACSecret: []byte("k"), InternalSharedSecret: "s",
+	cfg := Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s",
 		PingInterval: time.Second, IdleTimeout: 10 * time.Second}
 	srv := NewServer(cfg, store)
 	hs := httptest.NewServer(srv.Routes())
@@ -1926,7 +1926,7 @@ func TestBridge_Rejects401OnBadToken(t *testing.T) {
 func TestBridge_Rejects403WhenExeIDNotInAllowList(t *testing.T) {
 	hs, srv := newInboundTestServer(t)
 	now := time.Now().Unix()
-	tok := mintBridgeToken(srv.config.HMACSecret, CapPayload{
+	tok := mintBridgeToken(srv.config.CapTokenHMACSecret, CapPayload{
 		TurnID: "trn_1", WorkspaceID: "ws_1", ExeIDs: []string{"exe_other"},
 		IAT: now, EXP: now + 60,
 	})
@@ -1943,7 +1943,7 @@ func TestBridge_Rejects403WhenExeIDNotInAllowList(t *testing.T) {
 func TestBridge_Rejects503WhenExecutorOffline(t *testing.T) {
 	hs, srv := newInboundTestServer(t)
 	now := time.Now().Unix()
-	tok := mintBridgeToken(srv.config.HMACSecret, CapPayload{
+	tok := mintBridgeToken(srv.config.CapTokenHMACSecret, CapPayload{
 		TurnID: "trn_1", WorkspaceID: "ws_1", ExeIDs: []string{"exe_offline"},
 		IAT: now, EXP: now + 60,
 	})
@@ -1963,7 +1963,7 @@ func TestBridge_PairsAndForwardsBidirectional(t *testing.T) {
 	defer inbound.Close(websocket.StatusNormalClosure, "")
 
 	now := time.Now().Unix()
-	tok := mintBridgeToken(srv.config.HMACSecret, CapPayload{
+	tok := mintBridgeToken(srv.config.CapTokenHMACSecret, CapPayload{
 		TurnID: "trn_1", WorkspaceID: "ws_1", ExeIDs: []string{"exe_pair"},
 		IAT: now, EXP: now + 60,
 	})
@@ -2007,7 +2007,7 @@ func TestBridge_RejectsRevokedTurn(t *testing.T) {
 	connectInbound(t, srv, hs.URL, "exe_rev")
 	now := time.Now().Unix()
 	srv.revoked.Add("trn_revoked", now+60)
-	tok := mintBridgeToken(srv.config.HMACSecret, CapPayload{
+	tok := mintBridgeToken(srv.config.CapTokenHMACSecret, CapPayload{
 		TurnID: "trn_revoked", WorkspaceID: "ws_1", ExeIDs: []string{"exe_rev"},
 		IAT: now, EXP: now + 60,
 	})
@@ -2049,7 +2049,7 @@ func (s *Server) handleBridge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := VerifyCapabilityToken(token, s.config.HMACSecret)
+	payload, err := VerifyCapabilityToken(token, s.config.CapTokenHMACSecret)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrExpired):
@@ -2160,7 +2160,7 @@ import (
 
 func TestHandleRegister_HappyPath(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{HMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
 
 	body := bytes.NewReader([]byte(`{"display_name":"laptop","description":"d","default_cwd":"/x"}`))
 	req := httptest.NewRequest(http.MethodPost, "/api/codex-exec/register", body)
@@ -2193,7 +2193,7 @@ func TestHandleRegister_HappyPath(t *testing.T) {
 
 func TestHandleRegister_RequiresUser(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{HMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
 	req := httptest.NewRequest(http.MethodPost, "/api/codex-exec/register", bytes.NewReader([]byte(`{}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -2369,7 +2369,7 @@ import (
 
 func TestWorkspaceBinding_PostListDelete(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{HMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
 
 	// Pre-seed an executor.
 	store.CreateExecutor(context.Background(), Executor{
@@ -2419,7 +2419,7 @@ func TestWorkspaceBinding_PostListDelete(t *testing.T) {
 
 func TestWorkspaceBinding_PostBadJSON(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{HMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
 	req := httptest.NewRequest(http.MethodPost, "/api/codex-exec/workspaces/ws_a/executors", bytes.NewReader([]byte(`!`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -2568,7 +2568,7 @@ import (
 
 func TestInternalConnected_RequiresSharedSecret(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{HMACSecret: []byte("k"), InternalSharedSecret: "s3cret"}, store)
+	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s3cret"}, store)
 	req := httptest.NewRequest(http.MethodGet, "/api/exec-gateway/connected?workspace_id=ws_a", nil)
 	rr := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rr, req)
@@ -2579,7 +2579,7 @@ func TestInternalConnected_RequiresSharedSecret(t *testing.T) {
 
 func TestInternalConnected_ReturnsIntersection(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{HMACSecret: []byte("k"), InternalSharedSecret: "s3cret"}, store)
+	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s3cret"}, store)
 	hs := httptest.NewServer(srv.Routes())
 	t.Cleanup(hs.Close)
 
@@ -2746,7 +2746,7 @@ import (
 
 func TestRevokeTurn_AddsToSet(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{HMACSecret: []byte("k"), InternalSharedSecret: "secret"}, store)
+	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "secret"}, store)
 	hs := httptest.NewServer(srv.Routes())
 	t.Cleanup(hs.Close)
 
@@ -2769,7 +2769,7 @@ func TestRevokeTurn_AddsToSet(t *testing.T) {
 
 func TestRevokeTurn_RejectsBadAuth(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{HMACSecret: []byte("k"), InternalSharedSecret: "secret"}, store)
+	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "secret"}, store)
 	req := httptest.NewRequest(http.MethodPost, "/api/exec-gateway/revoke-turn",
 		bytes.NewReader([]byte(`{"turn_id":"x","exp":1}`)))
 	req.Header.Set("Authorization", "Bearer wrong")
@@ -2782,7 +2782,7 @@ func TestRevokeTurn_RejectsBadAuth(t *testing.T) {
 
 func TestRevokeTurn_BadJSON(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{HMACSecret: []byte("k"), InternalSharedSecret: "secret"}, store)
+	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "secret"}, store)
 	req := httptest.NewRequest(http.MethodPost, "/api/exec-gateway/revoke-turn",
 		bytes.NewReader([]byte(`!`)))
 	req.Header.Set("Authorization", "Bearer secret")
@@ -2889,7 +2889,7 @@ func TestBridge_CloseFromBridgeSidePropagates(t *testing.T) {
 	defer inbound.Close(websocket.StatusInternalError, "test cleanup")
 
 	now := time.Now().Unix()
-	tok := mintBridgeToken(srv.config.HMACSecret, CapPayload{
+	tok := mintBridgeToken(srv.config.CapTokenHMACSecret, CapPayload{
 		TurnID: "trn_1", WorkspaceID: "ws_1", ExeIDs: []string{"exe_close1"},
 		IAT: now, EXP: now + 60,
 	})
@@ -2922,7 +2922,7 @@ func TestBridge_CloseFromInboundSidePropagates(t *testing.T) {
 	inbound := connectInbound(t, srv, hs.URL, "exe_close2")
 
 	now := time.Now().Unix()
-	tok := mintBridgeToken(srv.config.HMACSecret, CapPayload{
+	tok := mintBridgeToken(srv.config.CapTokenHMACSecret, CapPayload{
 		TurnID: "trn_1", WorkspaceID: "ws_1", ExeIDs: []string{"exe_close2"},
 		IAT: now, EXP: now + 60,
 	})
@@ -2983,7 +2983,7 @@ func TestBridge_E2EByteFidelity(t *testing.T) {
 	defer inbound.Close(websocket.StatusNormalClosure, "")
 
 	now := time.Now().Unix()
-	tok := mintBridgeToken(srv.config.HMACSecret, CapPayload{
+	tok := mintBridgeToken(srv.config.CapTokenHMACSecret, CapPayload{
 		TurnID: "trn_1", WorkspaceID: "ws_1", ExeIDs: []string{"exe_e2e"},
 		IAT: now, EXP: now + 60,
 	})
@@ -3057,7 +3057,7 @@ Expected: PASS.
 Start service:
 ```bash
 CXG_DATABASE_URL=postgres://… \
-CXG_HMAC_SECRET=secret \
+CXG_CAPTOKEN_HMAC_SECRET=secret \
 CXG_INTERNAL_SHARED_SECRET=is \
 go run ./cmd/codex-exec-gateway
 ```

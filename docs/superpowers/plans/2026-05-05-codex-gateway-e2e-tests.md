@@ -32,7 +32,7 @@ drives the executor side (codex exec-server JSON-RPC). The codex CLI
 itself is REAL — that's what is being validated end-to-end (P1–P4 fork
 patches).
 
-**Tech Stack:** Go 1.22, docker compose v2, Postgres 16, the real `codex`
+**Tech Stack:** Go 1.26, docker compose v2, Postgres 16, the real `codex`
 CLI (built from the agentserver fork), `nhooyr.io/websocket` for the fake
 ws clients.
 
@@ -141,22 +141,31 @@ services:
       context: .
       dockerfile: Dockerfile.codex-app-gateway
     environment:
-      CODEX_APP_GATEWAY_PORT: "6050"
-      CODEX_APP_GATEWAY_DATABASE_URL: "postgres://codex:codex@postgres:5432/codex?sslmode=disable&search_path=codex_app"
-      CODEX_APP_GATEWAY_HMAC_SECRET: "e2e-test-hmac-secret-32-bytes-min!!"
-      CODEX_APP_GATEWAY_USER_JWT_SECRET: "e2e-test-user-jwt-secret-32-bytes!"
-      CODEX_APP_GATEWAY_INTERNAL_BEARER: "e2e-internal-bearer-token"
-      CODEX_EXEC_GATEWAY_URL: "ws://codex-exec-gateway:6060"
-      CODEX_EXEC_GATEWAY_HTTP_URL: "http://codex-exec-gateway:6060"
-      CODEX_S3_ENDPOINT: "http://minio:9000"
-      CODEX_S3_BUCKET: "codex-sessions"
-      CODEX_S3_ACCESS_KEY_ID: "minioadmin"
-      CODEX_S3_SECRET_ACCESS_KEY: "minioadmin"
-      CODEX_S3_PATH_STYLE: "true"
-      CODEX_LLMPROXY_URL: "http://mock-llm:9999"
-      CODEX_LOG_LEVEL: "debug"
+      # All env-var names must match codexappgateway.LoadConfigFromEnv (Plan 2a).
+      # Naming convention: CXG_* prefix shared by both gateways.
+      CXG_PORT: "6050"
+      CXG_DATABASE_URL: "postgres://codex:codex@postgres:5432/codex?sslmode=disable&search_path=codex_app"
+      CXG_CAPTOKEN_HMAC_SECRET: "e2e-test-hmac-secret-32-bytes-min!!"
+      # User-facing JWT public key (PEM). For e2e the fixtures-loader mints
+      # tokens with the matching RSA-2048 private key; the pubkey ships in
+      # the env. Provided by .env or set by `make test-e2e-codex` setup-keypair
+      # task (see Task 1.5). Must be the RS256 public key (PEM) corresponding
+      # to the private key used by the fixtures Mint helper.
+      CXG_AUTH_JWT_PUBLIC_KEY: ${CXG_AUTH_JWT_PUBLIC_KEY:-}
+      # Shared secret used to call codex-exec-gateway's internal admin API
+      # (/api/exec-gateway/connected, /api/exec-gateway/revoke-turn).
+      CXG_INTERNAL_SHARED_SECRET: "e2e-internal-bearer-token"
+      CXG_EXEC_GATEWAY_URL: "ws://codex-exec-gateway:6060"
+      CXG_EXEC_GATEWAY_HTTP_URL: "http://codex-exec-gateway:6060"
+      CXG_S3_ENDPOINT: "http://minio:9000"
+      CXG_S3_BUCKET: "codex-sessions"
+      CXG_S3_ACCESS_KEY_ID: "minioadmin"
+      CXG_S3_SECRET_ACCESS_KEY: "minioadmin"
+      CXG_S3_PATH_STYLE: "true"
+      CXG_LLMPROXY_URL: "http://mock-llm:9999"
+      CXG_LOG_LEVEL: "debug"
       # Real codex CLI path inside the image (installed by Dockerfile).
-      CODEX_BIN: "/usr/local/bin/codex"
+      CXG_BIN: "/usr/local/bin/codex"
     depends_on:
       postgres:
         condition: service_healthy
@@ -177,12 +186,12 @@ services:
       context: .
       dockerfile: Dockerfile.codex-exec-gateway
     environment:
-      CODEX_EXEC_GATEWAY_PORT: "6060"
-      CODEX_EXEC_GATEWAY_DATABASE_URL: "postgres://codex:codex@postgres:5432/codex?sslmode=disable&search_path=codex_exec"
-      CODEX_EXEC_GATEWAY_HMAC_SECRET: "e2e-test-hmac-secret-32-bytes-min!!"
-      CODEX_EXEC_GATEWAY_INTERNAL_BEARER: "e2e-internal-bearer-token"
-      CODEX_EXEC_GATEWAY_USER_JWT_SECRET: "e2e-test-user-jwt-secret-32-bytes!"
-      CODEX_LOG_LEVEL: "debug"
+      # All env-var names must match codexexecgateway.LoadConfigFromEnv (Plan 3).
+      CXG_PORT: "6060"
+      CXG_DATABASE_URL: "postgres://codex:codex@postgres:5432/codex?sslmode=disable&search_path=codex_exec"
+      CXG_CAPTOKEN_HMAC_SECRET: "e2e-test-hmac-secret-32-bytes-min!!"
+      CXG_INTERNAL_SHARED_SECRET: "e2e-internal-bearer-token"
+      CXG_LOG_LEVEL: "debug"
     depends_on:
       postgres:
         condition: service_healthy
@@ -233,10 +242,10 @@ type Stack struct {
 	AppGatewayHTTP     string // http://localhost:56050
 	ExecGatewayWS      string // ws://localhost:56060
 	ExecGatewayHTTP    string // http://localhost:56060
-	InternalBearer     string
-	UserJWTSecret      string
-	HMACSecret         string
-	composeFile        string
+	InternalBearer        string
+	UserJWTPrivateKeyPath string // /tmp/test-jwt.key — written by Task 1.5
+	HMACSecret            string
+	composeFile           string
 }
 
 const composeFileDefault = "docker-compose-codex.yml"
@@ -252,10 +261,10 @@ func Up(t *testing.T) *Stack {
 		AppGatewayHTTP:  "http://localhost:56050",
 		ExecGatewayWS:   "ws://localhost:56060",
 		ExecGatewayHTTP: "http://localhost:56060",
-		InternalBearer:  "e2e-internal-bearer-token",
-		UserJWTSecret:   "e2e-test-user-jwt-secret-32-bytes!",
-		HMACSecret:      "e2e-test-hmac-secret-32-bytes-min!!",
-		composeFile:     composeFileDefault,
+		InternalBearer:        "e2e-internal-bearer-token",
+		UserJWTPrivateKeyPath: "/tmp/test-jwt.key", // provisioned by Task 1.5 / make test-e2e-codex
+		HMACSecret:            "e2e-test-hmac-secret-32-bytes-min!!",
+		composeFile:           composeFileDefault,
 	}
 
 	cmd := exec.Command("docker", "compose", "-f", s.composeFile,
@@ -361,6 +370,83 @@ And both `/healthz` endpoints return 200.
 git add docker-compose-codex.yml internal/codexe2e/harness/
 git commit -m "test(codex-e2e): compose skeleton + harness Up/Down"
 ```
+
+---
+
+## Task 1.5: Local JWT keypair provisioning
+
+**Goal:** Generate the RS256 keypair used for user-JWT auth in the e2e
+stack. The fixtures Mint helper signs with the private key
+(`/tmp/test-jwt.key`); the gateway verifies with the public key exported
+into docker-compose as `CXG_AUTH_JWT_PUBLIC_KEY`. This task documents the
+shell snippet that the `make test-e2e-codex` target runs before
+`docker compose up`.
+
+This is a stop-gap for phase 1 — the production JWT story (RS256 vs HS256,
+who mints, how compose mounts the keypair) is deferred. For e2e the
+keypair is generated on the fly and lives only in `/tmp`.
+
+- [ ] **Step 1: Add the keypair-provisioning snippet to the e2e Make target**
+
+In `Makefile` (or whichever `make test-e2e-codex` rule exists), prepend
+the following commands to the existing recipe so they run before
+`docker compose up`:
+
+```makefile
+test-e2e-codex: setup-jwt-keypair
+	cd /root/agentserver && go test -tags=e2e_codex ./internal/codexe2e/... -count=1 -timeout=15m
+
+.PHONY: setup-jwt-keypair
+setup-jwt-keypair:
+	@echo ">>> generating ephemeral RS256 keypair for e2e"
+	@openssl genrsa -out /tmp/test-jwt.key 2048 2>/dev/null
+	@openssl rsa -in /tmp/test-jwt.key -pubout -out /tmp/test-jwt.pub 2>/dev/null
+	@chmod 600 /tmp/test-jwt.key
+	@echo "CXG_AUTH_JWT_PUBLIC_KEY=$$(cat /tmp/test-jwt.pub)" > .env.codex-e2e
+	@echo ">>> wrote /tmp/test-jwt.key (private) and .env.codex-e2e (pubkey)"
+```
+
+The `.env.codex-e2e` file is picked up by `docker compose
+--env-file .env.codex-e2e -f docker-compose-codex.yml up`. The PEM string
+is multi-line; bash's `$(cat …)` substitution preserves the newlines and
+docker-compose's `${VAR}` substitution expands it correctly into the YAML
+literal block (the `${CXG_AUTH_JWT_PUBLIC_KEY:-}` substitution we use
+keeps the value as a single env value, with newlines).
+
+- [ ] **Step 2: Update the harness Up() to pass the env file to compose**
+
+In `internal/codexe2e/harness/harness.go`, when shelling out to
+`docker compose`, include `--env-file .env.codex-e2e`:
+
+```go
+cmd := exec.CommandContext(ctx, "docker", "compose",
+    "--env-file", ".env.codex-e2e",
+    "-f", s.composeFile, "up", "-d", "--wait")
+```
+
+- [ ] **Step 3: Verify the keypair is present and the gateway accepts a fixtures-minted JWT**
+
+```bash
+cd /root/agentserver
+make setup-jwt-keypair
+test -s /tmp/test-jwt.key && test -s /tmp/test-jwt.pub
+grep -q "BEGIN PUBLIC KEY" .env.codex-e2e
+```
+Expected: all three commands exit 0.
+
+A subsequent run of any e2e scenario (Task 5 onwards) implicitly verifies
+that the gateway's RS256 verifier accepts the fixtures Mint output — a
+401 from `/healthz`-protected endpoints would surface there.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add Makefile .gitignore
+git commit -m "test(codex-e2e): RS256 keypair provisioning for fixtures Mint"
+```
+
+(Add `.env.codex-e2e` and `/tmp/test-jwt.*` patterns to `.gitignore` if
+not already excluded by repo-wide rules.)
 
 ---
 
@@ -750,9 +836,9 @@ func TestRPCEnvelope_RoundTrip(t *testing.T) {
 
 func TestEventLog_Append_Filter(t *testing.T) {
 	log := &EventLog{}
-	log.Append("turn/started", json.RawMessage(`{"turn_id":"t1"}`))
-	log.Append("item/completed", json.RawMessage(`{"item":{"type":"agent_message","text":"hi"}}`))
-	log.Append("turn/completed", json.RawMessage(`{"usage":{}}`))
+	log.Append("turn/started", json.RawMessage(`{"threadId":"th1","turn":{"id":"t1","status":"in_progress","items":[]}}`))
+	log.Append("item/completed", json.RawMessage(`{"threadId":"th1","turnId":"t1","item":{"id":"i","type":"agentMessage","text":"hi"}}`))
+	log.Append("turn/completed", json.RawMessage(`{"threadId":"th1","turn":{"id":"t1","status":"completed","items":[]}}`))
 	got := log.Filter("item/completed")
 	if len(got) != 1 {
 		t.Fatalf("got %d entries", len(got))
@@ -1093,10 +1179,12 @@ type Executor struct {
 }
 
 // NewWorkspace creates a user_id + workspace_id pair and mints a user JWT
-// signed with the gateway's user-JWT HMAC secret.
+// signed with the RS256 private key provisioned by Task 1.5
+// (`/tmp/test-jwt.key`). The matching public key is exported into the
+// docker-compose stack as CXG_AUTH_JWT_PUBLIC_KEY.
 func (f *Fixtures) NewWorkspace(ctx context.Context, id string) (*Workspace, error) {
 	userID := "u-" + id
-	jwt, err := mintHS256JWT(f.stack.UserJWTSecret, map[string]any{
+	jwt, err := mintRS256JWT(f.stack.UserJWTPrivateKeyPath, map[string]any{
 		"sub": userID,
 		"iat": time.Now().Unix(),
 		"exp": time.Now().Add(1 * time.Hour).Unix(),
@@ -1165,18 +1253,45 @@ func (f *Fixtures) BindExecutor(ctx context.Context, workspaceID, exeID string, 
 	return nil
 }
 
-// mintHS256JWT writes a minimal JWT-compatible token signed with the
-// gateway's user-JWT HMAC secret.
-func mintHS256JWT(secret string, payload map[string]any) (string, error) {
-	header := map[string]string{"alg": "HS256", "typ": "JWT"}
+// mintRS256JWT writes a minimal JWT-compatible token signed with the
+// RSA-2048 private key at privateKeyPath (PEM). The matching public key
+// must be exported as CXG_AUTH_JWT_PUBLIC_KEY in the docker-compose env
+// so the gateway can verify the signature. See Task 1.5 for the keypair
+// provisioning shell snippet.
+func mintRS256JWT(privateKeyPath string, payload map[string]any) (string, error) {
+	keyPEM, err := os.ReadFile(privateKeyPath)
+	if err != nil {
+		return "", fmt.Errorf("read jwt private key %s: %w", privateKeyPath, err)
+	}
+	block, _ := pem.Decode(keyPEM)
+	if block == nil {
+		return "", fmt.Errorf("decode pem at %s", privateKeyPath)
+	}
+	priv, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		// Fallback: PKCS#8 (openssl genpkey output).
+		anyPriv, perr := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if perr != nil {
+			return "", fmt.Errorf("parse rsa key %s: %w / %w", privateKeyPath, err, perr)
+		}
+		var ok bool
+		priv, ok = anyPriv.(*rsa.PrivateKey)
+		if !ok {
+			return "", fmt.Errorf("key at %s is not RSA", privateKeyPath)
+		}
+	}
+	header := map[string]string{"alg": "RS256", "typ": "JWT"}
 	hb, _ := json.Marshal(header)
 	pb, _ := json.Marshal(payload)
 	headB64 := base64.RawURLEncoding.EncodeToString(hb)
 	payB64 := base64.RawURLEncoding.EncodeToString(pb)
 	signing := headB64 + "." + payB64
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(signing))
-	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	hashed := sha256.Sum256([]byte(signing))
+	sigBytes, err := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, hashed[:])
+	if err != nil {
+		return "", fmt.Errorf("rsa sign: %w", err)
+	}
+	sig := base64.RawURLEncoding.EncodeToString(sigBytes)
 	return signing + "." + sig, nil
 }
 ```
@@ -1520,12 +1635,12 @@ func ScriptedTurn(ctx context.Context, stack *harness.Stack, ws *fixtures.Worksp
 		if err := json.Unmarshal(e.Params, &p); err != nil {
 			continue
 		}
-		if p.Item.Type == "agent_message" && strings.Contains(p.Item.Text, "shell said: hello") {
+		if p.Item.Type == "agentMessage" && strings.Contains(p.Item.Text, "shell said: hello") {
 			sawMsg = true
 		}
 	}
 	if !sawMsg {
-		return fmt.Errorf("expected agent_message containing 'shell said: hello', got log: %+v", c.Log.Snapshot())
+		return fmt.Errorf("expected agentMessage containing 'shell said: hello', got log: %+v", c.Log.Snapshot())
 	}
 	return nil
 }
@@ -1966,7 +2081,7 @@ test-e2e-codex-build:
 	docker build -f Dockerfile.mock-llm           -t ghcr.io/agentserver/codex-mock-llm:e2e .
 
 # Run the full codex e2e acceptance suite. Requires `docker compose` v2,
-# Go 1.22+, and the codex CLI binary baked into Dockerfile.codex-app-gateway
+# Go 1.26+, and the codex CLI binary baked into Dockerfile.codex-app-gateway
 # (Plan 2 owns that). Brings the stack up per-test (harness.Up) and tears
 # it down on completion.
 test-e2e-codex: test-e2e-codex-build

@@ -111,6 +111,7 @@ func TestLoadConfig_RequiresDatabaseURL(t *testing.T) {
 	t.Setenv("CXG_LLMPROXY_URL", "http://llm")
 	t.Setenv("CXG_AUTH_JWT_PUBLIC_KEY", "pk")
 	t.Setenv("CXG_CAPTOKEN_HMAC_SECRET", "s")
+	t.Setenv("CXG_INTERNAL_SHARED_SECRET", "is")
 	if _, err := LoadConfigFromEnv(); err == nil {
 		t.Fatal("expected error when CXG_DATABASE_URL is empty")
 	}
@@ -123,6 +124,7 @@ func TestLoadConfig_RequiresHMACSecret(t *testing.T) {
 	t.Setenv("CXG_LLMPROXY_URL", "http://llm")
 	t.Setenv("CXG_AUTH_JWT_PUBLIC_KEY", "pk")
 	t.Setenv("CXG_CAPTOKEN_HMAC_SECRET", "")
+	t.Setenv("CXG_INTERNAL_SHARED_SECRET", "is")
 	if _, err := LoadConfigFromEnv(); err == nil {
 		t.Fatal("expected error when CXG_CAPTOKEN_HMAC_SECRET empty")
 	}
@@ -135,6 +137,7 @@ func TestLoadConfig_DefaultsAndPort(t *testing.T) {
 	t.Setenv("CXG_LLMPROXY_URL", "http://llm")
 	t.Setenv("CXG_AUTH_JWT_PUBLIC_KEY", "pk")
 	t.Setenv("CXG_CAPTOKEN_HMAC_SECRET", "secret")
+	t.Setenv("CXG_INTERNAL_SHARED_SECRET", "is")
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
 		t.Fatal(err)
@@ -192,8 +195,17 @@ type Config struct {
 	LLMProxyURL string
 
 	// codex-exec-gateway URL prefix used to build the manifest's bridge
-	// URLs (consumed by Plan 2b's manifest writer).
-	ExecGatewayURL string
+	// URLs (consumed by Plan 2b's manifest writer). Two flavours: the WS
+	// URL is embedded into per-environment manifest entries; the HTTP URL
+	// is used to call the internal admin API (/api/exec-gateway/connected,
+	// /api/exec-gateway/revoke-turn).
+	ExecGatewayURL     string
+	ExecGatewayHTTPURL string
+
+	// InternalSharedSecret authenticates calls between gateways: 2a uses it
+	// as the bearer when calling exec-gateway's /api/exec-gateway/* admin
+	// API; 3 uses it to verify the same. Wire env: CXG_INTERNAL_SHARED_SECRET.
+	InternalSharedSecret string
 
 	// Bearer JWT public key (PEM) used to verify codex-app TUI
 	// connections at /codex-app/* (loaded as a string for now; turned
@@ -202,7 +214,9 @@ type Config struct {
 
 	// HMAC secret for per-turn capability tokens. Shared with
 	// codex-exec-gateway via K8s Secret. HS256 (32+ bytes recommended).
-	CapTokenHMACSecret string
+	// Stored as []byte to match exectoken.MintInput.Secret and Plan 3's
+	// Config.CapTokenHMACSecret — single canonical Go type for the secret.
+	CapTokenHMACSecret []byte
 
 	// CapTokenTTL is the upper bound on a turn's run time (token exp =
 	// turn-start + this). Defaults to 1h per spec.
@@ -235,12 +249,17 @@ func LoadConfigFromEnv() (Config, error) {
 		return cfg, fmt.Errorf("CXG_LLMPROXY_URL is required")
 	}
 	cfg.ExecGatewayURL = envOr("CXG_EXEC_GATEWAY_URL", "ws://codex-exec-gateway:6060")
+	cfg.ExecGatewayHTTPURL = envOr("CXG_EXEC_GATEWAY_HTTP_URL", "http://codex-exec-gateway:6060")
+	cfg.InternalSharedSecret = os.Getenv("CXG_INTERNAL_SHARED_SECRET")
+	if cfg.InternalSharedSecret == "" {
+		return cfg, fmt.Errorf("CXG_INTERNAL_SHARED_SECRET is required")
+	}
 	cfg.AuthJWTPublicKey = os.Getenv("CXG_AUTH_JWT_PUBLIC_KEY")
 	if cfg.AuthJWTPublicKey == "" {
 		return cfg, fmt.Errorf("CXG_AUTH_JWT_PUBLIC_KEY is required")
 	}
-	cfg.CapTokenHMACSecret = os.Getenv("CXG_CAPTOKEN_HMAC_SECRET")
-	if cfg.CapTokenHMACSecret == "" {
+	cfg.CapTokenHMACSecret = []byte(os.Getenv("CXG_CAPTOKEN_HMAC_SECRET"))
+	if len(cfg.CapTokenHMACSecret) == 0 {
 		return cfg, fmt.Errorf("CXG_CAPTOKEN_HMAC_SECRET is required")
 	}
 	if v := os.Getenv("CXG_CAPTOKEN_TTL"); v != "" {
@@ -656,7 +675,7 @@ func TestStore_MarkTurnFailedAndCancelled(t *testing.T) {
 	_, _ = s.PickNextPending(ctx, "thr_f")
 	_ = s.MarkTurnCancelled(ctx, "trn_c")
 	got2, _ := s.GetTurn(ctx, "trn_c")
-	if got2.Status != "cancelled" {
+	if got2.Status != "interrupted" {
 		t.Errorf("status = %q", got2.Status)
 	}
 }
@@ -986,8 +1005,13 @@ func (s *Store) MarkTurnDone(ctx context.Context, turnID string) error {
 func (s *Store) MarkTurnFailed(ctx context.Context, turnID, msg string) error {
 	return s.markTurn(ctx, turnID, "failed", msg)
 }
+// MarkTurnCancelled records a user-cancelled turn. The persisted status
+// string is codex's terminology — "interrupted" — so the wire value
+// emitted to clients via TurnCompletedNotification matches the codex
+// schema. The Go method name retains "Cancelled" for caller readability
+// (the worker still distinguishes user-cancel vs error internally).
 func (s *Store) MarkTurnCancelled(ctx context.Context, turnID string) error {
-	return s.markTurn(ctx, turnID, "cancelled", "")
+	return s.markTurn(ctx, turnID, "interrupted", "")
 }
 
 func (s *Store) GetTurn(ctx context.Context, turnID string) (*AgentTurn, error) {
@@ -1136,7 +1160,7 @@ import (
 )
 
 func TestEncode_RequestNoVersionField(t *testing.T) {
-	req := JSONRPCRequest{ID: NewIntID(7), Method: "thread/start", Params: json.RawMessage(`{"workspace_id":"ws_a"}`)}
+	req := JSONRPCRequest{ID: NewIntID(7), Method: "thread/start", Params: json.RawMessage(`{"workspaceId":"ws_a"}`)}
 	out, err := json.Marshal(req)
 	if err != nil {
 		t.Fatal(err)
@@ -1747,6 +1771,7 @@ package protocol
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // Thread mirrors codex's ThreadStartResponse.thread shape. Timestamps are
@@ -1764,16 +1789,33 @@ type Thread struct {
 type TurnStatus string
 
 const (
-	TurnInProgress TurnStatus = "in_progress"
-	TurnCompleted  TurnStatus = "completed"
-	TurnFailed     TurnStatus = "failed"
-	TurnCancelled  TurnStatus = "cancelled"
+	// Wire values mirror codex's TurnStatus serde enum (camelCase via
+	// rename_all): "completed" | "interrupted" | "failed" | "inProgress".
+	// Note codex has no "cancelled" — its terminal state for a user-cancel
+	// is "interrupted". The DB column for codex_turns.status remains
+	// snake_case (Postgres convention) but stores these same camelCase
+	// value strings.
+	TurnInProgress  TurnStatus = "inProgress"
+	TurnCompleted   TurnStatus = "completed"
+	TurnFailed      TurnStatus = "failed"
+	TurnInterrupted TurnStatus = "interrupted"
 )
 
 type Turn struct {
 	ID     string     `json:"id"`
 	Status TurnStatus `json:"status"`
-	Usage  *Usage     `json:"usage,omitempty"`
+	// Items is `required` by codex's Turn schema. Populated lazily from
+	// per-turn item events; safe to send empty slice on initial start.
+	Items []ThreadItem `json:"items"`
+	// Optional codex-schema fields.
+	StartedAt   string `json:"startedAt,omitempty"`
+	CompletedAt string `json:"completedAt,omitempty"`
+	DurationMs  int64  `json:"durationMs,omitempty"`
+	Usage       *Usage `json:"usage,omitempty"`
+	// Gateway extensions (not in codex schema — used by the gateway's own
+	// turn/start response and ThreadReadResponse.turns array).
+	ThreadID   string    `json:"threadId,omitempty"`
+	EnqueuedAt time.Time `json:"enqueuedAt,omitempty"`
 }
 
 // Usage mirrors codex's TurnCompletedNotification.usage shape.
@@ -2083,12 +2125,27 @@ func TestThreadResumeResponse_DiagnosticOmitemptyWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestThreadResumeResponse_HasCodexRequiredFields(t *testing.T) {
+	// Codex's ThreadResumeResponse.json schema requires these top-level
+	// fields. They must always serialize (no omitempty) so a strict
+	// upstream client never sees a missing-required-field error.
+	b, _ := json.Marshal(ThreadResumeResponse{Thread: Thread{ID: "t1", CreatedAt: "now"}})
+	for _, want := range []string{
+		`"approvalPolicy"`, `"approvalsReviewer"`, `"cwd"`,
+		`"model"`, `"modelProvider"`, `"sandbox"`, `"thread"`,
+	} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("ThreadResumeResponse missing %s: %s", want, b)
+		}
+	}
+}
+
 func TestThreadReadResponse_EventsField(t *testing.T) {
 	resp := ThreadReadResponse{
 		Thread: Thread{ID: "t1", CreatedAt: "now"},
 		Events: []PersistedEvent{
-			{SeqNum: 1, Payload: json.RawMessage(`{"method":"turn/started"}`)},
-			{SeqNum: 2, Payload: json.RawMessage(`{"method":"turn/completed"}`)},
+			{TurnID: "trn_1", SeqNum: 1, Payload: json.RawMessage(`{"method":"turn/started"}`)},
+			{TurnID: "trn_1", SeqNum: 2, Payload: json.RawMessage(`{"method":"turn/completed"}`)},
 		},
 	}
 	b, _ := json.Marshal(resp)
@@ -2170,6 +2227,16 @@ type ThreadStartParams struct {
 
 type ThreadStartResponse struct {
 	Thread Thread `json:"thread"`
+	// Codex's ThreadStartResponse.json marks these `required`. Same six
+	// fields as ThreadResumeResponse (see comment there). Populated from
+	// the just-created thread's metadata + workspace defaults at handler
+	// time. Stored as `string` because exact codex enums are out of phase 1.
+	ApprovalPolicy    string `json:"approvalPolicy"`
+	ApprovalsReviewer string `json:"approvalsReviewer"`
+	Cwd               string `json:"cwd"`
+	Model             string `json:"model"`
+	ModelProvider     string `json:"modelProvider"`
+	Sandbox           string `json:"sandbox"`
 }
 
 type ThreadResumeParams struct {
@@ -2183,12 +2250,29 @@ type ThreadResumeResponse struct {
 	// still returns the resumed Thread so the TUI can surface a
 	// non-fatal warning to the user.
 	Diagnostic string `json:"diagnostic,omitempty"`
+
+	// The following six fields are marked `required` by codex's
+	// upstream `ThreadResumeResponse.json` schema (post-recon audit
+	// P1-4). The gateway populates them from the resumed thread's
+	// persisted metadata + workspace defaults at handler time. Stored
+	// as `string` here because exact codex enum types (ApprovalPolicy,
+	// SandboxMode, …) are out of phase 1 scope; the wire shape is
+	// still a string in upstream's schema.
+	ApprovalPolicy    string `json:"approvalPolicy"`
+	ApprovalsReviewer string `json:"approvalsReviewer"`
+	Cwd               string `json:"cwd"`
+	Model             string `json:"model"`
+	ModelProvider     string `json:"modelProvider"`
+	Sandbox           string `json:"sandbox"`
 }
 
 // PersistedEvent represents one row from `codex_turn_events` as
 // returned by `thread/read`. The Payload is an opaque
 // ServerNotification envelope previously broadcast for this turn.
+// `TurnID` lets the TUI group events back into per-turn streams when
+// replaying after a reconnect (Plan 2b's Read handler populates it).
 type PersistedEvent struct {
+	TurnID  string          `json:"turnId"`
 	SeqNum  int64           `json:"seqNum"`
 	Payload json.RawMessage `json:"payload"`
 }
@@ -2198,6 +2282,12 @@ type ThreadReadParams struct {
 	IncludeTurns bool   `json:"includeTurns,omitempty"`
 }
 
+// ThreadReadResponse extends the codex schema's ThreadReadResponse with
+// `turns` and `events` arrays so a TUI can replay history after reconnecting
+// without making N additional thread/turns/list + per-turn-event-fetch
+// round-trips. Codex's own schema only defines `thread`; the extension is
+// gateway-specific and intentional. Schema-fixture parity tests (see
+// schema_fixture_test.go) skip this type.
 type ThreadReadResponse struct {
 	Thread Thread           `json:"thread"`
 	Turns  []Turn           `json:"turns,omitempty"`
@@ -2220,10 +2310,8 @@ type ThreadTurnsListParams struct {
 	Limit    int    `json:"limit,omitempty"`
 }
 
-// TurnListResponse is the response to `thread/turns/list`. Renamed
-// from `ThreadTurnsListResponse` to align with Plan 2b's handler name
-// and the matching `turn/list` semantic. Wire shape unchanged
-// (`{"turns":[...]}`).
+// TurnListResponse is the response to `thread/turns/list`. Wire shape
+// is `{"turns":[...]}`.
 type TurnListResponse struct {
 	Turns []Turn `json:"turns"`
 }
@@ -2381,12 +2469,12 @@ Phase-1 server-pushed notifications (8 from spec):
 |---|---|
 | `thread/started` | `{ thread: Thread }` |
 | `thread/status/changed` | `{ threadId, status }` |
-| `turn/started` | `{ turn: Turn }` |
-| `turn/completed` | `{ turn: Turn, usage: Usage }` |
-| `item/started` | `{ turnId, item: ThreadItem }` |
-| `item/completed` | `{ turnId, item: ThreadItem }` |
-| `item/agentMessage/delta` | `{ turnId, itemId, delta: string }` |
-| `error` | `{ error: ThreadError }` |
+| `turn/started` | `{ threadId, turn: Turn }` |
+| `turn/completed` | `{ threadId, turn: Turn }` (Usage lives on `Turn.Usage`) |
+| `item/started` | `{ threadId, turnId, item: ThreadItem }` |
+| `item/completed` | `{ threadId, turnId, item: ThreadItem }` |
+| `item/agentMessage/delta` | `{ threadId, turnId, itemId, delta: string }` |
+| `error` | `{ threadId, turnId, willRetry, error: ThreadError }` |
 
 - [ ] **Step 1: Write failing test**
 
@@ -2409,12 +2497,12 @@ func TestServerNotification_Encode_AllVariants(t *testing.T) {
 	}{
 		{"thread/started", ServerNotification{ThreadStarted: &ThreadStartedParams{Thread: Thread{ID: "t1", CreatedAt: "now"}}}, "thread/started", `"id":"t1"`},
 		{"thread/status", ServerNotification{ThreadStatusChanged: &ThreadStatusChangedParams{ThreadID: "t1", Status: "idle"}}, "thread/status/changed", `"status":"idle"`},
-		{"turn/started", ServerNotification{TurnStarted: &TurnStartedParams{Turn: Turn{ID: "trn", Status: TurnInProgress}}}, "turn/started", `"id":"trn"`},
-		{"turn/completed", ServerNotification{TurnCompleted: &TurnCompletedParams{Turn: Turn{ID: "trn", Status: TurnCompleted}, Usage: Usage{InputTokens: 1}}}, "turn/completed", `"inputTokens":1`},
-		{"item/started", ServerNotification{ItemStarted: &ItemEnvelope{TurnID: "trn", Item: &ReasoningItem{ID: "i", Type: "reasoning", Text: "t"}}}, "item/started", `"type":"reasoning"`},
-		{"item/completed", ServerNotification{ItemCompleted: &ItemEnvelope{TurnID: "trn", Item: &AgentMessageItem{ID: "i", Type: "agentMessage", Text: "hi"}}}, "item/completed", `"text":"hi"`},
-		{"agentMessage/delta", ServerNotification{AgentMessageDelta: &AgentMessageDeltaParams{TurnID: "trn", ItemID: "i", Delta: "chunk"}}, "item/agentMessage/delta", `"delta":"chunk"`},
-		{"error", ServerNotification{Error: &ErrorParams{Error: ThreadError{Message: "boom"}}}, "error", `"message":"boom"`},
+		{"turn/started", ServerNotification{TurnStarted: &TurnStartedParams{ThreadID: "t1", Turn: Turn{ID: "trn", Status: TurnInProgress, Items: []ThreadItem{}}}}, "turn/started", `"id":"trn"`},
+		{"turn/completed", ServerNotification{TurnCompleted: &TurnCompletedParams{ThreadID: "t1", Turn: Turn{ID: "trn", Status: TurnCompleted, Items: []ThreadItem{}, Usage: &Usage{InputTokens: 1}}}}, "turn/completed", `"inputTokens":1`},
+		{"item/started", ServerNotification{ItemStarted: &ItemEnvelope{ThreadID: "t1", TurnID: "trn", Item: &ReasoningItem{ID: "i", Type: "reasoning", Text: "t"}}}, "item/started", `"type":"reasoning"`},
+		{"item/completed", ServerNotification{ItemCompleted: &ItemEnvelope{ThreadID: "t1", TurnID: "trn", Item: &AgentMessageItem{ID: "i", Type: "agentMessage", Text: "hi"}}}, "item/completed", `"text":"hi"`},
+		{"agentMessage/delta", ServerNotification{AgentMessageDelta: &AgentMessageDeltaParams{ThreadID: "t1", TurnID: "trn", ItemID: "i", Delta: "chunk"}}, "item/agentMessage/delta", `"delta":"chunk"`},
+		{"error", ServerNotification{Error: &ErrorParams{ThreadID: "t1", TurnID: "trn", WillRetry: false, Error: ThreadError{Message: "boom"}}}, "error", `"message":"boom"`},
 	}
 	for _, c := range cases {
 		method, params, err := c.notif.Encode()
@@ -2439,14 +2527,15 @@ func TestServerNotification_EmptyRejected(t *testing.T) {
 }
 
 func TestItemEnvelope_RoundTrip(t *testing.T) {
-	env := ItemEnvelope{TurnID: "t1", Item: &CommandExecutionItem{ID: "c", Type: "commandExecution", Command: "ls", Status: "completed"}}
+	env := ItemEnvelope{ThreadID: "th1", TurnID: "t1", Item: &CommandExecutionItem{ID: "c", Type: "commandExecution", Command: "ls", Status: "completed"}}
 	out, err := json.Marshal(env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var decoded struct {
-		TurnID string          `json:"turnId"`
-		Item   json.RawMessage `json:"item"`
+		ThreadID string          `json:"threadId"`
+		TurnID   string          `json:"turnId"`
+		Item     json.RawMessage `json:"item"`
 	}
 	_ = json.Unmarshal(out, &decoded)
 	item, err := DecodeThreadItem(decoded.Item)
@@ -2478,6 +2567,13 @@ import (
 
 // --- Notification body shapes ---
 
+// All notification params below mirror the codex schema fixtures in
+// codex-rs/app-server-protocol/schema/json/v2/. Field set + names + JSON
+// tags are derived from each schema's `required[]` + `properties{}` and
+// asserted by schema_fixture_test.go (Task ahead). camelCase per codex's
+// serde rename_all = "camelCase". `threadId` and `turnId` are present
+// wherever the schema lists them as required.
+
 type ThreadStartedParams struct {
 	Thread Thread `json:"thread"`
 }
@@ -2488,37 +2584,50 @@ type ThreadStatusChangedParams struct {
 }
 
 type TurnStartedParams struct {
-	Turn Turn `json:"turn"`
+	ThreadID string `json:"threadId"`
+	Turn     Turn   `json:"turn"`
 }
 
+// TurnCompletedParams matches codex's TurnCompletedNotification.json
+// (`required: [threadId, turn]`). Usage lives on `Turn.Usage` per the
+// codex schema; do NOT re-introduce a top-level Usage field here.
 type TurnCompletedParams struct {
-	Turn  Turn  `json:"turn"`
-	Usage Usage `json:"usage"`
+	ThreadID string `json:"threadId"`
+	Turn     Turn   `json:"turn"`
 }
 
 // ItemEnvelope is the body shared by item/started and item/completed.
+// Per codex schema, both notifications require `threadId, turnId, item`.
 // Item marshals via its concrete struct (which carries its own "type"
 // discriminator), and decoders use protocol.DecodeThreadItem.
 type ItemEnvelope struct {
-	TurnID string     `json:"turnId"`
-	Item   ThreadItem `json:"item"`
+	ThreadID string     `json:"threadId"`
+	TurnID   string     `json:"turnId"`
+	Item     ThreadItem `json:"item"`
 }
 
 func (e ItemEnvelope) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		TurnID string     `json:"turnId"`
-		Item   ThreadItem `json:"item"`
-	}{TurnID: e.TurnID, Item: e.Item})
+		ThreadID string     `json:"threadId"`
+		TurnID   string     `json:"turnId"`
+		Item     ThreadItem `json:"item"`
+	}{ThreadID: e.ThreadID, TurnID: e.TurnID, Item: e.Item})
 }
 
 type AgentMessageDeltaParams struct {
-	TurnID string `json:"turnId"`
-	ItemID string `json:"itemId"`
-	Delta  string `json:"delta"`
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+	ItemID   string `json:"itemId"`
+	Delta    string `json:"delta"`
 }
 
+// ErrorParams matches codex's ErrorNotification.json
+// (`required: [error, threadId, turnId, willRetry]`).
 type ErrorParams struct {
-	Error ThreadError `json:"error"`
+	ThreadID  string      `json:"threadId"`
+	TurnID    string      `json:"turnId"`
+	WillRetry bool        `json:"willRetry"`
+	Error     ThreadError `json:"error"`
 }
 
 // ServerNotification is the discriminated union of every phase-1 server
@@ -2657,16 +2766,37 @@ func TestSchemaFixture_ThreadStartParams(t *testing.T) {
 
 func TestSchemaFixture_ThreadStartResponse(t *testing.T) {
 	required := extractRequired(t, "ThreadStartResponse.json")
-	resp := ThreadStartResponse{Thread: Thread{ID: "t1", CreatedAt: "2026-05-05T00:00:00Z"}}
+	resp := ThreadStartResponse{
+		Thread:            Thread{ID: "t1", CreatedAt: "2026-05-05T00:00:00Z"},
+		ApprovalPolicy:    "never",
+		ApprovalsReviewer: "user",
+		Cwd:               "/w",
+		Model:             "gpt-x",
+		ModelProvider:     "openai",
+		Sandbox:           "off",
+	}
 	body, _ := json.Marshal(resp)
-	// Filter required to only top-level fields we emit; drop anything we
-	// know is gateway-internal.
 	assertEncodedHasFields(t, "ThreadStartResponse", body, required)
+}
+
+func TestSchemaFixture_ThreadResumeResponse(t *testing.T) {
+	required := extractRequired(t, "ThreadResumeResponse.json")
+	resp := ThreadResumeResponse{
+		Thread:            Thread{ID: "t1", CreatedAt: "2026-05-05T00:00:00Z"},
+		ApprovalPolicy:    "never",
+		ApprovalsReviewer: "user",
+		Cwd:               "/w",
+		Model:             "gpt-x",
+		ModelProvider:     "openai",
+		Sandbox:           "off",
+	}
+	body, _ := json.Marshal(resp)
+	assertEncodedHasFields(t, "ThreadResumeResponse", body, required)
 }
 
 func TestSchemaFixture_TurnStartResponse(t *testing.T) {
 	required := extractRequired(t, "TurnStartResponse.json")
-	resp := TurnStartResponse{Turn: Turn{ID: "trn", Status: TurnInProgress}}
+	resp := TurnStartResponse{Turn: Turn{ID: "trn", Status: TurnInProgress, Items: []ThreadItem{}}}
 	body, _ := json.Marshal(resp)
 	assertEncodedHasFields(t, "TurnStartResponse", body, required)
 }
@@ -2678,32 +2808,46 @@ func TestSchemaFixture_ThreadStartedNotification(t *testing.T) {
 	assertEncodedHasFields(t, "ThreadStartedNotification", body, required)
 }
 
+func TestSchemaFixture_TurnStartedNotification(t *testing.T) {
+	required := extractRequired(t, "TurnStartedNotification.json")
+	n := TurnStartedParams{ThreadID: "t1", Turn: Turn{ID: "trn", Status: TurnInProgress, Items: []ThreadItem{}}}
+	body, _ := json.Marshal(n)
+	assertEncodedHasFields(t, "TurnStartedNotification", body, required)
+}
+
 func TestSchemaFixture_TurnCompletedNotification(t *testing.T) {
 	required := extractRequired(t, "TurnCompletedNotification.json")
-	n := TurnCompletedParams{Turn: Turn{ID: "trn", Status: TurnCompleted}, Usage: Usage{InputTokens: 1}}
+	n := TurnCompletedParams{ThreadID: "t1", Turn: Turn{ID: "trn", Status: TurnCompleted, Items: []ThreadItem{}, Usage: &Usage{InputTokens: 1}}}
 	body, _ := json.Marshal(n)
 	assertEncodedHasFields(t, "TurnCompletedNotification", body, required)
 }
 
 func TestSchemaFixture_AgentMessageDeltaNotification(t *testing.T) {
 	required := extractRequired(t, "AgentMessageDeltaNotification.json")
-	n := AgentMessageDeltaParams{TurnID: "t", ItemID: "i", Delta: "d"}
+	n := AgentMessageDeltaParams{ThreadID: "th", TurnID: "t", ItemID: "i", Delta: "d"}
 	body, _ := json.Marshal(n)
 	assertEncodedHasFields(t, "AgentMessageDeltaNotification", body, required)
 }
 
 func TestSchemaFixture_ErrorNotification(t *testing.T) {
 	required := extractRequired(t, "ErrorNotification.json")
-	n := ErrorParams{Error: ThreadError{Message: "boom"}}
+	n := ErrorParams{ThreadID: "th", TurnID: "t", WillRetry: false, Error: ThreadError{Message: "boom"}}
 	body, _ := json.Marshal(n)
 	assertEncodedHasFields(t, "ErrorNotification", body, required)
 }
 
 func TestSchemaFixture_ItemStartedNotification(t *testing.T) {
 	required := extractRequired(t, "ItemStartedNotification.json")
-	n := ItemEnvelope{TurnID: "t", Item: &AgentMessageItem{ID: "i", Type: "agentMessage", Text: "x"}}
+	n := ItemEnvelope{ThreadID: "th", TurnID: "t", Item: &AgentMessageItem{ID: "i", Type: "agentMessage", Text: "x"}}
 	body, _ := json.Marshal(n)
 	assertEncodedHasFields(t, "ItemStartedNotification", body, required)
+}
+
+func TestSchemaFixture_ItemCompletedNotification(t *testing.T) {
+	required := extractRequired(t, "ItemCompletedNotification.json")
+	n := ItemEnvelope{ThreadID: "th", TurnID: "t", Item: &AgentMessageItem{ID: "i", Type: "agentMessage", Text: "x"}}
+	body, _ := json.Marshal(n)
+	assertEncodedHasFields(t, "ItemCompletedNotification", body, required)
 }
 
 func TestSchemaFixture_ThreadStatusChangedNotification(t *testing.T) {
@@ -2712,6 +2856,17 @@ func TestSchemaFixture_ThreadStatusChangedNotification(t *testing.T) {
 	body, _ := json.Marshal(n)
 	assertEncodedHasFields(t, "ThreadStatusChangedNotification", body, required)
 }
+
+// ThreadReadResponse is intentionally skipped from schema parity:
+// the gateway extends codex's response with `turns`/`events` so a
+// reconnected TUI can replay history in one round-trip. Asserting
+// codex's `required` set against our extended shape would either be
+// trivially satisfied (codex requires only `thread`) or, worse, drift
+// silently if codex starts requiring fields the gateway doesn't carry.
+// Tracking this explicitly via comment so future readers don't add a
+// fixture test that masks the extension. See `ThreadReadResponse`
+// declaration in client_request.go for the rationale.
+var _ = ThreadReadResponse{} // keep symbol live for the comment above
 ```
 
 - [ ] **Step 2: Run the tests**
@@ -2765,7 +2920,7 @@ import (
 	"time"
 )
 
-const testSecret = "test-secret-32-bytes-AAAAAAAAAAAAAAAA"
+var testSecret = []byte("test-secret-32-bytes-AAAAAAAAAAAAAAAA")
 
 func TestMintProducesThreePartToken(t *testing.T) {
 	tok, err := Mint(MintInput{
@@ -2811,7 +2966,7 @@ func TestVerifyRejectsTamperedSig(t *testing.T) {
 
 func TestVerifyRejectsWrongSecret(t *testing.T) {
 	tok, _ := Mint(MintInput{Secret: testSecret, TurnID: "t", WorkspaceID: "w", ExeIDs: []string{"e"}, TTL: time.Hour})
-	if _, err := Verify("other-secret", tok); err == nil {
+	if _, err := Verify([]byte("other-secret"), tok); err == nil {
 		t.Error("expected error for wrong secret")
 	}
 }
@@ -2891,7 +3046,11 @@ type Claims struct {
 }
 
 type MintInput struct {
-	Secret      string
+	// Secret is the HMAC key (HS256). Type is []byte to match
+	// codexappgateway.Config.CapTokenHMACSecret and Plan 3's
+	// codexexecgateway.Config.CapTokenHMACSecret — single canonical Go
+	// type for the secret across all three packages.
+	Secret      []byte
 	TurnID      string
 	WorkspaceID string
 	ExeIDs      []string
@@ -2901,7 +3060,7 @@ type MintInput struct {
 }
 
 func Mint(in MintInput) (string, error) {
-	if in.Secret == "" {
+	if len(in.Secret) == 0 {
 		return "", errors.New("exectoken.Mint: empty secret")
 	}
 	if in.TurnID == "" || in.WorkspaceID == "" {
@@ -2924,13 +3083,13 @@ func Mint(in MintInput) (string, error) {
 		ExpiresAt:   now.Add(in.TTL).Unix(),
 	})
 	signing := b64URL(hb) + "." + b64URL(cb)
-	sig := hmacSHA256([]byte(in.Secret), []byte(signing))
+	sig := hmacSHA256(in.Secret, []byte(signing))
 	return signing + "." + b64URL(sig), nil
 }
 
 // Verify parses the token, checks alg, signature, and exp.
-// Returns Claims on success.
-func Verify(secret, token string) (Claims, error) {
+// Returns Claims on success. `secret` is the same []byte used for Mint.
+func Verify(secret []byte, token string) (Claims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return Claims{}, errors.New("exectoken.Verify: malformed token")
@@ -2946,7 +3105,10 @@ func Verify(secret, token string) (Claims, error) {
 	if h.Alg != "HS256" {
 		return Claims{}, fmt.Errorf("exectoken.Verify: unsupported alg %q", h.Alg)
 	}
-	expectedSig := hmacSHA256([]byte(secret), []byte(parts[0]+"."+parts[1]))
+	if h.Typ != "CXG" {
+		return Claims{}, fmt.Errorf("exectoken.Verify: unexpected typ %q", h.Typ)
+	}
+	expectedSig := hmacSHA256(secret, []byte(parts[0]+"."+parts[1]))
 	gotSig, err := b64URLDecode(parts[2])
 	if err != nil {
 		return Claims{}, fmt.Errorf("exectoken.Verify: sig decode: %w", err)
@@ -3207,10 +3369,13 @@ func NewCodexWorkspace(s3 *S3Store, baseTmpDir string) *CodexWorkspace {
 	return &CodexWorkspace{s3: s3, baseTmpDir: baseTmpDir}
 }
 
-// Setup creates the per-turn tmp dir and downloads
-// `<workspace_id>/<thread_id>.jsonl` from S3 into
-// `<CodexHome>/sessions/<thread_id>.jsonl`. Returns the layout. The
-// project dir is created empty; callers may populate it as needed.
+// Setup creates the per-turn tmp dir and downloads the tarball at
+// `workspaces/<workspace_id>/codex-sessions/<thread_id>.tar.gz` from S3
+// (the same key format CodexLayout.SessionTarballKey emits), extracting
+// its contents into `<CodexHome>/sessions/`. If the object does not exist
+// (404 / NoSuchKey), Setup treats this as a fresh thread and leaves the
+// sessions dir empty — `S3Store.DownloadTarGz` returns nil in that case.
+// The project dir is created empty; callers may populate it as needed.
 func (cw *CodexWorkspace) Setup(ctx context.Context, workspaceID, threadID string) (*WorkspaceLayout, error) {
 	if err := os.MkdirAll(cw.baseTmpDir, 0o700); err != nil {
 		return nil, fmt.Errorf("CodexWorkspace.Setup: mkdir base: %w", err)
@@ -3228,9 +3393,8 @@ func (cw *CodexWorkspace) Setup(ctx context.Context, workspaceID, threadID strin
 			return nil, fmt.Errorf("CodexWorkspace.Setup: mkdir %s: %w", d, err)
 		}
 	}
-	jsonlPath := filepath.Join(sessionsDir, threadID+".jsonl")
-	key := fmt.Sprintf("%s/%s.jsonl", workspaceID, threadID)
-	if err := cw.s3.DownloadIfExists(ctx, key, jsonlPath); err != nil {
+	key := fmt.Sprintf("workspaces/%s/codex-sessions/%s.tar.gz", workspaceID, threadID)
+	if err := cw.s3.DownloadTarGz(ctx, key, sessionsDir); err != nil {
 		_ = os.RemoveAll(tmp)
 		return nil, fmt.Errorf("CodexWorkspace.Setup: s3 download %s: %w", key, err)
 	}
@@ -3243,17 +3407,19 @@ func (cw *CodexWorkspace) Setup(ctx context.Context, workspaceID, threadID strin
 	}, nil
 }
 
-// Teardown uploads the (possibly mutated) jsonl back to S3 then removes
-// the per-turn tmp dir. A non-nil error from upload still triggers
-// removal — the caller has no use for an orphaned tmp dir.
+// Teardown re-tars the (possibly mutated) sessions dir back to S3 then
+// removes the per-turn tmp dir. A non-nil error from upload still
+// triggers removal — the caller has no use for an orphaned tmp dir.
+// Uses S3Store.UploadTarGz which packages the directory as a single
+// tar.gz object (excludeRel=nil — every session file is uploaded).
 func (cw *CodexWorkspace) Teardown(ctx context.Context, layout *WorkspaceLayout) error {
 	if layout == nil {
 		return nil
 	}
 	defer os.RemoveAll(layout.tmpRoot)
-	jsonlPath := filepath.Join(layout.CodexHome, "sessions", layout.threadID+".jsonl")
-	key := fmt.Sprintf("%s/%s.jsonl", layout.workspaceID, layout.threadID)
-	if err := cw.s3.UploadIfExists(ctx, jsonlPath, key); err != nil {
+	sessionsDir := filepath.Join(layout.CodexHome, "sessions")
+	key := fmt.Sprintf("workspaces/%s/codex-sessions/%s.tar.gz", layout.workspaceID, layout.threadID)
+	if err := cw.s3.UploadTarGz(ctx, sessionsDir, key, nil); err != nil {
 		return fmt.Errorf("CodexWorkspace.Teardown: s3 upload %s: %w", key, err)
 	}
 	return nil
@@ -3308,9 +3474,12 @@ func TestCodexWorkspace_TeardownRemovesTmp(t *testing.T) {
 }
 ```
 
-`newFakeS3Store` is a per-test helper that returns an S3Store backed by
-`os.TempDir()` instead of real S3 (no upload/download performed when the
-jsonl key is absent).
+`newFakeS3Store` is a per-test helper that returns an S3Store-compatible
+fake (implements `DownloadTarGz(ctx, key, destDir) error` and
+`UploadTarGz(ctx, srcDir, key, excludeRel) error`) backed by an in-memory
+map of key → tarball bytes; on `DownloadTarGz` for an unknown key it
+returns nil without touching the destination dir, mirroring the real
+`S3Store`'s NoSuchKey behavior.
 
 `internal/ccbroker/workspace/s3store.go`:
 ```go
