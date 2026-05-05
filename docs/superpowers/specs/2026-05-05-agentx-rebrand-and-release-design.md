@@ -69,6 +69,7 @@ tag-check
 | `winget` | Mirror copy. `identifier: Agentserver.AgentX`, `installers-regex: ^agentx-x86_64-pc-windows-msvc\.exe\.zip$` (only x86_64 — see ARM64 entry in YAGNI), `fork-user: agentserver`. |
 | `update-branch` (latest-alpha-cli) | Removed. Fork does not maintain that branch. |
 | **(new)** `choco` | Pushes `agentx` to chocolatey.org. Triggers only when version is stable (no `-` in cargo version). |
+| **(new)** `homebrew` | Updates `Casks/agentx.rb` in the `agentserver/homebrew-tap` repo. Triggers only when version is stable. Mirrors the upstream codex cask shape (cross-platform: macOS arm/intel + Linux arm/intel), sed-substitutes a template file with the version + 4 SHA256s. |
 
 ### Files added / modified
 
@@ -77,6 +78,7 @@ tag-check
 - `.github/workflows/agentx-release.yml` — the workflow
 - `.github/workflows/agentx-release-package.sh` — packaging helper invoked by the build jobs (handles `codex` → `agentx` binary rename, tar.gz / dmg / .exe.zip assembly, SHA256SUMS generation)
 - `.github/chocolatey/agentx.nuspec` + install/uninstall scripts — Chocolatey package definition
+- `.github/homebrew/agentx.rb.template` — Homebrew cask template with `__VERSION__` and `__SHA256_*__` placeholders that the `homebrew` CI job sed-substitutes at release time
 - `Makefile` (or addition to existing) — `make agentx-release VERSION=...` target to bump Cargo version, commit, tag
 
 **Modified (upstream file, conflicts on rebase):**
@@ -157,6 +159,7 @@ Configured in `agentserver/codex` repo Settings → Secrets and variables → Ac
 | `APPLE_NOTARIZATION_ISSUER_ID` | Same page header, UUID | `build-macos` |
 | `WINGET_PUBLISH_PAT` | GitHub PAT with `public_repo` scope, account that has forked `microsoft/winget-pkgs` under `agentserver` | `winget` |
 | `CHOCO_API_KEY` | chocolatey.org account → My Account → API key | `choco` |
+| `HOMEBREW_TAP_PAT` | Fine-grained GitHub PAT, Resource owner = `agentserver` org, scoped to repo `agentserver/homebrew-tap`, Permissions: Contents=Read and write | `homebrew` |
 | `GITHUB_TOKEN` | Provided automatically | `release` |
 
 ## Operational prerequisites (one-time, manual)
@@ -164,7 +167,8 @@ Configured in `agentserver/codex` repo Settings → Secrets and variables → Ac
 1. Fork `microsoft/winget-pkgs` into the `agentserver` org. The `vedantmgoyal9/winget-releaser` action will push commits to it.
 2. Register on chocolatey.org with the publisher email; verify; reserve the package id `agentx`.
 3. In Apple App Store Connect, create an API Key with the "Developer" role.
-4. Populate the eight secrets listed above.
+4. Ensure `agentserver/homebrew-tap` repo exists (it already does). The `homebrew` CI job will write `Casks/agentx.rb` into it on each stable release.
+5. Populate the nine secrets listed above.
 
 These steps are not in CI — they happen once before the first release.
 
@@ -231,7 +235,6 @@ The following were considered and dropped. Reintroduce only when there is a conc
 
 - **Apple `.app` bundle / Sparkle auto-update** — upstream codex does not ship an .app bundle; agentx is CLI.
 - **Linux `.deb` / `.rpm`** — upstream ships only tarballs; users install via `cargo install` or extract tarball.
-- **Homebrew tap** — macOS users use the signed `.dmg`.
 - **ARM64 Windows binary** — upstream does build it, but GitHub-hosted runners do not provide ARM64 Windows; user surface is small.
 - **`argv[0]`-based binary multiplexing** — codex appears to use argv[0] introspection (`~/.codex/tmp/arg0/`), but with only one binary shipped, the single name `agentx` does not exercise that branch.
 - **Auto-PR back to upstream** — fork does not contribute upstream from CI.
