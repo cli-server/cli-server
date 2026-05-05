@@ -1264,9 +1264,164 @@ After the run completes, verify:
 
 ---
 
+---
+
+## Task 14: Homebrew cask template + CI job
+
+Adds a third package-manager publishing channel: Homebrew cask via the existing `agentserver/homebrew-tap` repo. Mirrors the upstream codex cask shape (cross-platform, single .rb covering macOS arm/intel + Linux arm/intel).
+
+**Files:**
+- Create: `/root/codex/.github/homebrew/agentx.rb.template`
+- Modify: `/root/codex/.github/workflows/agentx-release.yml` (append `homebrew` job)
+
+- [ ] **Step 1: Create the cask template**
+
+Write `/root/codex/.github/homebrew/agentx.rb.template`:
+
+```ruby
+cask "agentx" do
+  version "__VERSION__"
+
+  on_macos do
+    on_arm do
+      sha256 "__SHA256_MACOS_ARM__"
+      url "https://github.com/agentserver/codex/releases/download/agentx-v#{version}/agentx-aarch64-apple-darwin.tar.gz"
+    end
+    on_intel do
+      sha256 "__SHA256_MACOS_INTEL__"
+      url "https://github.com/agentserver/codex/releases/download/agentx-v#{version}/agentx-x86_64-apple-darwin.tar.gz"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      sha256 "__SHA256_LINUX_ARM__"
+      url "https://github.com/agentserver/codex/releases/download/agentx-v#{version}/agentx-aarch64-unknown-linux-musl.tar.gz"
+    end
+    on_intel do
+      sha256 "__SHA256_LINUX_INTEL__"
+      url "https://github.com/agentserver/codex/releases/download/agentx-v#{version}/agentx-x86_64-unknown-linux-musl.tar.gz"
+    end
+  end
+
+  name "agentx"
+  desc "Lightweight coding agent that runs in your terminal (agentserver fork of OpenAI Codex)"
+  homepage "https://github.com/agentserver/codex"
+
+  depends_on formula: "ripgrep"
+
+  binary "agentx"
+
+  zap trash: "~/.codex"
+end
+```
+
+- [ ] **Step 2: Append the homebrew job**
+
+Append to `agentx-release.yml` as the 8th sibling job under `jobs:`:
+
+```yaml
+  homebrew:
+    name: homebrew-tap
+    needs: release
+    if: ${{ needs.release.outputs.is_stable == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Compute SHA256 for each platform asset
+        id: shas
+        shell: bash
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          declare -A assets=(
+            [macos_arm]=agentx-aarch64-apple-darwin.tar.gz
+            [macos_intel]=agentx-x86_64-apple-darwin.tar.gz
+            [linux_arm]=agentx-aarch64-unknown-linux-musl.tar.gz
+            [linux_intel]=agentx-x86_64-unknown-linux-musl.tar.gz
+          )
+          {
+            for key in macos_arm macos_intel linux_arm linux_intel; do
+              asset="${assets[$key]}"
+              tmp="$(mktemp)"
+              curl -sSLo "$tmp" "${base}/${asset}"
+              sha="$(sha256sum "$tmp" | awk '{print $1}')"
+              rm "$tmp"
+              echo "${key}=${sha}"
+            done
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Render cask file
+        env:
+          VERSION: ${{ needs.release.outputs.clean_version }}
+          SHA256_MACOS_ARM: ${{ steps.shas.outputs.macos_arm }}
+          SHA256_MACOS_INTEL: ${{ steps.shas.outputs.macos_intel }}
+          SHA256_LINUX_ARM: ${{ steps.shas.outputs.linux_arm }}
+          SHA256_LINUX_INTEL: ${{ steps.shas.outputs.linux_intel }}
+        run: |
+          set -euo pipefail
+          mkdir -p rendered/Casks
+          sed -e "s|__VERSION__|${VERSION}|g" \
+              -e "s|__SHA256_MACOS_ARM__|${SHA256_MACOS_ARM}|g" \
+              -e "s|__SHA256_MACOS_INTEL__|${SHA256_MACOS_INTEL}|g" \
+              -e "s|__SHA256_LINUX_ARM__|${SHA256_LINUX_ARM}|g" \
+              -e "s|__SHA256_LINUX_INTEL__|${SHA256_LINUX_INTEL}|g" \
+              .github/homebrew/agentx.rb.template \
+              > rendered/Casks/agentx.rb
+          cat rendered/Casks/agentx.rb
+
+      - name: Push cask to agentserver/homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_PAT }}
+          VERSION: ${{ needs.release.outputs.clean_version }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/agentserver/homebrew-tap.git" tap
+          cp rendered/Casks/agentx.rb tap/Casks/agentx.rb
+          cd tap
+          git config user.name  "agentx-release-bot"
+          git config user.email "agentx-release-bot@users.noreply.github.com"
+          git add Casks/agentx.rb
+          if git diff --cached --quiet; then
+            echo "No cask changes to push (already at ${VERSION})."
+            exit 0
+          fi
+          git commit -m "agentx ${VERSION}"
+          git push origin HEAD
+```
+
+- [ ] **Step 3: Run actionlint**
+
+```bash
+actionlint /root/codex/.github/workflows/agentx-release.yml
+```
+Expected: no output, exit 0.
+
+- [ ] **Step 4: Commit (two files)**
+
+```bash
+cd /root/codex
+git add .github/homebrew/agentx.rb.template .github/workflows/agentx-release.yml
+git commit -m "feat(agentx-release): homebrew cask publish job (stable only)"
+```
+
+## Task 15: HOMEBREW_TAP_PAT secret (manual)
+
+- [ ] **Step 1 (HUMAN)**: Create a fine-grained PAT at https://github.com/settings/personal-access-tokens/new with Resource owner = `agentserver`, Repository access = `agentserver/homebrew-tap` only, Permissions: Contents = Read and write.
+
+- [ ] **Step 2 (HUMAN)**: Add it as repo secret `HOMEBREW_TAP_PAT` at https://github.com/agentserver/codex/settings/secrets/actions.
+
+---
+
 ## Plan complete
 
-After Task 13 Step 10 confirms winget + choco are live, the agentx release pipeline is fully operational. Subsequent releases are a single `make agentx-release VERSION=...` + `git push` per the spec's "Release flow" section.
+After Task 13 Step 10 confirms winget + choco are live, AND Tasks 14–15 are done, the agentx release pipeline ships across four channels (GitHub Release, WinGet, Chocolatey, Homebrew). Subsequent releases are a single `make agentx-release VERSION=...` + `git push` per the spec's "Release flow" section.
 
 **Files created (all in /root/codex):**
 - `.github/workflows/agentx-release.yml`
