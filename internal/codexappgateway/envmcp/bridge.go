@@ -92,8 +92,11 @@ func (bc *BridgeClient) Call(ctx context.Context, method string, params json.Raw
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-bc.closed:
-		if bc.closeErr != nil {
-			return nil, bc.closeErr
+		bc.mu.Lock()
+		err := bc.closeErr
+		bc.mu.Unlock()
+		if err != nil {
+			return nil, err
 		}
 		return nil, errors.New("bridge: connection closed")
 	case reply := <-ch:
