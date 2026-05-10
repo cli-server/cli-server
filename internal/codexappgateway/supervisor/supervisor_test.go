@@ -18,6 +18,11 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore { return &fakeStore{m: map[string][]byte{}} }
+
+// NewFakeStoreForTest is the exported wrapper used by other test packages.
+func NewFakeStoreForTest(_ *testing.T) codexhome.ObjectStore {
+	return newFakeStore()
+}
 func (f *fakeStore) Put(_ context.Context, k string, d []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -49,7 +54,7 @@ func defaultConfigInput() codexhome.ConfigInput {
 }
 
 func TestSupervisor_EnsureSubprocess_SpawnsOnce(t *testing.T) {
-	bin := buildFakeCodex(t)
+	bin := BuildFakeCodexForTest(t)
 	root := t.TempDir()
 	store := newFakeStore()
 	mgr := codexhome.NewManager(root)
@@ -79,7 +84,7 @@ func TestSupervisor_EnsureSubprocess_SpawnsOnce(t *testing.T) {
 }
 
 func TestSupervisor_Shutdown_UploadsToS3(t *testing.T) {
-	bin := buildFakeCodex(t)
+	bin := BuildFakeCodexForTest(t)
 	root := t.TempDir()
 	store := newFakeStore()
 	mgr := codexhome.NewManager(root)
@@ -110,7 +115,7 @@ func TestSupervisor_Shutdown_UploadsToS3(t *testing.T) {
 }
 
 func TestSupervisor_EnsureSubprocess_RestoresFromS3(t *testing.T) {
-	bin := buildFakeCodex(t)
+	bin := BuildFakeCodexForTest(t)
 	store := newFakeStore()
 
 	{
@@ -147,7 +152,7 @@ func TestSupervisor_EnsureSubprocess_RestoresFromS3(t *testing.T) {
 }
 
 func TestSupervisor_Ensure_BuildError_PropagatesAndDoesNotSpawn(t *testing.T) {
-	bin := buildFakeCodex(t)
+	bin := BuildFakeCodexForTest(t)
 	root := t.TempDir()
 	store := newFakeStore()
 	mgr := codexhome.NewManager(root)

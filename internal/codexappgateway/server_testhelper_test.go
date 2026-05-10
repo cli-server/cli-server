@@ -1,4 +1,4 @@
-package supervisor
+package codexappgateway
 
 import (
 	"context"
@@ -6,15 +6,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
+	"sync"
 	"testing"
-	"time"
+
+	"github.com/agentserver/agentserver/internal/codexappgateway/codexhome"
 )
 
-// BuildFakeCodexForTest compiles a small Go program that mimics the bits of
+// makeFakeCodex compiles a small Go program that mimics the bits of
 // `codex app-server` we depend on: print "ws://127.0.0.1:PORT" on
 // stdout, then serve /readyz on that port.
-func BuildFakeCodexForTest(t *testing.T) string {
+func makeFakeCodex(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.go")
@@ -50,28 +51,34 @@ func main() {
 	return bin
 }
 
-func TestSpawnCodexAppServer_HappyPath(t *testing.T) {
-	bin := BuildFakeCodexForTest(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	h, err := spawnCodexAppServer(ctx, bin, t.TempDir(), nil)
-	if err != nil {
-		t.Fatalf("spawn: %v", err)
-	}
-	defer h.Stop(context.Background())
-	if !strings.HasPrefix(h.WSURL, "ws://127.0.0.1:") {
-		t.Errorf("WSURL = %s", h.WSURL)
-	}
-	if !strings.HasPrefix(h.HTTPURL, "http://127.0.0.1:") {
-		t.Errorf("HTTPURL = %s", h.HTTPURL)
-	}
+// inMemStore implements codexhome.ObjectStore in-memory for tests.
+type inMemStore struct {
+	mu sync.Mutex
+	m  map[string][]byte
 }
 
-func TestSpawnCodexAppServer_BadBinary(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err := spawnCodexAppServer(ctx, "/no/such/binary", t.TempDir(), nil)
-	if err == nil {
-		t.Fatal("want spawn error")
+func (f *inMemStore) Put(_ context.Context, k string, d []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.m[k] = append([]byte(nil), d...)
+	return nil
+}
+func (f *inMemStore) Get(_ context.Context, k string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.m[k]
+	if !ok {
+		return nil, codexhome.ErrObjectNotFound
 	}
+	return append([]byte(nil), d...), nil
+}
+func (f *inMemStore) Delete(_ context.Context, k string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.m, k)
+	return nil
+}
+
+func makeFakeStore(_ *testing.T) codexhome.ObjectStore {
+	return &inMemStore{m: map[string][]byte{}}
 }

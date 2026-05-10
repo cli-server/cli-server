@@ -9,7 +9,7 @@ import (
 )
 
 func TestReaper_RetiresIdleSubprocess(t *testing.T) {
-	bin := buildFakeCodex(t)
+	bin := BuildFakeCodexForTest(t)
 	root := t.TempDir()
 	store := newFakeStore()
 	mgr := codexhome.NewManager(root)
@@ -40,7 +40,7 @@ func TestReaper_RetiresIdleSubprocess(t *testing.T) {
 }
 
 func TestReaper_KeepsActiveSubprocess(t *testing.T) {
-	bin := buildFakeCodex(t)
+	bin := BuildFakeCodexForTest(t)
 	root := t.TempDir()
 	store := newFakeStore()
 	mgr := codexhome.NewManager(root)
