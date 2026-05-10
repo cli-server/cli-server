@@ -47,7 +47,17 @@ func (h *ChildHandle) Stop(ctx context.Context) error {
 }
 
 // spawnCodexAppServer launches `codexBin app-server --listen ws://127.0.0.1:0`,
-// reads the listen URL from stdout, polls /readyz, and returns a handle.
+// reads the listen URL from its output, polls /readyz, and returns a handle.
+//
+// The real `codex` binary writes a multi-line startup banner to stderr:
+//
+//	codex app-server (WebSockets)
+//	  listening on: ws://127.0.0.1:PORT
+//	  readyz: http://127.0.0.1:PORT/readyz
+//	  ...
+//
+// Test fakes write a bare "ws://127.0.0.1:PORT\n" to stdout. We scan both
+// streams concurrently and extract the first line containing "ws://".
 func spawnCodexAppServer(ctx context.Context, codexBin, codexHome string, extraEnv []string) (*ChildHandle, error) {
 	cmd := exec.Command(codexBin, "app-server", "--listen", "ws://127.0.0.1:0")
 	cmd.Env = append(append([]string{}, extraEnv...), "CODEX_HOME="+codexHome)
@@ -55,24 +65,66 @@ func spawnCodexAppServer(ctx context.Context, codexBin, codexHome string, extraE
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stderr pipe: %w", err)
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start: %w", err)
 	}
-	br := bufio.NewReader(stdout)
-	line, err := br.ReadString('\n')
-	if err != nil {
-		_ = cmd.Process.Kill()
-		return nil, fmt.Errorf("read listen line: %w", err)
+
+	// Scan both stdout and stderr concurrently for a line containing "ws://".
+	// Real codex writes the URL to stderr; test fakes write it to stdout.
+	type result struct {
+		url string
+		err error
 	}
-	wsURL := strings.TrimSpace(line)
+	urlCh := make(chan result, 1)
+	scanStream := func(r io.Reader) {
+		br := bufio.NewReader(r)
+		for {
+			line, err := br.ReadString('\n')
+			trimmed := strings.TrimSpace(line)
+			if idx := strings.Index(trimmed, "ws://"); idx >= 0 {
+				select {
+				case urlCh <- result{url: trimmed[idx:]}:
+				default:
+				}
+				// Drain remainder in background.
+				go func() { _, _ = io.Copy(io.Discard, br) }()
+				return
+			}
+			if err != nil {
+				select {
+				case urlCh <- result{err: err}:
+				default:
+				}
+				return
+			}
+		}
+	}
+	go scanStream(stdout)
+	go scanStream(stderr)
+
+	var wsURL string
+	select {
+	case r := <-urlCh:
+		if r.err != nil {
+			_ = cmd.Process.Kill()
+			return nil, fmt.Errorf("read listen line: %w", r.err)
+		}
+		wsURL = r.url
+	case <-ctx.Done():
+		_ = cmd.Process.Kill()
+		return nil, ctx.Err()
+	}
+
 	if !strings.HasPrefix(wsURL, "ws://") {
 		_ = cmd.Process.Kill()
-		return nil, fmt.Errorf("unexpected first stdout line %q", wsURL)
+		return nil, fmt.Errorf("unexpected listen line %q", wsURL)
 	}
 	httpURL := "http://" + strings.TrimPrefix(wsURL, "ws://")
-	// Drain remaining stdout in the background so the pipe doesn't fill
-	// (real codex keeps logging readyz/healthz/notes after the URL line).
-	go func() { _, _ = io.Copy(io.Discard, br) }()
+	// Both pipes are drained in background goroutines already.
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
