@@ -11,7 +11,7 @@ import (
 
 	"github.com/agentserver/agentserver/internal/codexappgateway/auth"
 	"github.com/agentserver/agentserver/internal/codexappgateway/codexhome"
-	"github.com/agentserver/agentserver/internal/codexappgateway/proxy"
+	"github.com/agentserver/agentserver/internal/wsbridge"
 	"github.com/agentserver/agentserver/internal/codexappgateway/supervisor"
 
 	"github.com/go-chi/chi/v5"
@@ -141,7 +141,7 @@ func (s *Server) handleCodexAppWS(w http.ResponseWriter, r *http.Request) {
 	defer childWS.Close(websocket.StatusNormalClosure, "gateway closing")
 
 	s.sup.Touch(key)
-	if err := proxy.RunProxy(ctx, userWS, childWS, func() { s.sup.Touch(key) }); err != nil {
+	if err := wsbridge.RunProxy(ctx, userWS, childWS, func() { s.sup.Touch(key) }); err != nil {
 		s.logger.Info("proxy ended", "err", err, "key", key)
 	}
 }

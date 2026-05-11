@@ -40,6 +40,7 @@ func (s *Server) Routes() http.Handler {
 	})
 
 	r.Get("/codex-exec/{exe_id}", s.handleInbound)
+	r.Get("/bridge/{exe_id}", s.handleBridge)
 
 	// More routes added in later tasks.
 	return r
