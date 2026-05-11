@@ -1,0 +1,15 @@
+# Build Go binary
+FROM golang:1.26-trixie AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o codex-exec-gateway ./cmd/codex-exec-gateway
+
+# Runtime image (minimal — no Docker CLI, no codex binary needed)
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/codex-exec-gateway /usr/local/bin/codex-exec-gateway
+EXPOSE 6060
+ENTRYPOINT ["codex-exec-gateway"]
