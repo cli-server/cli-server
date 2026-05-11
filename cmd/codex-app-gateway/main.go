@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/agentserver/agentserver/internal/codexappgateway"
 	"github.com/agentserver/agentserver/internal/codexappgateway/envmcp"
 )
 
@@ -44,8 +45,7 @@ func main() {
 	case "env-mcp":
 		runEnvMcp(os.Args[2:])
 	case "serve":
-		fmt.Fprintln(os.Stderr, "codex-app-gateway: serve subcommand not implemented in this plan")
-		os.Exit(2)
+		runServe(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(0)
@@ -73,6 +73,47 @@ func runEnvMcp(rawArgs []string) {
 		os.Exit(1)
 	}
 }
+
+func runServe(rawArgs []string) {
+	args, err := parseServeArgs(rawArgs)
+	if errors.Is(err, flag.ErrHelp) {
+		fmt.Fprint(os.Stderr, serveHelp)
+		os.Exit(0)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "codex-app-gateway serve:", err)
+		os.Exit(2)
+	}
+	cfg, err := codexappgateway.LoadServeConfigFromEnv()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "codex-app-gateway serve: config:", err)
+		os.Exit(2)
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	srv, err := codexappgateway.NewServer(cfg, args.CodexBin, logger)
+	if err != nil {
+		logger.Error("NewServer failed", "err", err)
+		os.Exit(1)
+	}
+	if err := srv.Run(ctx, args.ListenAddr); err != nil {
+		logger.Error("server exited with error", "err", err)
+		os.Exit(1)
+	}
+	logger.Info("server clean exit")
+}
+
+const serveHelp = `Usage: codex-app-gateway serve [flags]
+
+Run the codex-app-gateway HTTP/WS server: per-thread codex app-server
+subprocess manager + transparent ws frame proxy. See env vars (CXG_*)
+in the spec.
+
+Flags:
+  --listen-addr <addr>   HTTP listen address (default :8086, env CXG_LISTEN_ADDR)
+  --codex-bin   <path>   path to the codex binary (default ` + "`" + `codex` + "`" + `, env CXG_CODEX_BIN)
+`
 
 func parseEnvMcpArgs(rawArgs []string) (envmcp.RunArgs, error) {
 	fs := flag.NewFlagSet("env-mcp", flag.ContinueOnError)

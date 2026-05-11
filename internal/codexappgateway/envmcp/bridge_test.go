@@ -67,7 +67,7 @@ func TestBridgeClient_DialAndCall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	bc, err := DialBridge(ctx, f.wsURL(), "tok-123")
+	bc, err := DialBridge(ctx, f.wsURL(), "tok-123", nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestBridgeClient_Notify_NoReply(t *testing.T) {
 	defer f.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	bc, err := DialBridge(ctx, f.wsURL(), "")
+	bc, err := DialBridge(ctx, f.wsURL(), "", nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestBridgeClient_Call_AfterClose_Errors(t *testing.T) {
 	defer f.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	bc, err := DialBridge(ctx, f.wsURL(), "")
+	bc, err := DialBridge(ctx, f.wsURL(), "", nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestBridgeClient_Call_ServerClosesMidCall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	bc, err := DialBridge(ctx, wsURL, "")
+	bc, err := DialBridge(ctx, wsURL, "", nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestBridgeClient_Call_CtxCancel(t *testing.T) {
 
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer dialCancel()
-	bc, err := DialBridge(dialCtx, wsURL, "")
+	bc, err := DialBridge(dialCtx, wsURL, "", nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestBridgeClient_Call_ServerErrorResponse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	bc, err := DialBridge(ctx, wsURL, "")
+	bc, err := DialBridge(ctx, wsURL, "", nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestBridgeClient_Close_Idempotent(t *testing.T) {
 	defer f.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	bc, err := DialBridge(ctx, f.wsURL(), "")
+	bc, err := DialBridge(ctx, f.wsURL(), "", nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

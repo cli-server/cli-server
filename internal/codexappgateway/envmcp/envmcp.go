@@ -41,7 +41,7 @@ func Run(ctx context.Context, args RunArgs, stdin io.Reader, stdout, stderr io.W
 		"turn_id", args.TurnID,
 	)
 
-	bc, err := DialBridge(ctx, args.BridgeURL, token)
+	bc, err := DialBridge(ctx, args.BridgeURL, token, logger)
 	if err != nil {
 		return fmt.Errorf("dial bridge: %w", err)
 	}
@@ -56,7 +56,7 @@ func Run(ctx context.Context, args RunArgs, stdin io.Reader, stdout, stderr io.W
 	}
 
 	tr := NewTranslator(bc)
-	srv := NewMCPServer(args.ExeDesc, tr)
+	srv := NewMCPServer(args.ExeDesc, tr, logger)
 	if err := srv.Serve(ctx, stdin, stdout); err != nil {
 		// EOF on stdin is the normal exit path (codex's MCP host
 		// closed); io.EOF surfaces as nil from bufio.Scanner.Err(), so

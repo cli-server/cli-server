@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
+	"unicode/utf8"
 )
 
 // ShellRunner is the slice of Translator that MCPServer uses.
@@ -25,10 +27,28 @@ type MCPServer struct {
 	exeDesc string
 	tr      ShellRunner
 	writeMu sync.Mutex
+	logger  *slog.Logger
 }
 
-func NewMCPServer(exeDesc string, tr ShellRunner) *MCPServer {
-	return &MCPServer{exeDesc: exeDesc, tr: tr}
+func NewMCPServer(exeDesc string, tr ShellRunner, logger *slog.Logger) *MCPServer {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &MCPServer{exeDesc: exeDesc, tr: tr, logger: logger}
+}
+
+// previewLine returns up to 200 bytes of line as a string, truncating safely.
+func previewLine(line []byte) string {
+	const max = 200
+	if len(line) <= max {
+		return string(line)
+	}
+	// Truncate at a valid UTF-8 boundary.
+	truncated := line[:max]
+	for !utf8.Valid(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return string(truncated) + "…"
 }
 
 // Serve reads requests from in until EOF and writes responses to out.
@@ -46,8 +66,7 @@ func (s *MCPServer) Serve(ctx context.Context, in io.Reader, out io.Writer) erro
 		}
 		var req JSONRPCMessage
 		if err := json.Unmarshal(line, &req); err != nil {
-			// Malformed input; per JSON-RPC 2.0, parse errors on a
-			// notification have no reply target so we log+drop.
+			s.logger.Warn("mcp: dropping malformed JSON-RPC line", "err", err, "preview", previewLine(line))
 			continue
 		}
 		if err := s.dispatch(ctx, &req, out); err != nil {

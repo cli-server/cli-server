@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,7 @@ type BridgeClient struct {
 	closed   chan struct{}
 	closeErr error
 	cancel   context.CancelFunc
+	logger   *slog.Logger
 }
 
 // DialBridge dials wsURL and, when authToken is non-empty, sets
@@ -38,7 +40,7 @@ type BridgeClient struct {
 // nhooyr.io/websocket does NOT request `permessage-deflate` by default —
 // we rely on that, because codex's exec-server closes connections that
 // do (see spec § PoC #2 gotchas).
-func DialBridge(ctx context.Context, wsURL, authToken string) (*BridgeClient, error) {
+func DialBridge(ctx context.Context, wsURL, authToken string, logger *slog.Logger) (*BridgeClient, error) {
 	opts := &websocket.DialOptions{}
 	if authToken != "" {
 		opts.HTTPHeader = http.Header{"Authorization": []string{"Bearer " + authToken}}
@@ -49,12 +51,16 @@ func DialBridge(ctx context.Context, wsURL, authToken string) (*BridgeClient, er
 	}
 	ws.SetReadLimit(-1) // exec-server can stream large process/read responses
 
+	if logger == nil {
+		logger = slog.Default()
+	}
 	loopCtx, cancel := context.WithCancel(context.Background())
 	bc := &BridgeClient{
 		ws:      ws,
 		pending: make(map[int64]chan *JSONRPCMessage),
 		closed:  make(chan struct{}),
 		cancel:  cancel,
+		logger:  logger,
 	}
 	go bc.readLoop(loopCtx)
 	return bc, nil
@@ -163,6 +169,7 @@ func (bc *BridgeClient) readLoop(ctx context.Context) {
 		}
 		var msg JSONRPCMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
+			bc.logger.Warn("bridge: dropping malformed frame", "err", err, "len", len(data))
 			continue
 		}
 		if msg.ID == nil {

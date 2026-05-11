@@ -43,7 +43,7 @@ func driveServer(t *testing.T, srv *MCPServer, lines ...string) []map[string]any
 }
 
 func TestMCPServer_InitializeAndToolsList(t *testing.T) {
-	srv := NewMCPServer("Daisy's MacBook", &stubTranslator{})
+	srv := NewMCPServer("Daisy's MacBook", &stubTranslator{}, nil)
 	got := driveServer(t, srv,
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
@@ -71,7 +71,7 @@ func TestMCPServer_InitializeAndToolsList(t *testing.T) {
 
 func TestMCPServer_ToolsCallShell_DispatchesToTranslator(t *testing.T) {
 	tr := &stubTranslator{out: ShellResult{Text: "ok\n[exit_code=0]", IsError: false}}
-	srv := NewMCPServer("desc", tr)
+	srv := NewMCPServer("desc", tr, nil)
 	got := driveServer(t, srv,
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"shell","arguments":{"command":["ls","-la"],"cwd":"/srv"}}}`,
@@ -96,7 +96,7 @@ func TestMCPServer_ToolsCallShell_DispatchesToTranslator(t *testing.T) {
 }
 
 func TestMCPServer_ToolsCall_UnknownTool_Error(t *testing.T) {
-	srv := NewMCPServer("desc", &stubTranslator{})
+	srv := NewMCPServer("desc", &stubTranslator{}, nil)
 	got := driveServer(t, srv,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"bogus","arguments":{}}}`,
 	)
@@ -106,7 +106,7 @@ func TestMCPServer_ToolsCall_UnknownTool_Error(t *testing.T) {
 }
 
 func TestMCPServer_PromptsAndResources_EmptyLists(t *testing.T) {
-	srv := NewMCPServer("desc", &stubTranslator{})
+	srv := NewMCPServer("desc", &stubTranslator{}, nil)
 	got := driveServer(t, srv,
 		`{"jsonrpc":"2.0","id":1,"method":"prompts/list"}`,
 		`{"jsonrpc":"2.0","id":2,"method":"resources/list"}`,
@@ -125,7 +125,7 @@ func TestMCPServer_PromptsAndResources_EmptyLists(t *testing.T) {
 }
 
 func TestMCPServer_NotificationProducesNoReply(t *testing.T) {
-	srv := NewMCPServer("desc", &stubTranslator{})
+	srv := NewMCPServer("desc", &stubTranslator{}, nil)
 	got := driveServer(t, srv,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
