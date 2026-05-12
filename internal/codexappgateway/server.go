@@ -7,12 +7,16 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/agentserver/agentserver/internal/codexappgateway/auth"
+	"github.com/agentserver/agentserver/internal/codexappgateway/captoken"
 	"github.com/agentserver/agentserver/internal/codexappgateway/codexhome"
-	"github.com/agentserver/agentserver/internal/wsbridge"
+	"github.com/agentserver/agentserver/internal/codexappgateway/execgwclient"
 	"github.com/agentserver/agentserver/internal/codexappgateway/supervisor"
+	"github.com/agentserver/agentserver/internal/wsbridge"
 
 	"github.com/go-chi/chi/v5"
 	"nhooyr.io/websocket"
@@ -20,15 +24,27 @@ import (
 
 // Server is the codex-app-gateway HTTP/WS server.
 type Server struct {
-	cfg     ServeConfig
-	auth    auth.Authenticator
-	sup     *supervisor.Supervisor
-	homeMgr *codexhome.Manager
-	logger  *slog.Logger
+	cfg          ServeConfig
+	auth         auth.Authenticator
+	sup          *supervisor.Supervisor
+	homeMgr      *codexhome.Manager
+	logger       *slog.Logger
+	execGWClient *execgwclient.Client
+	codexBin     string
 
 	// buildConfig produces the per-thread config.toml input. Allowed to
 	// hit the network. Errors abort the spawn.
-	buildConfig func(workspaceID, threadID string) (codexhome.ConfigInput, error)
+	buildConfig func(ctx context.Context, workspaceID, threadID string) (codexhome.ConfigInput, error)
+}
+
+// nonEnvNameRe matches characters that are not valid in env var names
+// (after upper-casing): anything outside [A-Z0-9_].
+var nonEnvNameRe = regexp.MustCompile(`[^A-Z0-9_]`)
+
+// sanitizeEnvName uppercases s and replaces any character outside
+// [A-Z0-9_] with an underscore, producing a valid POSIX env-var name.
+func sanitizeEnvName(s string) string {
+	return nonEnvNameRe.ReplaceAllString(strings.ToUpper(s), "_")
 }
 
 // NewServer wires up the production server.
@@ -43,25 +59,61 @@ func NewServer(cfg ServeConfig, codexBin string, logger *slog.Logger) (*Server, 
 		HomeMgr:  mgr,
 		Store:    store,
 	})
-	return &Server{
-		cfg:     cfg,
-		auth:    auth.NewHMAC(cfg.InboundHMACSecret),
-		sup:     sup,
-		homeMgr: mgr,
-		logger:  logger,
-		buildConfig: func(workspaceID, threadID string) (codexhome.ConfigInput, error) {
-			// Phase-1 default: minimal config from env. Real exec-gw fetch
-			// is wired in a follow-up task that reads CXG_EXEC_GATEWAY_*
-			// and mints per-turn cap tokens; until then, no executors.
-			return codexhome.ConfigInput{
-				ModelProvider: "modelserver",
-				Model:         "gpt-5.5",
-				ModelProviders: map[string]codexhome.ModelProvider{
-					"modelserver": {Name: "modelserver", BaseURL: "http://llmproxy:8085/v1", EnvKey: "CODEX_API_KEY", WireAPI: "responses"},
-				},
-			}, nil
-		},
-	}, nil
+	s := &Server{
+		cfg:          cfg,
+		auth:         auth.NewHMAC(cfg.InboundHMACSecret),
+		sup:          sup,
+		homeMgr:      mgr,
+		logger:       logger,
+		execGWClient: execgwclient.NewClient(cfg.ExecGatewayInternalURL, cfg.ExecGatewayInternalSecret),
+		codexBin:     codexBin,
+	}
+	s.buildConfig = func(ctx context.Context, workspaceID, threadID string) (codexhome.ConfigInput, error) {
+		// 1. Fetch connected executors from exec-gateway.
+		connected, err := s.execGWClient.ListConnected(ctx, workspaceID)
+		if err != nil {
+			return codexhome.ConfigInput{}, fmt.Errorf("list connected executors: %w", err)
+		}
+		// 2. Mint a per-thread cap token for each executor (single-exe-id
+		// allow-list per spec). The TurnID field doubles as the audit/revoke
+		// key; the token is thread-scoped and lives for 24h (revoke-on-shutdown
+		// is a TODO: invoke /api/exec-gateway/revoke-turn at subprocess exit).
+		now := time.Now()
+		exp := now.Add(24 * time.Hour).Unix()
+		var execs []codexhome.ExecutorEntry
+		for _, ce := range connected {
+			tok := captoken.Mint(s.cfg.CapTokenHMACSecret, captoken.Payload{
+				TurnID:      threadID,
+				WorkspaceID: workspaceID,
+				ExeIDs:      []string{ce.ExeID},
+				IAT:         now.Unix(),
+				EXP:         exp,
+			})
+			envName := "CXG_BRIDGE_TOKEN_EXE_" + sanitizeEnvName(ce.ExeID)
+			desc := ce.ExeID
+			if ce.DefaultCwd != "" {
+				desc = fmt.Sprintf("%s (%s)", ce.ExeID, ce.DefaultCwd)
+			}
+			execs = append(execs, codexhome.ExecutorEntry{
+				ID:        ce.ExeID,
+				BridgeURL: s.cfg.ExecGatewayWSURL + "/bridge/" + ce.ExeID,
+				TokenEnv:  envName,
+				TokenVal:  tok,
+				Desc:      desc,
+				CodexBin:  s.codexBin,
+				TurnID:    threadID,
+			})
+		}
+		return codexhome.ConfigInput{
+			ModelProvider: "modelserver",
+			Model:         "gpt-5.5",
+			ModelProviders: map[string]codexhome.ModelProvider{
+				"modelserver": {Name: "modelserver", BaseURL: "http://llmproxy:8085/v1", EnvKey: "CODEX_API_KEY", WireAPI: "responses"},
+			},
+			Executors: execs,
+		}, nil
+	}
+	return s, nil
 }
 
 // Run serves HTTP until ctx is done.
@@ -120,8 +172,8 @@ func (s *Server) handleCodexAppWS(w http.ResponseWriter, r *http.Request) {
 
 	key := supervisor.Key{WorkspaceID: id.WorkspaceID, ThreadID: id.ThreadID}
 	ctx := r.Context()
-	handle, err := s.sup.EnsureSubprocess(ctx, key, func() (codexhome.ConfigInput, error) {
-		return s.buildConfig(id.WorkspaceID, id.ThreadID)
+	handle, err := s.sup.EnsureSubprocess(ctx, key, func(ctx context.Context) (codexhome.ConfigInput, error) {
+		return s.buildConfig(ctx, id.WorkspaceID, id.ThreadID)
 	})
 	if err != nil {
 		s.logger.Error("ensure subprocess", "err", err, "key", key)

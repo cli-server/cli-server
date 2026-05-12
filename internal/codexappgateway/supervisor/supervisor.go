@@ -42,8 +42,10 @@ type entry struct {
 }
 
 // ConfigBuilder produces a fresh ConfigInput at spawn time. Allowed to
-// hit the network; errors propagate.
-type ConfigBuilder func() (codexhome.ConfigInput, error)
+// hit the network; errors propagate. The context is the spawn-request
+// context (e.g. the HTTP request context), useful for cancellation when
+// the builder calls remote services such as codex-exec-gateway.
+type ConfigBuilder func(ctx context.Context) (codexhome.ConfigInput, error)
 
 func NewSupervisor(cfg SupervisorConfig) *Supervisor {
 	logger := cfg.Logger
@@ -87,7 +89,7 @@ func (s *Supervisor) EnsureSubprocess(ctx context.Context, key Key, build Config
 		s.mu.Unlock()
 	}
 
-	cfg, err := build()
+	cfg, err := build(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("config builder: %w", err)
 	}

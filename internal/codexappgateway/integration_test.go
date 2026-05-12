@@ -45,7 +45,7 @@ func TestServer_RealCodexAppServer_FullRPCRoundtrip(t *testing.T) {
 		sup:     sup,
 		homeMgr: mgr,
 		logger:  logger,
-		buildConfig: func(ws, thr string) (codexhome.ConfigInput, error) {
+		buildConfig: func(_ context.Context, ws, thr string) (codexhome.ConfigInput, error) {
 			return codexhome.ConfigInput{
 				ModelProvider: "modelserver",
 				Model:         "gpt-5.5",
