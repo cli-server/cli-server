@@ -12,8 +12,7 @@ import (
 )
 
 func TestInternalConnected_RequiresSharedSecret(t *testing.T) {
-	store := newTestStore(t)
-	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s3cret"}, store)
+	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("test-hmac"), InternalSharedSecret: "test-internal"}, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

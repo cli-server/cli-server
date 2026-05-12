@@ -48,8 +48,7 @@ func TestHandleRegister_HappyPath(t *testing.T) {
 }
 
 func TestHandleRegister_RequiresUser(t *testing.T) {
-	store := newTestStore(t)
-	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("test-hmac"), InternalSharedSecret: "test-internal"}, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

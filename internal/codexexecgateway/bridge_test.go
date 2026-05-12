@@ -55,8 +55,7 @@ func connectInbound(t *testing.T, srv *Server, baseURL, exeID string) *websocket
 // that fail before any store lookup, allowing them to run without TEST_DATABASE_URL.
 func newBridgeNoDBServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
-	cfg := Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s",
-		PingInterval: time.Second, IdleTimeout: 10 * time.Second}
+	cfg := Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}
 	// NewServer accepts a nil store; the bridge auth paths don't call it.
 	srv, err := NewServer(cfg, nil)
 	if err != nil {

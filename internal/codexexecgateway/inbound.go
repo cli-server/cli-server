@@ -2,6 +2,7 @@ package codexexecgateway
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -28,16 +29,18 @@ func (s *Server) handleInbound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if hash == "" {
+		slog.Warn("inbound: unauthorized", "exe_id", exeID, "reason", "unknown_exe_id", "remote", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(token)); err != nil {
+		slog.Warn("inbound: unauthorized", "exe_id", exeID, "reason", "bad_token", "remote", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: true, // skip HTTP Origin check; auth is enforced by token verification above
 	})
 	if err != nil {
 		s.logger.Error("inbound: ws accept", "exe_id", exeID, "error", err)
@@ -47,7 +50,9 @@ func (s *Server) handleInbound(w http.ResponseWriter, r *http.Request) {
 
 	if evicted := s.registry.Register(exeID, ws); evicted != nil {
 		s.logger.Info("inbound: evicted prior conn", "exe_id", exeID)
-		evicted.Close(websocket.StatusPolicyViolation, "replaced by new connection")
+		if err := evicted.Close(websocket.StatusPolicyViolation, "replaced by new connection"); err != nil {
+			s.logger.Warn("inbound: close evicted conn", "exe_id", exeID, "error", err)
+		}
 	}
 	if err := s.store.UpdateLastSeen(r.Context(), exeID); err != nil {
 		s.logger.Warn("inbound: update last_seen", "exe_id", exeID, "error", err)

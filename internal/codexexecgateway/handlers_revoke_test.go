@@ -34,8 +34,7 @@ func TestRevokeTurn_AddsToSet(t *testing.T) {
 }
 
 func TestRevokeTurn_RejectsBadAuth(t *testing.T) {
-	store := newTestStore(t)
-	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "secret"}, store)
+	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("test-hmac"), InternalSharedSecret: "test-internal"}, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -50,14 +49,13 @@ func TestRevokeTurn_RejectsBadAuth(t *testing.T) {
 }
 
 func TestRevokeTurn_BadJSON(t *testing.T) {
-	store := newTestStore(t)
-	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "secret"}, store)
+	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("test-hmac"), InternalSharedSecret: "test-internal"}, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/exec-gateway/revoke-turn",
 		bytes.NewReader([]byte(`!`)))
-	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Authorization", "Bearer test-internal")
 	rr := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {

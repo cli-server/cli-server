@@ -9,6 +9,12 @@ import (
 // RevokedSet is a bounded, concurrent-safe set of revoked turn_ids with
 // per-entry expiry. Designed for the spec's "in-memory revoked set, cap
 // ~10k, periodically pruned of entries past their original exp".
+//
+// RevokedSet is bounded; when at cap, Add evicts the oldest entry by
+// insertion order, NOT by expiry. If the evicted entry's exp is still
+// in the future, that turn_id is silently un-revoked (its token will
+// pass Contains as if never revoked, until its own exp). Add returns
+// a bool indicating this case so callers can log/alert.
 type RevokedSet struct {
 	mu    sync.Mutex
 	cap   int

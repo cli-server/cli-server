@@ -14,8 +14,7 @@ import (
 func newInboundTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
 	store := newTestStore(t)
-	cfg := Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s",
-		PingInterval: time.Second, IdleTimeout: 10 * time.Second}
+	cfg := Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}
 	srv, err := NewServer(cfg, store)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

@@ -17,8 +17,10 @@ func NewConnRegistry() *ConnRegistry {
 	return &ConnRegistry{conns: make(map[string]*websocket.Conn)}
 }
 
-// Register installs `c` as the conn for `exeID`. If an existing conn was
-// present, it is returned so the caller can close it; otherwise nil.
+// Register inserts conn for exeID. If a previous conn was registered
+// for the same exeID, returns it as evicted; the caller MUST close
+// the evicted conn — failing to do so leaks the prior handler's
+// goroutine (which is blocked in ws.Read on the now-orphaned conn).
 func (r *ConnRegistry) Register(exeID string, c *websocket.Conn) (evicted *websocket.Conn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

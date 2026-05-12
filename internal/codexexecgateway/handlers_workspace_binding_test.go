@@ -64,8 +64,7 @@ func TestWorkspaceBinding_PostListDelete(t *testing.T) {
 }
 
 func TestWorkspaceBinding_PostBadJSON(t *testing.T) {
-	store := newTestStore(t)
-	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("test-hmac"), InternalSharedSecret: "test-internal"}, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

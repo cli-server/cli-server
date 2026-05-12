@@ -5,16 +5,14 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"time"
 )
 
+// WebSocket keepalive (ping interval + idle timeout) is phase-2; nhooyr's defaults govern for now.
 type Config struct {
 	Port                 string
 	DatabaseURL          string
 	CapTokenHMACSecret   []byte
 	InternalSharedSecret string
-	PingInterval         time.Duration
-	IdleTimeout          time.Duration
 	LogLevel             slog.Level
 }
 
@@ -36,8 +34,6 @@ func LoadConfigFromEnv() (Config, error) {
 		DatabaseURL:          os.Getenv("CXG_DATABASE_URL"),
 		CapTokenHMACSecret:   []byte(os.Getenv("CXG_CAPTOKEN_HMAC_SECRET")),
 		InternalSharedSecret: os.Getenv("CXG_INTERNAL_SHARED_SECRET"),
-		PingInterval:         30 * time.Second,
-		IdleTimeout:          5 * time.Minute,
 		LogLevel:             slog.LevelInfo,
 	}
 	if cfg.DatabaseURL == "" {
@@ -45,20 +41,6 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 	if err := cfg.Validate(); err != nil {
 		return cfg, err
-	}
-	if v := os.Getenv("CXG_PING_INTERVAL"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return cfg, fmt.Errorf("parse CXG_PING_INTERVAL: %w", err)
-		}
-		cfg.PingInterval = d
-	}
-	if v := os.Getenv("CXG_IDLE_TIMEOUT"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return cfg, fmt.Errorf("parse CXG_IDLE_TIMEOUT: %w", err)
-		}
-		cfg.IdleTimeout = d
 	}
 	if v := os.Getenv("CXG_LOG_LEVEL"); v != "" {
 		switch strings.ToLower(v) {
