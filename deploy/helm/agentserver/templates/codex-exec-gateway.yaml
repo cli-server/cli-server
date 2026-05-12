@@ -1,0 +1,116 @@
+{{- if .Values.codexExecGateway.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-codex-exec-gateway-secret
+  labels:
+    app: {{ .Release.Name }}-codex-exec-gateway
+type: Opaque
+stringData:
+  database-url: {{ include "agentserver.codexExecGatewayDatabaseUrl" . | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-codex-exec-gateway
+  labels:
+    app: {{ .Release.Name }}-codex-exec-gateway
+spec:
+  replicas: {{ .Values.codexExecGateway.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-codex-exec-gateway
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-codex-exec-gateway
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      initContainers:
+        {{- if .Values.postgresql.enabled }}
+        - name: wait-for-postgresql
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h {{ .Release.Name }}-postgresql -p 5432 -U {{ .Values.postgresql.auth.username }}; do
+                echo "Waiting for PostgreSQL to be ready..."
+                sleep 2
+              done
+        - name: create-codex-exec-gateway-database
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              {{- $dbName := (dig "database" "name" "codexexecgateway" .Values.codexExecGateway) }}
+              PGPASSWORD="$PG_PASSWORD" psql -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} -tc "SELECT 1 FROM pg_database WHERE datname='{{ $dbName }}'" | grep -q 1 || \
+              PGPASSWORD="$PG_PASSWORD" createdb -h {{ .Release.Name }}-postgresql -U {{ .Values.postgresql.auth.username }} {{ $dbName }}
+          env:
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-postgresql
+                  key: POSTGRES_PASSWORD
+        {{- end }}
+      containers:
+        - name: codex-exec-gateway
+          image: "{{ .Values.codexExecGateway.image.repository }}:{{ .Values.codexExecGateway.image.tag }}"
+          imagePullPolicy: {{ .Values.codexExecGateway.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.codexExecGateway.port }}
+              name: http
+              protocol: TCP
+          env:
+            - name: CXG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-codex-exec-gateway-secret
+                  key: database-url
+            - name: CXG_CAPTOKEN_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-codex-shared-secret
+                  key: captoken-hmac-secret
+            - name: CXG_INTERNAL_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-codex-shared-secret
+                  key: internal-shared-secret
+            {{- if .Values.codexExecGateway.logLevel }}
+            - name: CXG_LOG_LEVEL
+              value: {{ .Values.codexExecGateway.logLevel | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.codexExecGateway.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.codexExecGateway.port }}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          {{- with .Values.codexExecGateway.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-codex-exec-gateway
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.codexExecGateway.port }}
+      targetPort: {{ .Values.codexExecGateway.port }}
+      protocol: TCP
+      name: http
+  selector:
+    app: {{ .Release.Name }}-codex-exec-gateway
+{{- end }}

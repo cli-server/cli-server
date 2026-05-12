@@ -8,8 +8,15 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
     -o /out/codex-app-gateway ./cmd/codex-app-gateway
 
 FROM debian:trixie-slim
+# Pin codex npm package version; override at build time with:
+#   docker build --build-arg CODEX_VERSION=0.131.0 ...
+ARG CODEX_VERSION=0.130.0
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+ && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && npm install -g @openai/codex@${CODEX_VERSION} \
+ && apt-get purge -y curl gnupg && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/codex-app-gateway /usr/local/bin/codex-app-gateway
 ENTRYPOINT ["/usr/local/bin/codex-app-gateway"]
