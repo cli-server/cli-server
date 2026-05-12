@@ -16,7 +16,10 @@ func newInboundTestServer(t *testing.T) (*httptest.Server, *Server) {
 	store := newTestStore(t)
 	cfg := Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s",
 		PingInterval: time.Second, IdleTimeout: 10 * time.Second}
-	srv := NewServer(cfg, store)
+	srv, err := NewServer(cfg, store)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 	hs := httptest.NewServer(srv.Routes())
 	t.Cleanup(hs.Close)
 	return hs, srv

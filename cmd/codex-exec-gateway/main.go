@@ -24,7 +24,10 @@ func main() {
 	}
 	defer store.Close()
 
-	srv := codexexecgateway.NewServer(cfg, store)
+	srv, err := codexexecgateway.NewServer(cfg, store)
+	if err != nil {
+		log.Fatalf("server: %v", err)
+	}
 	httpServer := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.Routes(),

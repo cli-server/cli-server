@@ -13,7 +13,10 @@ import (
 
 func TestInternalConnected_RequiresSharedSecret(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s3cret"}, store)
+	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s3cret"}, store)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/api/exec-gateway/connected?workspace_id=ws_a", nil)
 	rr := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rr, req)
@@ -24,7 +27,10 @@ func TestInternalConnected_RequiresSharedSecret(t *testing.T) {
 
 func TestInternalConnected_ReturnsIntersection(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s3cret"}, store)
+	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s3cret"}, store)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 	hs := httptest.NewServer(srv.Routes())
 	t.Cleanup(hs.Close)
 

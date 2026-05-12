@@ -33,25 +33,33 @@ func NewRevokedSet(cap int) *RevokedSet {
 }
 
 // Add inserts (turnID, exp). Re-adding refreshes the entry's position.
-// When at capacity, the oldest entry is evicted.
-func (r *RevokedSet) Add(turnID string, exp int64) {
+// When at capacity, the oldest entry is evicted. Returns evictedLive=true
+// if the evicted entry's exp was still in the future — callers should log a
+// warning because that turn_id is no longer blocked by the revoked set.
+func (r *RevokedSet) Add(turnID string, exp int64) (evictedLive bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if el, ok := r.items[turnID]; ok {
 		el.Value = revokedEntry{turnID: turnID, exp: exp}
 		r.order.MoveToBack(el)
-		return
+		return false
 	}
+	now := time.Now().Unix()
 	for r.order.Len() >= r.cap {
 		oldest := r.order.Front()
 		if oldest == nil {
 			break
 		}
+		entry := oldest.Value.(revokedEntry)
 		r.order.Remove(oldest)
-		delete(r.items, oldest.Value.(revokedEntry).turnID)
+		delete(r.items, entry.turnID)
+		if entry.exp > now {
+			evictedLive = true
+		}
 	}
 	el := r.order.PushBack(revokedEntry{turnID: turnID, exp: exp})
 	r.items[turnID] = el
+	return evictedLive
 }
 
 // Contains reports whether turnID is in the set (regardless of expiry —

@@ -12,7 +12,10 @@ import (
 
 func TestWorkspaceBinding_PostListDelete(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 
 	// Pre-seed an executor.
 	store.CreateExecutor(context.Background(), Executor{
@@ -62,7 +65,10 @@ func TestWorkspaceBinding_PostListDelete(t *testing.T) {
 
 func TestWorkspaceBinding_PostBadJSON(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/api/codex-exec/workspaces/ws_a/executors", bytes.NewReader([]byte(`!`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()

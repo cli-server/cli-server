@@ -45,6 +45,31 @@ func TestRevokedSet_CapEvictsOldest(t *testing.T) {
 	}
 }
 
+func TestRevokedSet_Add_ReturnsTrueWhenEvictingLiveEntry(t *testing.T) {
+	s := NewRevokedSet(2)
+	future := time.Now().Add(time.Hour).Unix()
+	if e := s.Add("a", future); e {
+		t.Error("first Add should not evict")
+	}
+	if e := s.Add("b", future); e {
+		t.Error("second Add should not evict")
+	}
+	if e := s.Add("c", future); !e {
+		t.Error("third Add should evict and return true (a was still live)")
+	}
+}
+
+func TestRevokedSet_Add_ReturnsFalseWhenEvictingExpiredEntry(t *testing.T) {
+	s := NewRevokedSet(2)
+	past := time.Now().Add(-time.Hour).Unix()
+	future := time.Now().Add(time.Hour).Unix()
+	s.Add("a", past) // already expired
+	s.Add("b", future)
+	if e := s.Add("c", future); e {
+		t.Error("third Add should evict but a was already expired (not a security issue)")
+	}
+}
+
 func TestRevokedSet_Concurrent(t *testing.T) {
 	r := NewRevokedSet(1000)
 	var wg sync.WaitGroup

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -45,7 +46,7 @@ func Connected(store InternalConnectedStore, reg Registry) http.HandlerFunc {
 
 // RevokedAdder is satisfied by *codexexecgateway.RevokedSet.
 type RevokedAdder interface {
-	Add(turnID string, exp int64)
+	Add(turnID string, exp int64) (evictedLive bool)
 }
 
 type revokeRequest struct {
@@ -71,7 +72,10 @@ func RevokeTurn(rev RevokedAdder) http.HandlerFunc {
 		if req.Exp == 0 {
 			req.Exp = timeNowUnix() + 3600
 		}
-		rev.Add(req.TurnID, req.Exp)
+		if evictedLive := rev.Add(req.TurnID, req.Exp); evictedLive {
+			slog.Warn("revoke-turn: revoked-set at capacity, evicted a still-live revocation; previously-revoked token may be usable until its own expiry",
+				"turn_id", req.TurnID)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

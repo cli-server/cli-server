@@ -13,7 +13,10 @@ import (
 
 func TestHandleRegister_HappyPath(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 
 	body := bytes.NewReader([]byte(`{"display_name":"laptop","description":"d","default_cwd":"/x"}`))
 	req := httptest.NewRequest(http.MethodPost, "/api/codex-exec/register", body)
@@ -46,7 +49,10 @@ func TestHandleRegister_HappyPath(t *testing.T) {
 
 func TestHandleRegister_RequiresUser(t *testing.T) {
 	store := newTestStore(t)
-	srv := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}, store)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/api/codex-exec/register", bytes.NewReader([]byte(`{}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()

@@ -48,7 +48,7 @@ func (s *Server) handleBridge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Check revocation (after token is valid so we don't prematurely leak).
+	// 3. Check revocation — TurnID is only available from the decoded payload, so this must come after signature verification.
 	if s.revoked.Contains(payload.TurnID) {
 		http.Error(w, "turn revoked", http.StatusUnauthorized)
 		return
@@ -69,11 +69,14 @@ func (s *Server) handleBridge(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("bridge: ws accept", "exe_id", exeID, "error", err)
 		return
 	}
+	bridge.SetReadLimit(-1) // codex exec-server streams large process/read responses
 	s.logger.Info("bridge: paired", "exe_id", exeID, "turn_id", payload.TurnID)
 
 	// 6. Run paired frame pumps. Cancel propagates to both pumps so the
-	// second one exits when the first returns.
-	pumpCtx, cancel := context.WithCancel(context.Background())
+	// second one exits when the first returns. Derived from r.Context() so
+	// graceful shutdown (httpServer.Shutdown) drains active sessions instead
+	// of leaking pump goroutines.
+	pumpCtx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
 	errCh := make(chan error, 2)

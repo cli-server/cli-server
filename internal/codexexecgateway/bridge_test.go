@@ -58,7 +58,10 @@ func newBridgeNoDBServer(t *testing.T) (*httptest.Server, *Server) {
 	cfg := Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s",
 		PingInterval: time.Second, IdleTimeout: 10 * time.Second}
 	// NewServer accepts a nil store; the bridge auth paths don't call it.
-	srv := NewServer(cfg, nil)
+	srv, err := NewServer(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 	hs := httptest.NewServer(srv.Routes())
 	t.Cleanup(hs.Close)
 	return hs, srv
@@ -293,8 +296,10 @@ func TestBridge_E2EByteFidelity(t *testing.T) {
 		}
 	}
 
-	// Inbound -> bridge: large binary frame (32 KiB) round-trips intact.
-	big := make([]byte, 32*1024)
+	// Inbound -> bridge: large binary frame (64 KiB, well past nhooyr's 32 KiB
+	// default read limit) round-trips intact. Without SetReadLimit(-1) on the
+	// bridge conn this would close with status 1009 (message too large).
+	big := make([]byte, 64*1024)
 	for i := range big {
 		big[i] = byte(i % 251)
 	}
@@ -303,7 +308,7 @@ func TestBridge_E2EByteFidelity(t *testing.T) {
 	}
 	mt, data, err := bridge.Read(ctx)
 	if err != nil {
-		t.Fatalf("bridge.Read big: %v", err)
+		t.Fatalf("bridge.Read big (want SetReadLimit(-1) in effect): %v", err)
 	}
 	if mt != websocket.MessageBinary || len(data) != len(big) {
 		t.Fatalf("big frame: mt=%v len=%d", mt, len(data))

@@ -2,6 +2,7 @@ package codexexecgateway
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,7 +13,7 @@ import (
 )
 
 // Server bundles the chi router with its dependencies.
-// store, registry, revoked may be nil during smoke tests.
+// store may be nil for smoke tests that don't exercise DB paths; registry and revoked are always constructed.
 type Server struct {
 	config   Config
 	store    *Store
@@ -21,7 +22,10 @@ type Server struct {
 	logger   *slog.Logger
 }
 
-func NewServer(cfg Config, store *Store) *Server {
+func NewServer(cfg Config, store *Store) (*Server, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	return &Server{
 		config:   cfg,
@@ -29,7 +33,7 @@ func NewServer(cfg Config, store *Store) *Server {
 		registry: NewConnRegistry(),
 		revoked:  NewRevokedSet(10000),
 		logger:   logger,
-	}
+	}, nil
 }
 
 func (s *Server) Routes() http.Handler {

@@ -53,18 +53,18 @@ func (s *Store) migrate() error {
 		name := e.Name()
 		var exists bool
 		if err := s.QueryRow("SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)", name).Scan(&exists); err != nil {
-			return err
+			return fmt.Errorf("check migration %s: %w", name, err)
 		}
 		if exists {
 			continue
 		}
 		content, err := migrationsFS.ReadFile("migrations/" + name)
 		if err != nil {
-			return err
+			return fmt.Errorf("read migration %s: %w", name, err)
 		}
 		tx, err := s.Begin()
 		if err != nil {
-			return err
+			return fmt.Errorf("begin tx for migration %s: %w", name, err)
 		}
 		if _, err := tx.Exec(string(content)); err != nil {
 			tx.Rollback()
@@ -72,10 +72,10 @@ func (s *Store) migrate() error {
 		}
 		if _, err := tx.Exec("INSERT INTO schema_migrations(version) VALUES ($1)", name); err != nil {
 			tx.Rollback()
-			return err
+			return fmt.Errorf("record migration %s: %w", name, err)
 		}
 		if err := tx.Commit(); err != nil {
-			return err
+			return fmt.Errorf("commit migration %s: %w", name, err)
 		}
 		log.Printf("applied migration: %s", name)
 	}

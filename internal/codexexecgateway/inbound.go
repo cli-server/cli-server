@@ -43,6 +43,7 @@ func (s *Server) handleInbound(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("inbound: ws accept", "exe_id", exeID, "error", err)
 		return
 	}
+	ws.SetReadLimit(-1) // codex exec-server streams large process/read responses
 
 	if evicted := s.registry.Register(exeID, ws); evicted != nil {
 		s.logger.Info("inbound: evicted prior conn", "exe_id", exeID)

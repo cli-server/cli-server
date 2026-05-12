@@ -18,6 +18,18 @@ type Config struct {
 	LogLevel             slog.Level
 }
 
+// Validate checks that security-critical fields are populated. NewServer calls
+// this so that direct Config{} construction cannot silently bypass HMAC checks.
+func (cfg Config) Validate() error {
+	if len(cfg.CapTokenHMACSecret) == 0 {
+		return fmt.Errorf("CapTokenHMACSecret is required")
+	}
+	if cfg.InternalSharedSecret == "" {
+		return fmt.Errorf("InternalSharedSecret is required")
+	}
+	return nil
+}
+
 func LoadConfigFromEnv() (Config, error) {
 	cfg := Config{
 		Port:                 envOr("CXG_PORT", "6060"),
@@ -31,11 +43,8 @@ func LoadConfigFromEnv() (Config, error) {
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("CXG_DATABASE_URL is required")
 	}
-	if len(cfg.CapTokenHMACSecret) == 0 {
-		return cfg, fmt.Errorf("CXG_CAPTOKEN_HMAC_SECRET is required")
-	}
-	if cfg.InternalSharedSecret == "" {
-		return cfg, fmt.Errorf("CXG_INTERNAL_SHARED_SECRET is required")
+	if err := cfg.Validate(); err != nil {
+		return cfg, err
 	}
 	if v := os.Getenv("CXG_PING_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)

@@ -11,9 +11,7 @@ import (
 // (MessageType, payload) to dst. This preserves JSON-RPC envelope boundaries
 // — the spec requires frame-level forwarding, never byte concatenation.
 //
-// Returns nil when src closes cleanly; otherwise the underlying error.
-// Either side closing causes pumpFrames to return; the bridge handler
-// closes the peer when this returns so both halves shut down together.
+// pumpFrames returns when src.Read or dst.Write fails. Caller is responsible for closing connections.
 func pumpFrames(ctx context.Context, src, dst *websocket.Conn) error {
 	return wsbridge.PumpFrames(ctx, src, dst)
 }
