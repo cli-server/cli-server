@@ -1,0 +1,148 @@
+{{- if .Values.codexAppGateway.enabled }}
+{{- $_ := required "codexAppGateway.s3.existingSecret is required when codexAppGateway.enabled is true (k8s secret with keys: access_key_id, secret_access_key)" .Values.codexAppGateway.s3.existingSecret }}
+{{- $existingSecret := (lookup "v1" "Secret" .Release.Namespace (printf "%s-codex-app-gateway-secret" .Release.Name)) }}
+{{- $sharedSecret := (lookup "v1" "Secret" .Release.Namespace (printf "%s-codex-shared-secret" .Release.Name)) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-codex-app-gateway-secret
+  labels:
+    app: {{ .Release.Name }}-codex-app-gateway
+type: Opaque
+stringData:
+  {{- if .Values.codexAppGateway.inboundHmacSecret }}
+  inbound-hmac-secret: {{ .Values.codexAppGateway.inboundHmacSecret | quote }}
+  {{- else if $existingSecret }}
+  inbound-hmac-secret: {{ index $existingSecret.data "inbound-hmac-secret" | b64dec | quote }}
+  {{- else }}
+  inbound-hmac-secret: {{ randAlphaNum 48 | quote }}
+  {{- end }}
+---
+{{- /* Shared secret: created here (codex-app-gateway sorts before codex-exec-gateway).
+       codex-exec-gateway reads from the same secret by name lookup. */}}
+{{- $existingSharedSecret := (lookup "v1" "Secret" .Release.Namespace (printf "%s-codex-shared-secret" .Release.Name)) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-codex-shared-secret
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+type: Opaque
+stringData:
+  {{- if .Values.codexShared.capTokenHmacSecret }}
+  captoken-hmac-secret: {{ .Values.codexShared.capTokenHmacSecret | quote }}
+  {{- else if $existingSharedSecret }}
+  captoken-hmac-secret: {{ index $existingSharedSecret.data "captoken-hmac-secret" | b64dec | quote }}
+  {{- else }}
+  captoken-hmac-secret: {{ randAlphaNum 48 | quote }}
+  {{- end }}
+  {{- if .Values.codexShared.internalSharedSecret }}
+  internal-shared-secret: {{ .Values.codexShared.internalSharedSecret | quote }}
+  {{- else if $existingSharedSecret }}
+  internal-shared-secret: {{ index $existingSharedSecret.data "internal-shared-secret" | b64dec | quote }}
+  {{- else }}
+  internal-shared-secret: {{ randAlphaNum 48 | quote }}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-codex-app-gateway
+  labels:
+    app: {{ .Release.Name }}-codex-app-gateway
+spec:
+  replicas: {{ .Values.codexAppGateway.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-codex-app-gateway
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-codex-app-gateway
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      containers:
+        - name: codex-app-gateway
+          image: "{{ .Values.codexAppGateway.image.repository }}:{{ .Values.codexAppGateway.image.tag }}"
+          imagePullPolicy: {{ .Values.codexAppGateway.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.codexAppGateway.port }}
+              protocol: TCP
+          env:
+            - name: CXG_INBOUND_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-codex-app-gateway-secret
+                  key: inbound-hmac-secret
+            - name: CXG_CAPTOKEN_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-codex-shared-secret
+                  key: captoken-hmac-secret
+            - name: CXG_EXEC_GATEWAY_INTERNAL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-codex-shared-secret
+                  key: internal-shared-secret
+            - name: CXG_S3_ENDPOINT
+              value: {{ .Values.codexAppGateway.s3.endpoint | quote }}
+            - name: CXG_S3_REGION
+              value: {{ .Values.codexAppGateway.s3.region | quote }}
+            - name: CXG_S3_BUCKET
+              value: {{ .Values.codexAppGateway.s3.bucket | quote }}
+            - name: CXG_S3_PATH_STYLE
+              value: {{ .Values.codexAppGateway.s3.pathStyle | quote }}
+            - name: CXG_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.codexAppGateway.s3.existingSecret }}
+                  key: access_key_id
+            - name: CXG_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.codexAppGateway.s3.existingSecret }}
+                  key: secret_access_key
+            - name: CXG_TMP_ROOT
+              value: {{ .Values.codexAppGateway.tmpRoot | quote }}
+            - name: CXG_IDLE_SHUTDOWN
+              value: {{ .Values.codexAppGateway.idleShutdown | quote }}
+            - name: CXG_EXEC_GATEWAY_URL
+              value: "ws://{{ .Release.Name }}-codex-exec-gateway:{{ .Values.codexExecGateway.port }}"
+            - name: CXG_EXEC_GATEWAY_INTERNAL_URL
+              value: "http://{{ .Release.Name }}-codex-exec-gateway:{{ .Values.codexExecGateway.port }}"
+            {{- if .Values.codexAppGateway.logLevel }}
+            - name: CXG_LOG_LEVEL
+              value: {{ .Values.codexAppGateway.logLevel | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.codexAppGateway.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.codexAppGateway.port }}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          {{- with .Values.codexAppGateway.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-codex-app-gateway
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.codexAppGateway.port }}
+      targetPort: {{ .Values.codexAppGateway.port }}
+      protocol: TCP
+  selector:
+    app: {{ .Release.Name }}-codex-app-gateway
+{{- end }}

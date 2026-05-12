@@ -32,6 +32,31 @@ spec:
                 name: {{ .Release.Name }}
                 port:
                   number: {{ .Values.service.port }}
+          {{- if .Values.codexAppGateway.enabled }}
+          - path: /codex-app/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-codex-app-gateway
+                port:
+                  number: {{ .Values.codexAppGateway.port }}
+          {{- end }}
+          {{- if .Values.codexExecGateway.enabled }}
+          - path: /codex-exec/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-codex-exec-gateway
+                port:
+                  number: {{ .Values.codexExecGateway.port }}
+          - path: /api/codex-exec/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-codex-exec-gateway
+                port:
+                  number: {{ .Values.codexExecGateway.port }}
+          {{- end }}
     {{- if .Values.sandbox.baseDomain }}
     - host: {{ printf "*.%s" .Values.sandbox.baseDomain | quote }}
       http:

@@ -249,6 +249,68 @@ ccbroker:
   # `models.anthropicBaseUrl` / `models.anthropicAuthToken` above).
   resources: {}
 
+# codex-app-gateway: TUI-side authoritative gateway. Per-thread codex
+# app-server subprocess + ws frame proxy. Requires S3 for per-thread
+# CODEX_HOME persistence.
+codexAppGateway:
+  enabled: false
+  image:
+    repository: ghcr.io/agentserver/codex-app-gateway
+    tag: latest
+    pullPolicy: Always
+  replicaCount: 1
+  port: 8086
+  logLevel: info
+  idleShutdown: "30m"
+  tmpRoot: "/tmp/codex-app-gateway"
+  # Inbound auth secret. The token format is
+  # `<workspace_id>.<thread_id>.<HMAC-SHA256>` where the HMAC is keyed
+  # by this secret. Generated at install time if blank; supply your own
+  # for stable values across re-installs.
+  inboundHmacSecret: ""
+  # S3-compatible object store for per-thread CODEX_HOME tarballs.
+  # Required when enabled is true. Same shape as ccbroker.s3.
+  s3:
+    endpoint: ""
+    region: ""
+    bucket: ""
+    pathStyle: false
+    existingSecret: ""    # k8s secret with keys: access_key_id, secret_access_key
+  resources: {}
+
+# codex-exec-gateway: executor-side gateway. Pairs codex-exec WebSocket
+# inbounds with bridge connections from env-mcp children. Requires
+# Postgres for executor identity + workspace bindings.
+codexExecGateway:
+  enabled: false
+  image:
+    repository: ghcr.io/agentserver/codex-exec-gateway
+    tag: latest
+    pullPolicy: Always
+  replicaCount: 1
+  port: 6060
+  logLevel: info
+  database:
+    name: codexexecgateway
+    externalUrl: ""
+  resources: {}
+
+# Shared secrets between codex-app-gateway and codex-exec-gateway.
+# These MUST match across both services: cap tokens minted by app-gateway
+# are verified by exec-gateway using capTokenHmacSecret; the internal HTTP
+# calls from app-gateway to exec-gateway are authenticated with
+# internalSharedSecret.
+# Both values are auto-generated (randAlphaNum 48) and persisted via Secret
+# lookup if left empty. Supply explicit values for stable cross-reinstall
+# behaviour or when pre-sharing secrets out-of-band.
+codexShared:
+  # Cap-token HMAC secret. App-gateway mints; exec-gateway verifies.
+  # Generated if blank.
+  capTokenHmacSecret: ""
+  # Internal-API shared secret for app-gateway → exec-gateway HTTP calls
+  # (/api/exec-gateway/connected etc.). Generated if blank.
+  internalSharedSecret: ""
+
 # executor-registry: tracks local tool-executor agents and routes remote_*
 # tool calls to them over WebSocket + yamux tunnels.
 executorRegistry:
