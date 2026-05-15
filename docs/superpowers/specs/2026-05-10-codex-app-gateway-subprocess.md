@@ -1,3 +1,8 @@
+> **SUPERSEDED 2026-05-15.** The supervisor key + inbound auth model are
+> superseded by `2026-05-15-codex-app-gateway-oauth-bridge-design.md`.
+> The subprocess lifecycle, S3 round-trip, ws frame proxy, and reaper
+> sections of THIS document remain in force.
+
 # codex-app-gateway as a thin proxy around `codex app-server` subprocesses
 
 **Status:** draft (central technical claim PoC-validated 2026-05-10, see § PoC log)

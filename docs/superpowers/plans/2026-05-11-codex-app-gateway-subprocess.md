@@ -1,5 +1,11 @@
 # codex-app-gateway subprocess runtime — Implementation Plan
 
+> **PARTIALLY SUPERSEDED 2026-05-15.** Tasks that touch supervisor key or
+> inbound auth (`Identity{ThreadID}`, HMAC-only inbound) are superseded
+> by `2026-05-15-codex-app-gateway-oauth-bridge.md`. Subprocess lifecycle,
+> S3 round-trip, ws frame proxy, idle reaper tasks remain valid.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement Subsystem 2 of the codex-gateway design as a thin
