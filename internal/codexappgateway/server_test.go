@@ -3,6 +3,7 @@ package codexappgateway
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -37,8 +38,7 @@ func TestServer_WSEndpoint_HappyPath_ProxiesToFakeChild(t *testing.T) {
 	srv := makeTestServer(t)
 	defer srv.Close()
 
-	authHelper := auth.NewHMAC([]byte("test-secret"))
-	tok := authHelper.Mint("ws_a", "thr_1")
+	tok := "ast_dummytoken_anything"
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/codex-app/ws"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -60,8 +60,7 @@ func TestServer_AdminRestart_KillsSubprocess(t *testing.T) {
 	srv := makeTestServer(t)
 	defer srv.Close()
 
-	authHelper := auth.NewHMAC([]byte("test-secret"))
-	tok := authHelper.Mint("ws_b", "thr_42")
+	tok := "ast_dummytoken_anything"
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/codex-app/ws"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -73,8 +72,8 @@ func TestServer_AdminRestart_KillsSubprocess(t *testing.T) {
 	}
 	c.Close(websocket.StatusNormalClosure, "")
 
-	req, _ := http.NewRequestWithContext(ctx, "POST", srv.URL+"/admin/threads/restart",
-		strings.NewReader(`{"workspaceId":"ws_b","threadId":"thr_42"}`))
+	req, _ := http.NewRequestWithContext(ctx, "POST", srv.URL+"/admin/sessions/restart",
+		strings.NewReader(`{"workspaceId":"ws_test"}`))
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -96,14 +95,32 @@ func makeTestServer(t *testing.T) *httptest.Server {
 	sup := supervisor.NewSupervisor(supervisor.SupervisorConfig{CodexBin: bin, HomeMgr: mgr, Store: store})
 	t.Cleanup(func() { sup.ShutdownAll(context.Background()) })
 
+	// Fake agentserver: any token starting with "ast_" verifies as (u_test, ws_test).
+	asSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/internal/codex/tokens/verify" {
+			http.Error(w, "404", 404)
+			return
+		}
+		var body struct{ Token string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if !strings.HasPrefix(body.Token, "ast_") {
+			http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"user_id": "u_test", "workspace_id": "ws_test",
+		})
+	}))
+	t.Cleanup(asSrv.Close)
+
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 	srv := &Server{
-		cfg:     ServeConfig{InboundHMACSecret: []byte("test-secret")},
-		auth:    auth.NewHMAC([]byte("test-secret")),
+		cfg:     ServeConfig{},
+		auth:    auth.NewRemoteVerifier(asSrv.URL, "ignored"),
 		sup:     sup,
 		homeMgr: mgr,
 		logger:  logger,
-		buildConfig: func(_ context.Context, ws, thr string) (codexhome.ConfigInput, error) {
+		buildConfig: func(_ context.Context, ws string) (codexhome.ConfigInput, error) {
 			return codexhome.ConfigInput{
 				ModelProvider:  "p", Model: "m",
 				ModelProviders: map[string]codexhome.ModelProvider{"p": {Name: "p", BaseURL: "http://x", EnvKey: "K", WireAPI: "responses"}},

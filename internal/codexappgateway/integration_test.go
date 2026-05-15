@@ -38,14 +38,32 @@ func TestServer_RealCodexAppServer_FullRPCRoundtrip(t *testing.T) {
 	})
 	t.Cleanup(func() { sup.ShutdownAll(context.Background()) })
 
+	// Fake agentserver: any token starting with "ast_" verifies as (u_int, ws_int).
+	asSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/internal/codex/tokens/verify" {
+			http.Error(w, "404", 404)
+			return
+		}
+		var body struct{ Token string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if !strings.HasPrefix(body.Token, "ast_") {
+			http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"user_id": "u_int", "workspace_id": "ws_int",
+		})
+	}))
+	defer asSrv.Close()
+
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 	s := &Server{
-		cfg:     ServeConfig{InboundHMACSecret: []byte("int")},
-		auth:    auth.NewHMAC([]byte("int")),
+		cfg:     ServeConfig{},
+		auth:    auth.NewRemoteVerifier(asSrv.URL, "ignored"),
 		sup:     sup,
 		homeMgr: mgr,
 		logger:  logger,
-		buildConfig: func(_ context.Context, ws, thr string) (codexhome.ConfigInput, error) {
+		buildConfig: func(_ context.Context, ws string) (codexhome.ConfigInput, error) {
 			return codexhome.ConfigInput{
 				ModelProvider: "modelserver",
 				Model:         "gpt-5.5",
@@ -59,7 +77,7 @@ func TestServer_RealCodexAppServer_FullRPCRoundtrip(t *testing.T) {
 	srv := httptest.NewServer(s.Routes())
 	defer srv.Close()
 
-	tok := auth.NewHMAC([]byte("int")).Mint("ws_int", "thr_1")
+	tok := "ast_integration_token"
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/codex-app/ws"
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
