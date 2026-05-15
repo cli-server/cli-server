@@ -55,6 +55,7 @@ import { TracesTab, TRACES_PER_PAGE } from './SandboxDetail'
 import { WeixinLoginModal } from './WeixinLoginModal'
 import { TelegramConfigModal } from './TelegramConfigModal'
 import { MatrixConfigModal } from './MatrixConfigModal'
+import CodexTokensPanel from './CodexTokensPanel'
 
 export type Tab = 'overview' | 'members' | 'traces' | 'credentials' | 'settings'
 
@@ -847,6 +848,11 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
           onConnected={() => { loadChannels() }}
         />
       )}
+
+      {/* Codex Remote Access Tokens */}
+      <section className="mt-6 p-4 border rounded">
+        <CodexTokensPanel workspaceId={workspaceId} />
+      </section>
     </div>
   )
 }
