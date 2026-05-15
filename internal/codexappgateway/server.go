@@ -159,9 +159,17 @@ func (s *Server) Run(ctx context.Context, listenAddr string) error {
 }
 
 // Routes builds the chi router. Public for tests.
+//
+// Two paths serve the same handler for the inbound TUI ws upgrade:
+//   - "/"             — required by upstream codex's --remote URL parser,
+//                       which only accepts ws[s]://host:port and connects
+//                       to "/" (no path component).
+//   - "/codex-app/ws" — kept for direct in-cluster testing (curl, kubectl
+//                       port-forward) and path-based ingress setups.
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
+	r.Get("/", s.handleCodexAppWS)
 	r.Get("/codex-app/ws", s.handleCodexAppWS)
 	r.Post("/admin/sessions/restart", s.handleAdminRestart)
 	return r
