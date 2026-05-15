@@ -976,3 +976,55 @@ export async function submitOAuthConsent(
   if (!res.ok) throw new Error('Failed to submit consent')
   return res.json()
 }
+
+// Codex Token API
+
+export interface CodexToken {
+  id: string
+  name: string
+  workspace_id: string
+  created_at: string
+  expires_at: string
+  last_used_at?: string
+  revoked: boolean
+  revoked_at?: string
+}
+
+export interface MintCodexTokenRequest {
+  workspace_id: string
+  name: string
+  ttl_days?: number
+}
+
+export interface MintCodexTokenResponse {
+  id: string
+  token: string
+  name: string
+  workspace_id: string
+  expires_at: string
+  created_at: string
+}
+
+export async function listCodexTokens(workspaceId: string): Promise<CodexToken[]> {
+  const res = await fetch(`/api/codex/tokens?workspace_id=${encodeURIComponent(workspaceId)}`)
+  if (!res.ok) throw new Error('Failed to list codex tokens')
+  return res.json()
+}
+
+export async function mintCodexToken(req: MintCodexTokenRequest): Promise<MintCodexTokenResponse> {
+  const res = await fetch('/api/codex/tokens', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Failed to mint codex token')
+  }
+  return res.json()
+}
+
+export async function revokeCodexToken(id: string): Promise<void> {
+  const res = await fetch(`/api/codex/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to revoke codex token')
+}
