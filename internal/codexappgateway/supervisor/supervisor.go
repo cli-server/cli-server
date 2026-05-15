@@ -11,10 +11,11 @@ import (
 	"github.com/agentserver/agentserver/internal/codexappgateway/codexhome"
 )
 
-// Key identifies one (workspace, thread) subprocess slot.
+// Key identifies one workspace's codex app-server subprocess. The
+// codex-app-server process internally manages multiple threads via its
+// own JSON-RPC protocol; the gateway does not see thread IDs.
 type Key struct {
 	WorkspaceID string
-	ThreadID    string
 }
 
 // SupervisorConfig holds the static dependencies.

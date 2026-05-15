@@ -18,7 +18,7 @@ func TestReaper_RetiresIdleSubprocess(t *testing.T) {
 	defer cancel()
 
 	build := func() (codexhome.ConfigInput, error) { return defaultConfigInput(), nil }
-	if _, err := sup.EnsureSubprocess(ctx, Key{WorkspaceID: "ws_a", ThreadID: "thr_1"}, build); err != nil {
+	if _, err := sup.EnsureSubprocess(ctx, Key{WorkspaceID: "ws_a"}, build); err != nil {
 		t.Fatal(err)
 	}
 
@@ -50,7 +50,7 @@ func TestReaper_KeepsActiveSubprocess(t *testing.T) {
 	defer cancel()
 
 	build := func() (codexhome.ConfigInput, error) { return defaultConfigInput(), nil }
-	key := Key{WorkspaceID: "ws_a", ThreadID: "thr_keep"}
+	key := Key{WorkspaceID: "ws_a"}
 	if _, err := sup.EnsureSubprocess(ctx, key, build); err != nil {
 		t.Fatal(err)
 	}
