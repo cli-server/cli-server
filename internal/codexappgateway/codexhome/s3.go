@@ -26,20 +26,19 @@ type ObjectStore interface {
 	Delete(ctx context.Context, key string) error
 }
 
-// S3Backend round-trips a single (workspace, thread) CODEX_HOME tree.
+// S3Backend round-trips a single workspace CODEX_HOME tree.
 type S3Backend struct {
 	store       ObjectStore
 	workspaceID string
-	threadID    string
 }
 
-func NewS3Backend(store ObjectStore, workspaceID, threadID string) *S3Backend {
-	return &S3Backend{store: store, workspaceID: workspaceID, threadID: threadID}
+func NewS3Backend(store ObjectStore, workspaceID string) *S3Backend {
+	return &S3Backend{store: store, workspaceID: workspaceID}
 }
 
-// Key is the S3 key. Exposed so callers (and tests) can introspect.
+// Key is the S3 object key. New layout: codex-app-gateway/<workspace>.tar.gz.
 func (b *S3Backend) Key() string {
-	return fmt.Sprintf("codex-app-gateway/%s/%s.tar.gz", b.workspaceID, b.threadID)
+	return fmt.Sprintf("codex-app-gateway/%s.tar.gz", b.workspaceID)
 }
 
 // Upload tars+gzips the directory tree at src and writes it to S3.

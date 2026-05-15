@@ -40,13 +40,12 @@ type Manager struct{ root string }
 
 func NewManager(root string) *Manager { return &Manager{root: root} }
 
-// NewTmpDir creates `<root>/<workspaceID>/<threadID>/` with mode 0700.
-// Idempotent: returns the existing path if already present.
-func (m *Manager) NewTmpDir(workspaceID, threadID string) (string, error) {
-	if workspaceID == "" || threadID == "" {
-		return "", fmt.Errorf("codexhome: empty workspace or thread id")
+// NewTmpDir creates `<root>/<workspaceID>/` with mode 0700. Idempotent.
+func (m *Manager) NewTmpDir(workspaceID string) (string, error) {
+	if workspaceID == "" {
+		return "", fmt.Errorf("codexhome: empty workspace id")
 	}
-	d := filepath.Join(m.root, workspaceID, threadID)
+	d := filepath.Join(m.root, workspaceID)
 	if err := os.MkdirAll(d, 0o700); err != nil {
 		return "", fmt.Errorf("mkdir %s: %w", d, err)
 	}

@@ -44,7 +44,7 @@ func (f *fakeS3) Delete(_ context.Context, key string) error {
 func TestS3RoundTrip_TarUntarPreservesContents(t *testing.T) {
 	root := t.TempDir()
 	m := NewManager(root)
-	src, err := m.NewTmpDir("ws_a", "thr_1")
+	src, err := m.NewTmpDir("ws_a")
 	if err != nil {
 		t.Fatalf("NewTmpDir: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestS3RoundTrip_TarUntarPreservesContents(t *testing.T) {
 	}
 
 	store := newFakeS3()
-	backend := NewS3Backend(store, "ws_a", "thr_1")
+	backend := NewS3Backend(store, "ws_a")
 	if err := backend.Upload(context.Background(), src); err != nil {
 		t.Fatalf("Upload: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestS3RoundTrip_TarUntarPreservesContents(t *testing.T) {
 	}
 
 	// Recreate empty dir; download should re-populate.
-	dst := filepath.Join(t.TempDir(), "ws_a", "thr_1")
+	dst := filepath.Join(t.TempDir(), "ws_a")
 	if err := os.MkdirAll(dst, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestS3RoundTrip_TarUntarPreservesContents(t *testing.T) {
 
 func TestS3Backend_Download_NotFound_IsRecognizable(t *testing.T) {
 	store := newFakeS3()
-	backend := NewS3Backend(store, "ws_a", "thr_missing")
+	backend := NewS3Backend(store, "ws_a")
 	err := backend.Download(context.Background(), t.TempDir())
 	if !errors.Is(err, ErrObjectNotFound) {
 		t.Fatalf("want ErrObjectNotFound, got %v", err)

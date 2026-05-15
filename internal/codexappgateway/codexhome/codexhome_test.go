@@ -10,11 +10,11 @@ import (
 func TestManager_NewTmpDir_LayoutAndPermissions(t *testing.T) {
 	root := t.TempDir()
 	m := NewManager(root)
-	d, err := m.NewTmpDir("ws_a", "thr_1")
+	d, err := m.NewTmpDir("ws_a")
 	if err != nil {
 		t.Fatalf("NewTmpDir: %v", err)
 	}
-	if !strings.HasPrefix(d, filepath.Join(root, "ws_a", "thr_1")) {
+	if !strings.HasPrefix(d, filepath.Join(root, "ws_a")) {
 		t.Errorf("path = %s", d)
 	}
 	st, err := os.Stat(d)
@@ -32,7 +32,7 @@ func TestManager_NewTmpDir_LayoutAndPermissions(t *testing.T) {
 func TestManager_RemoveTmpDir(t *testing.T) {
 	root := t.TempDir()
 	m := NewManager(root)
-	d, err := m.NewTmpDir("ws_a", "thr_1")
+	d, err := m.NewTmpDir("ws_a")
 	if err != nil {
 		t.Fatalf("NewTmpDir: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestRenderConfigTOML_RejectsActiveProviderNotInMap(t *testing.T) {
 func TestManager_WriteConfig_ProducesUsableTOML(t *testing.T) {
 	root := t.TempDir()
 	m := NewManager(root)
-	d, _ := m.NewTmpDir("ws_a", "thr_1")
+	d, _ := m.NewTmpDir("ws_a")
 	cfg := ConfigInput{
 		ModelProvider: "p",
 		Model:         "m",
