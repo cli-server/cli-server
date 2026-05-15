@@ -12,6 +12,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -22,13 +23,13 @@ import (
 
 // Identity is what a verified token decodes to.
 type Identity struct {
+	UserID      string
 	WorkspaceID string
-	ThreadID    string
 }
 
 // Authenticator is the seam for inbound auth. Phase-1 impl is HMAC.
 type Authenticator interface {
-	Verify(token string) (Identity, error)
+	Verify(ctx context.Context, token string) (Identity, error)
 }
 
 // HMAC is the phase-1 Authenticator.
@@ -53,30 +54,20 @@ func (a *HMAC) Mint(workspaceID, threadID string) string {
 //
 // Token format: <workspace_id>.<thread_id>.<hex-hmac>
 //
-// The sig is always the last dot-separated field. The workspace_id is
-// always the first dot-separated field in the prefix (everything before
-// the sig); the thread_id is everything between the first and last dots.
-// This means thread_id may contain dots but workspace_id may not.
-//
-// Last dot separates the sig from the (workspace_id, thread_id, ...) prefix.
-// We split into "head" and "sig" instead of 3 fixed parts so thread
-// ids that themselves contain dots verify correctly.
-func (a *HMAC) Verify(token string) (Identity, error) {
-	lastDot := strings.LastIndex(token, ".")
-	if lastDot < 0 || lastDot == 0 || lastDot == len(token)-1 {
+// Expects exactly 3 dot-separated parts. The legacy threadID portion
+// (parts[1]) is intentionally discarded — Phase 2 carries identity via
+// the UserID field populated by RemoteVerifier, not by the token payload.
+func (a *HMAC) Verify(_ context.Context, token string) (Identity, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 		return Identity{}, errors.New("auth: malformed token")
 	}
-	head, sig := token[:lastDot], token[lastDot+1:]
-	sep := strings.IndexByte(head, '.')
-	if sep < 0 || sep == 0 || sep == len(head)-1 {
-		return Identity{}, errors.New("auth: malformed token")
-	}
-	workspaceID, threadID := head[:sep], head[sep+1:]
-	expected := a.Mint(workspaceID, threadID)
-	if !hmac.Equal([]byte(expected), []byte(workspaceID+"."+threadID+"."+sig)) {
+	expected := a.Mint(parts[0], parts[1])
+	if !hmac.Equal([]byte(expected), []byte(token)) {
 		return Identity{}, errors.New("auth: signature mismatch")
 	}
-	return Identity{WorkspaceID: workspaceID, ThreadID: threadID}, nil
+	// Phase-2: parts[1] (legacy threadID) is intentionally discarded.
+	return Identity{WorkspaceID: parts[0]}, nil
 }
 
 // ExtractBearer pulls the token out of `Authorization: Bearer <tok>`.

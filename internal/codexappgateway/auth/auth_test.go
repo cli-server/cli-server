@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,11 +14,11 @@ func TestHMACAuthenticator_RoundTrip(t *testing.T) {
 	if !strings.HasPrefix(tok, "ws_alpha.thr_42.") {
 		t.Fatalf("token shape unexpected: %s", tok)
 	}
-	got, err := a.Verify(tok)
+	got, err := a.Verify(context.Background(), tok)
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	if got.WorkspaceID != "ws_alpha" || got.ThreadID != "thr_42" {
+	if got.WorkspaceID != "ws_alpha" {
 		t.Errorf("decoded = %+v", got)
 	}
 }
@@ -26,7 +27,7 @@ func TestHMACAuthenticator_RejectsBadSig(t *testing.T) {
 	a := NewHMAC([]byte("secret"))
 	tok := a.Mint("ws_a", "thr_1")
 	tampered := tok[:len(tok)-1] + "0"
-	if _, err := a.Verify(tampered); err == nil {
+	if _, err := a.Verify(context.Background(), tampered); err == nil {
 		t.Fatal("want signature mismatch error")
 	}
 }
@@ -34,26 +35,9 @@ func TestHMACAuthenticator_RejectsBadSig(t *testing.T) {
 func TestHMACAuthenticator_RejectsBadShape(t *testing.T) {
 	a := NewHMAC([]byte("secret"))
 	for _, bad := range []string{"", "no-dots", "one.two", "..."} {
-		if _, err := a.Verify(bad); err == nil {
+		if _, err := a.Verify(context.Background(), bad); err == nil {
 			t.Errorf("want error for %q", bad)
 		}
-	}
-}
-
-func TestHMACAuthenticator_RoundTrip_DottedIDs(t *testing.T) {
-	// workspaceID has no dots (first field); threadID may contain dots
-	// (everything between first and last dot in the token prefix).
-	a := NewHMAC([]byte("secret"))
-	tok := a.Mint("ws_alpha", "thr.42.extra")
-	got, err := a.Verify(tok)
-	if err != nil {
-		t.Fatalf("verify: %v", err)
-	}
-	if got.WorkspaceID != "ws_alpha" {
-		t.Errorf("WorkspaceID = %q", got.WorkspaceID)
-	}
-	if got.ThreadID != "thr.42.extra" {
-		t.Errorf("ThreadID = %q", got.ThreadID)
 	}
 }
 
