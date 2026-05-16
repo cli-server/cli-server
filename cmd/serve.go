@@ -228,6 +228,12 @@ var serveCmd = &cobra.Command{
 		srv.CCBrokerURL = os.Getenv("CC_BROKER_URL")
 		srv.ExecutorRegistryURL = os.Getenv("EXECUTOR_REGISTRY_URL")
 
+		// CODEX_EXEC_GATEWAY_INTERNAL_URL e.g. "http://release-codex-exec-gateway.namespace.svc:6060"
+		if u := os.Getenv("CODEX_EXEC_GATEWAY_INTERNAL_URL"); u != "" {
+			srv.ExecutorsClient = server.NewExecutorsClient(u, os.Getenv("INTERNAL_API_SECRET"))
+		}
+		srv.CodexExecGatewayPublicHost = os.Getenv("CODEX_EXEC_GATEWAY_PUBLIC_HOST")
+
 		// Hydra OAuth2 for agent Device Flow.
 		hydraAdminURL := os.Getenv("HYDRA_ADMIN_URL")
 		hydraPublicURL := os.Getenv("HYDRA_PUBLIC_URL")

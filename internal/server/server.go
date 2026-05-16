@@ -406,6 +406,11 @@ func (s *Server) Router() http.Handler {
 		// Agent interaction audit trail
 		r.Get("/api/workspaces/{wid}/agent-interactions", s.handleListInteractions)
 
+		// Codex remote executors (per-workspace).
+		r.Post("/api/workspaces/{wid}/executors", s.handleRegisterExecutor)
+		r.Get("/api/workspaces/{wid}/executors", s.handleListExecutors)
+		r.Delete("/api/workspaces/{wid}/executors/{exe_id}", s.handleUnbindExecutor)
+
 		// Admin routes
 		r.Route("/api/admin", func(r chi.Router) {
 			r.Use(s.requireAdmin)
