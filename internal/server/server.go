@@ -82,6 +82,10 @@ type Server struct {
 	EncryptionKey    []byte // AES-256 key for credential_bindings auth_blob
 	CredproxyPublicURL string // URL sandboxes use to reach credentialproxy
 
+	// Codex exec gateway
+	ExecutorsClient            *ExecutorsClient
+	CodexExecGatewayPublicHost string // e.g. "codex-exec.example.com" — used to compose connect commands
+
 	// In-memory pending device code flows (OIDC credential creation).
 	deviceFlows   map[string]*pendingDeviceFlow
 	deviceFlowsMu sync.Mutex
