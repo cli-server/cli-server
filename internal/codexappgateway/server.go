@@ -47,6 +47,12 @@ type modelserverTokenFetcher interface {
 	FetchToken(ctx context.Context, workspaceID string) (string, error)
 }
 
+// maxWSFrameBytes bounds each ws read on the user-facing and
+// app-server-facing connections. 64 MiB is well above any legitimate
+// codex frame (conversation history + tool output) while still
+// preventing a runaway or hostile client from pinning gateway memory.
+const maxWSFrameBytes int64 = 64 << 20
+
 // NewServer wires up the production server. selfBin is the absolute path
 // to the codex-app-gateway binary itself, used as the `command =` for
 // each per-executor `[mcp_servers.exe_*]` entry (codex spawns it as the
@@ -223,6 +229,12 @@ func (s *Server) handleCodexAppWS(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("ws accept failed", "err", err)
 		return
 	}
+	// codex client streams large frames (tool listings, prompts, file
+	// contents); nhooyr's 32 KiB default would slam the connection shut
+	// mid-session with "read limited at 32769 bytes". 64 MiB is well
+	// above any legitimate codex frame and still bounds a runaway
+	// client.
+	userWS.SetReadLimit(maxWSFrameBytes)
 	defer userWS.Close(websocket.StatusNormalClosure, "client closing")
 
 	key := supervisor.Key{WorkspaceID: id.WorkspaceID}
@@ -244,6 +256,7 @@ func (s *Server) handleCodexAppWS(w http.ResponseWriter, r *http.Request) {
 		_ = userWS.Close(websocket.StatusInternalError, "subprocess dial failed")
 		return
 	}
+	childWS.SetReadLimit(maxWSFrameBytes)
 	defer childWS.Close(websocket.StatusNormalClosure, "gateway closing")
 
 	s.sup.Touch(key)
