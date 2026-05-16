@@ -23,13 +23,14 @@ import (
 //   503 — exe_id not in registry (no inbound connection)
 func (s *Server) handleBridge(w http.ResponseWriter, r *http.Request) {
 	exeID := chi.URLParam(r, "exe_id")
-	// Token accepted in either Authorization: Bearer <tok> (what the
-	// env-mcp child sends) OR ?token=<tok> URL query (legacy / dev /
-	// test fixtures). Header takes precedence when both are set.
-	token := r.URL.Query().Get("token")
-	if authz := r.Header.Get("Authorization"); strings.HasPrefix(authz, "Bearer ") {
-		token = strings.TrimPrefix(authz, "Bearer ")
+	// /bridge is only ever dialed by the env-mcp child binary, which sends
+	// Authorization: Bearer <cap-token>. No URL-query fallback.
+	authz := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authz, "Bearer ") {
+		http.Error(w, "missing Bearer", http.StatusUnauthorized)
+		return
 	}
+	token := strings.TrimPrefix(authz, "Bearer ")
 	if exeID == "" || token == "" {
 		http.Error(w, "missing parameters", http.StatusBadRequest)
 		return

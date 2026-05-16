@@ -16,6 +16,15 @@ import (
 	"nhooyr.io/websocket"
 )
 
+// dialBridge dials the /bridge endpoint with the cap-token in the
+// Authorization: Bearer header (matching the env-mcp child's wire shape).
+func dialBridge(ctx context.Context, baseURL, exeID, tok string) (*websocket.Conn, *http.Response, error) {
+	wsURL := "ws" + baseURL[len("http"):] + "/bridge/" + exeID
+	return websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + tok}},
+	})
+}
+
 func mintBridgeToken(secret []byte, p CapPayload) string {
 	header := []byte(`{"alg":"HS256","typ":"CXG"}`)
 	pj, _ := json.Marshal(p)
@@ -68,8 +77,7 @@ func newBridgeNoDBServer(t *testing.T) (*httptest.Server, *Server) {
 
 func TestBridge_Rejects401OnBadToken(t *testing.T) {
 	hs, _ := newBridgeNoDBServer(t)
-	url := "ws" + hs.URL[len("http"):] + "/bridge/exe_x?token=garbage"
-	_, resp, err := websocket.Dial(context.Background(), url, nil)
+	_, resp, err := dialBridge(context.Background(), hs.URL, "exe_x", "garbage")
 	if err == nil {
 		t.Fatal("dial should fail")
 	}
@@ -85,8 +93,7 @@ func TestBridge_Rejects403WhenExeIDNotInAllowList(t *testing.T) {
 		TurnID: "trn_1", WorkspaceID: "ws_1", ExeIDs: []string{"exe_other"},
 		IAT: now, EXP: now + 60,
 	})
-	url := "ws" + hs.URL[len("http"):] + "/bridge/exe_target?token=" + tok
-	_, resp, err := websocket.Dial(context.Background(), url, nil)
+	_, resp, err := dialBridge(context.Background(), hs.URL, "exe_target", tok)
 	if err == nil {
 		t.Fatal("dial should fail")
 	}
@@ -103,8 +110,7 @@ func TestBridge_Rejects503WhenExecutorOffline(t *testing.T) {
 		IAT: now, EXP: now + 60,
 	})
 	// exe_offline is not in the registry → 503
-	url := "ws" + hs.URL[len("http"):] + "/bridge/exe_offline?token=" + tok
-	_, resp, err := websocket.Dial(context.Background(), url, nil)
+	_, resp, err := dialBridge(context.Background(), hs.URL, "exe_offline", tok)
 	if err == nil {
 		t.Fatal("dial should fail")
 	}
@@ -124,8 +130,7 @@ func TestBridge_RejectsRevokedTurn(t *testing.T) {
 		TurnID: "trn_revoked", WorkspaceID: "ws_1", ExeIDs: []string{"exe_rev"},
 		IAT: now, EXP: now + 60,
 	})
-	url := "ws" + hs.URL[len("http"):] + "/bridge/exe_rev?token=" + tok
-	_, resp, err := websocket.Dial(context.Background(), url, nil)
+	_, resp, err := dialBridge(context.Background(), hs.URL, "exe_rev", tok)
 	if err == nil {
 		t.Fatal("dial should fail")
 	}
@@ -150,8 +155,7 @@ func TestBridge_Returns409WhenAnotherSessionActive(t *testing.T) {
 		TurnID: "trn_2", WorkspaceID: "ws_1", ExeIDs: []string{"exe_409"},
 		IAT: now, EXP: now + 60,
 	})
-	url := "ws" + hs.URL[len("http"):] + "/bridge/exe_409?token=" + tok
-	_, resp, err := websocket.Dial(context.Background(), url, nil)
+	_, resp, err := dialBridge(context.Background(), hs.URL, "exe_409", tok)
 	if err == nil {
 		t.Fatal("dial should fail when another bridge session is active")
 	}
@@ -170,8 +174,7 @@ func TestBridge_PairsAndForwardsBidirectional(t *testing.T) {
 		TurnID: "trn_1", WorkspaceID: "ws_1", ExeIDs: []string{"exe_pair"},
 		IAT: now, EXP: now + 60,
 	})
-	url := "ws" + hs.URL[len("http"):] + "/bridge/exe_pair?token=" + tok
-	bridge, _, err := websocket.Dial(context.Background(), url, nil)
+	bridge, _, err := dialBridge(context.Background(), hs.URL, "exe_pair", tok)
 	if err != nil {
 		t.Fatalf("bridge dial: %v", err)
 	}
@@ -217,10 +220,8 @@ func TestBridge_CloseFromBridgeSidePropagates(t *testing.T) {
 		TurnID: "trn_1", WorkspaceID: "ws_1", ExeIDs: []string{"exe_close1"},
 		IAT: now, EXP: now + 60,
 	})
-	url := "ws" + hs.URL[len("http"):] + "/bridge/exe_close1?token=" + tok
-
 	beforeG := runtime.NumGoroutine()
-	bridge, _, err := websocket.Dial(context.Background(), url, nil)
+	bridge, _, err := dialBridge(context.Background(), hs.URL, "exe_close1", tok)
 	if err != nil {
 		t.Fatalf("bridge dial: %v", err)
 	}
@@ -250,8 +251,7 @@ func TestBridge_CloseFromInboundSidePropagates(t *testing.T) {
 		TurnID: "trn_1", WorkspaceID: "ws_1", ExeIDs: []string{"exe_close2"},
 		IAT: now, EXP: now + 60,
 	})
-	url := "ws" + hs.URL[len("http"):] + "/bridge/exe_close2?token=" + tok
-	bridge, _, err := websocket.Dial(context.Background(), url, nil)
+	bridge, _, err := dialBridge(context.Background(), hs.URL, "exe_close2", tok)
 	if err != nil {
 		t.Fatalf("bridge dial: %v", err)
 	}
@@ -284,8 +284,7 @@ func TestBridge_E2EByteFidelity(t *testing.T) {
 		TurnID: "trn_1", WorkspaceID: "ws_1", ExeIDs: []string{"exe_e2e"},
 		IAT: now, EXP: now + 60,
 	})
-	url := "ws" + hs.URL[len("http"):] + "/bridge/exe_e2e?token=" + tok
-	bridge, _, err := websocket.Dial(context.Background(), url, nil)
+	bridge, _, err := dialBridge(context.Background(), hs.URL, "exe_e2e", tok)
 	if err != nil {
 		t.Fatalf("bridge dial: %v", err)
 	}
