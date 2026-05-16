@@ -39,9 +39,12 @@ type FileOp struct {
 
 // PatchHunk is one @@-delimited block in an Update File entry.
 // Lines are stored in their original order so the application step
-// can reconstruct the modified file.
+// can reconstruct the modified file. Context (when non-empty) is the
+// "@@ <text>" anchor that the applier locates first; this matters
+// when the body context appears in multiple places in the source.
 type PatchHunk struct {
-	Lines []HunkLine
+	Context string
+	Lines   []HunkLine
 }
 
 type HunkLineKind int
@@ -239,13 +242,17 @@ func parseUpdateFile(lines []string, start, end int) (FileOp, int, error) {
 func parseUpdateChunk(lines []string, start, end int, allowMissingContext bool) (PatchHunk, int, error) {
 	i := start
 	first := strings.TrimRight(lines[i], "\r")
+	var contextAnchor string
 	switch {
 	case first == emptyChangeContext:
 		i++
 	case strings.HasPrefix(first, changeContextMarker):
-		// The "@@ <text>" header is informational (used by humans/models to
-		// locate position). It carries no semantic value for application
-		// since context lines below are required to match byte-for-byte.
+		// The "@@ <text>" header anchors the hunk: ApplyHunks must locate
+		// this text in the source and advance the cursor past it before
+		// matching the body. The Rust reference does the same — without
+		// it, the same context-body in two places would always patch the
+		// FIRST occurrence even when the model meant the second.
+		contextAnchor = strings.TrimSpace(strings.TrimPrefix(first, changeContextMarker))
 		i++
 	default:
 		if !allowMissingContext {
@@ -292,7 +299,7 @@ func parseUpdateChunk(lines []string, start, end int, allowMissingContext bool) 
 			}
 			// Unknown leading char on a non-empty hunk means we walked
 			// into the next hunk's territory. Stop without consuming.
-			return PatchHunk{Lines: hl}, i - start, nil
+			return PatchHunk{Context: contextAnchor, Lines: hl}, i - start, nil
 		}
 		i++
 	}
@@ -300,7 +307,7 @@ func parseUpdateChunk(lines []string, start, end int, allowMissingContext bool) 
 	if len(hl) == 0 {
 		return PatchHunk{}, 0, parseErr(start+1, "Update hunk has no body lines")
 	}
-	return PatchHunk{Lines: hl}, i - start, nil
+	return PatchHunk{Context: contextAnchor, Lines: hl}, i - start, nil
 }
 
 // splitLines splits on '\n' and preserves an empty final element if the
@@ -329,6 +336,29 @@ func ApplyHunks(source string, hunks []PatchHunk) (string, error) {
 	pos := 0 // cursor into srcLines
 	var out []string
 	for hi, h := range hunks {
+		// If the hunk carries an "@@ <text>" anchor, locate that line
+		// first and emit everything between the prior cursor and the
+		// anchor untouched. Matches the Rust reference's two-stage
+		// search; disambiguates when the body context appears in
+		// multiple places (e.g. two functions sharing a `} else {`).
+		if h.Context != "" {
+			anchorIdx := -1
+			for j := pos; j < len(srcLines); j++ {
+				if strings.TrimSpace(srcLines[j]) == h.Context ||
+					strings.Contains(srcLines[j], h.Context) {
+					anchorIdx = j
+					break
+				}
+			}
+			if anchorIdx == -1 {
+				return "", fmt.Errorf("apply_patch: hunk %d anchor %q not found in source from line %d", hi+1, h.Context, pos+1)
+			}
+			// Emit everything from pos through the anchor untouched; the
+			// body search resumes from the line *after* the anchor.
+			out = append(out, srcLines[pos:anchorIdx+1]...)
+			pos = anchorIdx + 1
+		}
+
 		// Build the "old" sequence (context + removed) and the "new"
 		// sequence (context + added), preserving relative order.
 		var oldSeq []string
@@ -369,7 +399,6 @@ func ApplyHunks(source string, hunks []PatchHunk) (string, error) {
 			}
 		}
 		if matchIdx == -1 {
-			// Identify the first mismatched line for a better error.
 			return "", fmt.Errorf("apply_patch: hunk %d context did not match source (looking for %q starting at source line %d)", hi+1, oldSeq[0], pos+1)
 		}
 

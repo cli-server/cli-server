@@ -34,7 +34,7 @@ func TestRevokeTurn_AddsToSet(t *testing.T) {
 }
 
 func TestRevokeTurn_RejectsBadAuth(t *testing.T) {
-	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("test-hmac"), InternalSharedSecret: "test-internal"}, nil)
+	srv, err := newServerNoStoreForTesting(Config{CapTokenHMACSecret: []byte("test-hmac"), InternalSharedSecret: "test-internal"})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestRevokeTurn_RejectsBadAuth(t *testing.T) {
 }
 
 func TestRevokeTurn_BadJSON(t *testing.T) {
-	srv, err := NewServer(Config{CapTokenHMACSecret: []byte("test-hmac"), InternalSharedSecret: "test-internal"}, nil)
+	srv, err := newServerNoStoreForTesting(Config{CapTokenHMACSecret: []byte("test-hmac"), InternalSharedSecret: "test-internal"})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

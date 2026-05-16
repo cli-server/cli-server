@@ -70,10 +70,9 @@ func connectInbound(t *testing.T, srv *Server, baseURL, exeID string) *websocket
 func newBridgeNoDBServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
 	cfg := Config{CapTokenHMACSecret: []byte("k"), InternalSharedSecret: "s"}
-	// NewServer accepts a nil store; the bridge auth paths don't call it.
-	srv, err := NewServer(cfg, nil)
+	srv, err := newServerNoStoreForTesting(cfg)
 	if err != nil {
-		t.Fatalf("NewServer: %v", err)
+		t.Fatalf("newServerNoStoreForTesting: %v", err)
 	}
 	hs := httptest.NewServer(srv.Routes())
 	t.Cleanup(hs.Close)

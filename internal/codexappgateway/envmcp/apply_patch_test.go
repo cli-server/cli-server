@@ -76,12 +76,12 @@ func TestApplyPatchParse(t *testing.T) {
 				Kind: OpUpdate,
 				Path: "m.go",
 				Hunks: []PatchHunk{
-					{Lines: []HunkLine{
+					{Context: "func A():", Lines: []HunkLine{
 						{Kind: HunkContext, Text: "a()"},
 						{Kind: HunkRemove, Text: "old1"},
 						{Kind: HunkAdd, Text: "new1"},
 					}},
-					{Lines: []HunkLine{
+					{Context: "func B():", Lines: []HunkLine{
 						{Kind: HunkContext, Text: "b()"},
 						{Kind: HunkRemove, Text: "old2"},
 						{Kind: HunkAdd, Text: "new2"},
@@ -209,15 +209,17 @@ func TestApplyPatchHunksApply(t *testing.T) {
 			want: "package a\nvar x = 2\nfunc F() {}\n",
 		},
 		{
-			name:   "multi-hunk in order",
+			// Two hunks in order, no @@ anchors (empty headers). Applied
+			// sequentially against the source.
+			name:   "multi-hunk in order without anchors",
 			source: "a()\nold1\nfiller\nb()\nold2\n",
 			patch: `*** Begin Patch
 *** Update File: m.go
-@@ first
+@@
  a()
 -old1
 +new1
-@@ second
+@@
  b()
 -old2
 +new2
@@ -261,6 +263,36 @@ func TestApplyPatchHunksApply(t *testing.T) {
 `,
 			// Only first "foo" replaced; subsequent foo stays.
 			want: "x\nFOO\ny\nfoo\nz\n",
+		},
+		{
+			// Two functions share the body context "    return x" but the
+			// patch's @@ anchor names func bar() — without anchor support,
+			// the applier would silently edit foo().
+			name: "@@ anchor disambiguates between duplicate bodies",
+			source: "func foo() {\n    x := 1\n    return x\n}\nfunc bar() {\n    x := 2\n    return x\n}\n",
+			patch: `*** Begin Patch
+*** Update File: f.go
+@@ func bar() {
+     x := 2
+-    return x
++    return x * 10
+ }
+*** End Patch
+`,
+			want: "func foo() {\n    x := 1\n    return x\n}\nfunc bar() {\n    x := 2\n    return x * 10\n}\n",
+		},
+		{
+			name:    "@@ anchor not found in source errors",
+			source:  "func foo() {\n    return\n}\n",
+			patch: `*** Begin Patch
+*** Update File: f.go
+@@ func nonexistent() {
+     return
+-    return
++    return 1
+*** End Patch
+`,
+			wantErr: "anchor",
 		},
 	}
 

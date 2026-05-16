@@ -66,6 +66,9 @@ func (t *ReadFileTool) Call(ctx context.Context, raw json.RawMessage) (MCPCallTo
 	if err != nil {
 		return errResult(fmt.Sprintf("read_file base64: %v", err)), nil
 	}
+	if a.Offset < 0 {
+		a.Offset = 0
+	}
 	if a.Offset > 0 {
 		if a.Offset >= len(data) {
 			data = nil

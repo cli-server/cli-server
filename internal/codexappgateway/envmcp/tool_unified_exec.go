@@ -156,7 +156,7 @@ var writeStdinSchema = json.RawMessage(`{
   "properties": {
     "env_id": {"type": "string"},
     "session_id": {"type": "string"},
-    "data": {"type": "string", "description": "UTF-8 text or binary; encoded base64-on-wire transparently"}
+    "data": {"type": "string", "description": "UTF-8 text written to the process's stdin. Trailing newlines must be included explicitly."}
   },
   "required": ["env_id", "session_id", "data"]
 }`)

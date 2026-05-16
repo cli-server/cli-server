@@ -12,7 +12,9 @@ import (
 )
 
 // Server bundles the chi router with its dependencies.
-// store may be nil for smoke tests that don't exercise DB paths; registry and revoked are always constructed.
+// Server wires the routes for codex-exec-gateway. Production must
+// always be constructed with a real *Store; tests that exercise only
+// auth-rejection paths may use newServerNoStoreForTesting.
 type Server struct {
 	config   Config
 	store    *Store
@@ -21,14 +23,39 @@ type Server struct {
 	logger   *slog.Logger
 }
 
+// NewServer is the production constructor. Refuses a nil store so a
+// misconfigured deploy can't silently bypass the /bridge ownership
+// check (which falls back to "skip + warn" when store is nil for the
+// sake of test wiring).
 func NewServer(cfg Config, store *Store) (*Server, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+	if store == nil {
+		return nil, fmt.Errorf("codexexecgateway: store is required")
+	}
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	return &Server{
+		config:   cfg,
+		store:    store,
+		registry: NewConnRegistry(),
+		revoked:  NewRevokedSet(10000),
+		logger:   logger,
+	}, nil
+}
+
+// newServerNoStoreForTesting constructs a Server with a nil store. ONLY
+// for tests in this package that exercise routes which fail before
+// reaching the store. The /bridge handler logs an explicit warning and
+// skips the workspace-ownership check when store is nil.
+func newServerNoStoreForTesting(cfg Config) (*Server, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	return &Server{
 		config:   cfg,
-		store:    store,
+		store:    nil,
 		registry: NewConnRegistry(),
 		revoked:  NewRevokedSet(10000),
 		logger:   logger,

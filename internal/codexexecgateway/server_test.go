@@ -8,11 +8,11 @@ import (
 )
 
 func TestCodexExec_Register_RequiresInternalSecret(t *testing.T) {
-	srv, err := NewServer(Config{
+	srv, err := newServerNoStoreForTesting(Config{
 		AgentserverInternalSecret: "s3cret",
 		CapTokenHMACSecret:        []byte("k"),
 		InternalSharedSecret:      "is",
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestServer_HealthZ(t *testing.T) {
 		CapTokenHMACSecret:   []byte("test-hmac-key"),
 		InternalSharedSecret: "test-internal-secret",
 	}
-	srv, err := NewServer(cfg, nil)
+	srv, err := newServerNoStoreForTesting(cfg)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
