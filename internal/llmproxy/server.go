@@ -44,7 +44,20 @@ func (s *Server) Routes() http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// Anthropic API proxy (all /v1/* paths).
+	// OpenAI-compat routes go to handleOpenAIProxy. Mounted FIRST so
+	// chi's longest-prefix wins doesn't accidentally route them into
+	// the catchall Anthropic /v1/* below. Anthropic and OpenAI happen
+	// to use disjoint /v1 subpaths, so we can multiplex by exact route.
+	r.HandleFunc("/v1/responses", s.handleOpenAIProxy)
+	r.HandleFunc("/v1/responses/*", s.handleOpenAIProxy)
+	r.HandleFunc("/v1/chat/completions", s.handleOpenAIProxy)
+	r.HandleFunc("/v1/embeddings", s.handleOpenAIProxy)
+	r.HandleFunc("/v1/models", s.handleOpenAIProxy)
+	r.HandleFunc("/v1/models/*", s.handleOpenAIProxy)
+
+	// Anthropic API proxy (catchall /v1/* — covers /v1/messages and
+	// /v1/messages/count_tokens; OpenAI-shape paths above were
+	// already handled).
 	r.HandleFunc("/v1/*", s.handleAnthropicProxy)
 
 	// Gemini API proxy (all /v1beta/* paths).

@@ -43,10 +43,10 @@ type Server struct {
 	execClient connectedClient // exposed for the loopback /internal/connected handler
 }
 
-// modelserverTokenFetcher is the subset of *ModelserverClient buildConfig
+// workspaceTokenFetcher is the subset of *WorkspaceTokenClient buildConfig
 // needs. Defined here so tests can stub.
-type modelserverTokenFetcher interface {
-	FetchToken(ctx context.Context, workspaceID string) (string, error)
+type workspaceTokenFetcher interface {
+	GetOrCreate(ctx context.Context, workspaceID string) (string, error)
 }
 
 // maxWSFrameBytes bounds each ws read on the user-facing and
@@ -79,7 +79,7 @@ func NewServer(cfg ServeConfig, codexBin, selfBin string, logger *slog.Logger) (
 		Logger:   logger,
 	})
 	execClient := NewExecGatewayClient(cfg.ExecGatewayInternalURL, cfg.ExecGatewayInternalSecret)
-	modelClient := NewModelserverClient(cfg.AgentserverInternalURL)
+	wsTokenClient := NewWorkspaceTokenClient(cfg.AgentserverInternalURL, cfg.AgentserverInternalSecret)
 	s := &Server{
 		cfg:        cfg,
 		auth:       auth.NewRemoteVerifier(cfg.AgentserverInternalURL, cfg.AgentserverInternalSecret),
@@ -88,7 +88,7 @@ func NewServer(cfg ServeConfig, codexBin, selfBin string, logger *slog.Logger) (
 		logger:     logger,
 		execClient: execClient,
 	}
-	s.buildConfig = makeBuildConfig(cfg, execClient, modelClient, selfBin, logger)
+	s.buildConfig = makeBuildConfig(cfg, execClient, wsTokenClient, selfBin, logger)
 	return s, nil
 }
 
@@ -111,7 +111,7 @@ func loopbackInternalURL(listenAddr string) string {
 
 // makeBuildConfig returns the per-spawn SpawnConfig producer. Split out
 // so server_test.go can construct a Server with stub clients.
-func makeBuildConfig(cfg ServeConfig, _ connectedClient, modelClient modelserverTokenFetcher, selfBin string, logger *slog.Logger) func(context.Context, string, string) (supervisor.SpawnConfig, error) {
+func makeBuildConfig(cfg ServeConfig, _ connectedClient, wsTokenClient workspaceTokenFetcher, selfBin string, logger *slog.Logger) func(context.Context, string, string) (supervisor.SpawnConfig, error) {
 	return func(ctx context.Context, workspaceID, loopbackToken string) (supervisor.SpawnConfig, error) {
 		// Per 2026-05-16 redesign, the executor list is no longer
 		// fixed at spawn time — env-mcp reads it live via
@@ -131,21 +131,19 @@ func makeBuildConfig(cfg ServeConfig, _ connectedClient, modelClient modelserver
 			trusted = []string{"/tmp"}
 		}
 
-		// Per-spawn env: fetch this workspace's ModelServer OAuth token.
-		// Empty result → fall back to static SupervisorConfig.ExtraEnv
-		// (cfg.CodexAPIKey from chart) so dev / pre-OAuth workspaces still
-		// work.
+		// Per-spawn env: fetch a workspace-scoped proxy token (long
+		// lived, cached server-side). codex sends this as Bearer to
+		// llmproxy, which validates and swaps it for a fresh
+		// modelserver JWT per request — meaning OAuth refreshes
+		// server-side reach the running pod without a respawn.
 		var spawnEnv []string
 		if cfg.ModelProviderEnvKey != "" {
-			tok, err := modelClient.FetchToken(ctx, workspaceID)
+			tok, err := wsTokenClient.GetOrCreate(ctx, workspaceID)
 			if err != nil {
-				logger.Warn("modelserver: token fetch failed; falling back to static CodexAPIKey",
+				logger.Warn("workspace-token: fetch failed; falling back to static CodexAPIKey",
 					"workspace_id", workspaceID, "err", err)
-			} else if tok != "" {
-				spawnEnv = append(spawnEnv, cfg.ModelProviderEnvKey+"="+tok)
 			} else {
-				logger.Warn("modelserver: workspace has no connection; falling back to static CodexAPIKey",
-					"workspace_id", workspaceID)
+				spawnEnv = append(spawnEnv, cfg.ModelProviderEnvKey+"="+tok)
 			}
 		}
 

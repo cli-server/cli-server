@@ -23,13 +23,13 @@ func (s *stubConnected) Connected(_ context.Context, w string) ([]execmodel.Conn
 	return s.rows, s.err
 }
 
-// stubTokenFetcher returns empty token (caller falls back to static
-// CodexAPIKey or none); good enough for tests that don't care about the
-// env value, only about the config.toml content.
+// stubTokenFetcher returns a fake workspace token; good enough for
+// tests that don't care about the env value, only about the
+// config.toml content.
 type stubTokenFetcher struct{}
 
-func (stubTokenFetcher) FetchToken(_ context.Context, _ string) (string, error) {
-	return "", nil
+func (stubTokenFetcher) GetOrCreate(_ context.Context, _ string) (string, error) {
+	return "stub-ws-token", nil
 }
 
 func newTestCfg() ServeConfig {
