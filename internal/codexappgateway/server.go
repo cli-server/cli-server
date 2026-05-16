@@ -2,7 +2,6 @@ package codexappgateway
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -93,25 +92,31 @@ func NewServer(cfg ServeConfig, codexBin, selfBin string, logger *slog.Logger) (
 	return s, nil
 }
 
+// loopbackInternalURL turns a listen address like ":8086" or
+// "0.0.0.0:8086" into the loopback URL env-mcp should call. Empty
+// listenAddr yields empty result (codexhome will omit the agentserver
+// MCP entry, useful for tests).
+func loopbackInternalURL(listenAddr string) string {
+	if listenAddr == "" {
+		return ""
+	}
+	addr := listenAddr
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	} else if strings.HasPrefix(addr, "0.0.0.0:") {
+		addr = "127.0.0.1:" + strings.TrimPrefix(addr, "0.0.0.0:")
+	}
+	return "http://" + addr
+}
+
 // makeBuildConfig returns the per-spawn SpawnConfig producer. Split out
 // so server_test.go can construct a Server with stub clients.
-func makeBuildConfig(cfg ServeConfig, client connectedClient, modelClient modelserverTokenFetcher, selfBin string, logger *slog.Logger) func(context.Context, string, string) (supervisor.SpawnConfig, error) {
+func makeBuildConfig(cfg ServeConfig, _ connectedClient, modelClient modelserverTokenFetcher, selfBin string, logger *slog.Logger) func(context.Context, string, string) (supervisor.SpawnConfig, error) {
 	return func(ctx context.Context, workspaceID, loopbackToken string) (supervisor.SpawnConfig, error) {
-		_ = loopbackToken // Threaded through for codexhome to embed; current per-executor codexhome ignores it. Wired up in Task 7.
-		executors, err := client.Connected(ctx, workspaceID)
-		if err != nil {
-			// Fail-soft: a spawn with no executors still gives the user a
-			// working chat — the model just can't trigger remote tools.
-			// Production should alert on this rather than silently degrade,
-			// hence the warn-level log; we still proceed.
-			logger.Warn("execgw: connected fetch failed; spawning with no executors",
-				"workspace_id", workspaceID, "err", err)
-			executors = nil
-		}
-		entries := make([]codexhome.ExecutorEntry, 0, len(executors))
-		// One workspace-scoped token per turn covers every executor in
-		// the workspace; /bridge enforces ownership per call. turn_id
-		// ties revocations together for /api/exec-gateway/revoke-turn.
+		// Per 2026-05-16 redesign, the executor list is no longer
+		// fixed at spawn time — env-mcp reads it live via
+		// /internal/connected. We still mint a per-spawn turn so
+		// /api/exec-gateway/revoke-turn semantics survive.
 		turnID := "trn_" + shortid.Generate()
 		ttl := cfg.CapTokenTTL
 		if ttl <= 0 {
@@ -120,17 +125,6 @@ func makeBuildConfig(cfg ServeConfig, client connectedClient, modelClient models
 		workspaceTok, err := MintCapToken(cfg.CapTokenHMACSecret, turnID, workspaceID, ttl)
 		if err != nil {
 			return supervisor.SpawnConfig{}, fmt.Errorf("mint workspace cap token: %w", err)
-		}
-		for _, e := range executors {
-			entries = append(entries, codexhome.ExecutorEntry{
-				ID:        e.ExeID,
-				BridgeURL: strings.TrimRight(cfg.ExecGatewayWSURL, "/") + "/bridge/" + e.ExeID,
-				TokenEnv:  "CXG_BRIDGE_TOKEN_" + strings.ToUpper(strings.ReplaceAll(e.ExeID, "-", "_")),
-				TokenVal:  workspaceTok,
-				Desc:      e.Description,
-				CodexBin:  selfBin,
-				TurnID:    turnID,
-			})
 		}
 		trusted := cfg.ProjectTrustedPaths
 		if len(trusted) == 0 {
@@ -167,7 +161,14 @@ func makeBuildConfig(cfg ServeConfig, client connectedClient, modelClient models
 						WireAPI: cfg.ModelProviderWireAPI,
 					},
 				},
-				Executors:           entries,
+				AgentServer: codexhome.AgentServerMCP{
+					CodexBin:              selfBin,
+					WorkspaceID:           workspaceID,
+					ExecGatewayURL:        strings.TrimRight(cfg.ExecGatewayWSURL, "/") + "/bridge",
+					AppGatewayInternalURL: loopbackInternalURL(cfg.ListenAddr),
+					WorkspaceToken:        workspaceTok,
+					LoopbackToken:         loopbackToken,
+				},
 				ProjectTrustedPaths: trusted,
 			},
 			Env: spawnEnv,
@@ -215,7 +216,6 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
 	r.Get("/", s.handleCodexAppWS)
 	r.Get("/codex-app/ws", s.handleCodexAppWS)
-	r.Post("/admin/sessions/restart", s.handleAdminRestart)
 	r.Get("/internal/connected", s.handleInternalConnected)
 	return r
 }
@@ -272,34 +272,3 @@ func (s *Server) handleCodexAppWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleAdminRestart shuts down the codex app-server subprocess for a
-// given workspaceId, forcing a fresh spawn (and S3 reload) on the next
-// ws connect. Used by operators after executor-binding changes; see spec
-// § Subsystem 2 "Per-session config refresh".
-func (s *Server) handleAdminRestart(w http.ResponseWriter, r *http.Request) {
-	tok, ok := auth.ExtractBearer(r)
-	if !ok {
-		http.Error(w, "missing Bearer", http.StatusUnauthorized)
-		return
-	}
-	if _, err := s.auth.Verify(r.Context(), tok); err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var body struct {
-		WorkspaceID string `json:"workspaceId"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad body", http.StatusBadRequest)
-		return
-	}
-	if body.WorkspaceID == "" {
-		http.Error(w, "workspaceId required", http.StatusBadRequest)
-		return
-	}
-	if err := s.sup.Shutdown(r.Context(), supervisor.Key{WorkspaceID: body.WorkspaceID}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}

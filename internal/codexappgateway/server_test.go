@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -56,36 +55,10 @@ func TestServer_WSEndpoint_HappyPath_ProxiesToFakeChild(t *testing.T) {
 	}
 }
 
-func TestServer_AdminRestart_KillsSubprocess(t *testing.T) {
-	srv := makeTestServer(t)
-	defer srv.Close()
-
-	tok := "ast_dummytoken_anything"
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/codex-app/ws"
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + tok}},
-	})
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	c.Close(websocket.StatusNormalClosure, "")
-
-	req, _ := http.NewRequestWithContext(ctx, "POST", srv.URL+"/admin/sessions/restart",
-		strings.NewReader(`{"workspaceId":"ws_test"}`))
-	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("admin: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 204 {
-		body, _ := io.ReadAll(resp.Body)
-		t.Errorf("status = %d, body = %s", resp.StatusCode, body)
-	}
-}
+// /admin/sessions/restart was removed in the 2026-05-16 fixed-tools
+// redesign — env-mcp reads the executor list live via /internal/connected,
+// so per-workspace subprocess invalidation is no longer needed. Test
+// deleted.
 
 func makeTestServer(t *testing.T) *httptest.Server {
 	t.Helper()

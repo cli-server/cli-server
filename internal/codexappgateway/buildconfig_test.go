@@ -3,7 +3,6 @@ package codexappgateway
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -43,6 +42,7 @@ func newTestCfg() ServeConfig {
 		ModelProviderBaseURL: "http://llmproxy:8085/v1",
 		ModelProviderEnvKey:  "CODEX_API_KEY",
 		ModelProviderWireAPI: "responses",
+		ListenAddr:           ":8086",
 	}
 }
 
@@ -50,101 +50,61 @@ func newDiscardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 }
 
-func TestBuildConfig_PopulatesExecutorsAndMintsValidTokens(t *testing.T) {
-	stub := &stubConnected{rows: []execmodel.ConnectedExecutor{
-		{ExeID: "exe_alpha", Description: "Daisy MBP"},
-		{ExeID: "exe_beta", Description: "EC2"},
-	}}
+func TestBuildConfig_EmitsAgentserverMCPAndMintsWorkspaceToken(t *testing.T) {
 	cfg := newTestCfg()
-	build := makeBuildConfig(cfg, stub, stubTokenFetcher{}, "/usr/local/bin/codex-app-gateway", newDiscardLogger())
+	build := makeBuildConfig(cfg, &stubConnected{}, stubTokenFetcher{}, "/usr/local/bin/codex-app-gateway", newDiscardLogger())
 
-	got, err := build(context.Background(), "ws_a", "lbtok")
+	got, err := build(context.Background(), "ws_a", "lb-token-xyz")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if stub.gotW != "ws_a" {
-		t.Errorf("client called with %q, want ws_a", stub.gotW)
+	m := got.Config.AgentServer
+	if m.CodexBin != "/usr/local/bin/codex-app-gateway" {
+		t.Errorf("CodexBin = %q", m.CodexBin)
 	}
-	if got.Config.ModelProvider != "modelserver" || got.Config.Model != "gpt-5.5" {
-		t.Errorf("model: %+v", got)
+	if m.WorkspaceID != "ws_a" {
+		t.Errorf("WorkspaceID = %q", m.WorkspaceID)
 	}
-	if len(got.Config.Executors) != 2 {
-		t.Fatalf("executors: %+v", got.Config.Executors)
+	if m.ExecGatewayURL != "ws://exec-gw:6060/bridge" {
+		t.Errorf("ExecGatewayURL = %q", m.ExecGatewayURL)
 	}
-	if got.Config.Executors[0].BridgeURL != "ws://exec-gw:6060/bridge/exe_alpha" {
-		t.Errorf("bridge url[0] = %s", got.Config.Executors[0].BridgeURL)
+	if m.AppGatewayInternalURL != "http://127.0.0.1:8086" {
+		t.Errorf("AppGatewayInternalURL = %q", m.AppGatewayInternalURL)
 	}
-	if got.Config.Executors[0].TokenEnv != "CXG_BRIDGE_TOKEN_EXE_ALPHA" {
-		t.Errorf("token env[0] = %s", got.Config.Executors[0].TokenEnv)
+	if m.LoopbackToken != "lb-token-xyz" {
+		t.Errorf("LoopbackToken = %q", m.LoopbackToken)
 	}
-	if got.Config.Executors[0].CodexBin != "/usr/local/bin/codex-app-gateway" {
-		t.Errorf("codex bin[0] = %s", got.Config.Executors[0].CodexBin)
+	p, err := codexexecgateway.VerifyCapabilityToken(m.WorkspaceToken, cfg.CapTokenHMACSecret)
+	if err != nil {
+		t.Fatalf("workspace token verify: %v", err)
 	}
-	// All entries share one turn_id (so revoke-turn cancels them as a unit).
-	if got.Config.Executors[0].TurnID == "" || got.Config.Executors[0].TurnID != got.Config.Executors[1].TurnID {
-		t.Errorf("turn ids should match: %q %q", got.Config.Executors[0].TurnID, got.Config.Executors[1].TurnID)
+	if p.WorkspaceID != "ws_a" {
+		t.Errorf("workspace token .workspace_id = %q", p.WorkspaceID)
 	}
-	// Per the 2026-05-16 redesign, all executors in a workspace share
-	// one workspace-scoped token. Each must verify with the same
-	// workspace_id and turn_id; /bridge enforces exe_id ownership
-	// separately via workspace_executors lookup.
-	var first codexexecgateway.CapPayload
-	for i, e := range got.Config.Executors {
-		p, err := codexexecgateway.VerifyCapabilityToken(e.TokenVal, cfg.CapTokenHMACSecret)
-		if err != nil {
-			t.Fatalf("verify[%d]: %v", i, err)
-		}
-		if p.WorkspaceID != "ws_a" {
-			t.Errorf("token[%d].workspace_id = %q", i, p.WorkspaceID)
-		}
-		if i == 0 {
-			first = p
-		} else if p.TurnID != first.TurnID {
-			t.Errorf("token[%d].turn_id = %q, want %q (all-share)", i, p.TurnID, first.TurnID)
-		}
-	}
-	// Default trusted path applied when none configured.
-	if len(got.Config.ProjectTrustedPaths) != 1 || got.Config.ProjectTrustedPaths[0] != "/tmp" {
-		t.Errorf("trusted paths default: %v", got.Config.ProjectTrustedPaths)
+	if p.TurnID == "" {
+		t.Error("workspace token .turn_id empty")
 	}
 }
 
-func TestBuildConfig_FailSoftWhenExecGatewayDown(t *testing.T) {
-	stub := &stubConnected{err: errors.New("connection refused")}
+func TestBuildConfig_NoExecGatewayFetchHappens(t *testing.T) {
+	// Per redesign, build() no longer hits the exec-gateway at spawn time;
+	// the connected client should not be touched.
+	stub := &stubConnected{gotW: ""}
 	cfg := newTestCfg()
-	build := makeBuildConfig(cfg, stub, stubTokenFetcher{}, "/codex-app-gateway", newDiscardLogger())
-
-	got, err := build(context.Background(), "ws_a", "lbtok")
-	if err != nil {
-		t.Fatalf("build should fail-soft, got %v", err)
-	}
-	if len(got.Config.Executors) != 0 {
-		t.Errorf("expected empty executors on degraded fetch, got %+v", got.Config.Executors)
-	}
-	if got.Config.Model == "" {
-		t.Error("model should still be populated for chat-only mode")
-	}
-}
-
-func TestBuildConfig_NoExecutorsStillProducesValidConfig(t *testing.T) {
-	stub := &stubConnected{rows: nil}
-	cfg := newTestCfg()
-	build := makeBuildConfig(cfg, stub, stubTokenFetcher{}, "/codex-app-gateway", newDiscardLogger())
-	got, err := build(context.Background(), "ws_a", "lbtok")
-	if err != nil {
+	build := makeBuildConfig(cfg, stub, stubTokenFetcher{}, "/x", newDiscardLogger())
+	if _, err := build(context.Background(), "ws_a", "lb"); err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if len(got.Config.Executors) != 0 {
-		t.Errorf("got executors: %+v", got.Config.Executors)
+	if stub.gotW != "" {
+		t.Errorf("connectedClient.Connected was called (gotW=%q); list_environments now reads it live", stub.gotW)
 	}
 }
 
 func TestBuildConfig_RespectsConfiguredTrustedPaths(t *testing.T) {
-	stub := &stubConnected{}
 	cfg := newTestCfg()
 	cfg.ProjectTrustedPaths = []string{"/workspace", "/data"}
-	build := makeBuildConfig(cfg, stub, stubTokenFetcher{}, "/codex-app-gateway", newDiscardLogger())
-	got, err := build(context.Background(), "ws_a", "lbtok")
+	build := makeBuildConfig(cfg, &stubConnected{}, stubTokenFetcher{}, "/x", newDiscardLogger())
+	got, err := build(context.Background(), "ws_a", "lb")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -153,17 +113,16 @@ func TestBuildConfig_RespectsConfiguredTrustedPaths(t *testing.T) {
 	}
 }
 
-func TestBuildConfig_ExeIDWithDashesNormalisesEnvVar(t *testing.T) {
-	stub := &stubConnected{rows: []execmodel.ConnectedExecutor{
-		{ExeID: "exe-dashy-id"},
-	}}
-	cfg := newTestCfg()
-	build := makeBuildConfig(cfg, stub, stubTokenFetcher{}, "/codex-app-gateway", newDiscardLogger())
-	got, err := build(context.Background(), "ws_a", "lbtok")
-	if err != nil {
-		t.Fatalf("build: %v", err)
+func TestLoopbackInternalURL(t *testing.T) {
+	cases := map[string]string{
+		":8086":         "http://127.0.0.1:8086",
+		"0.0.0.0:9000":  "http://127.0.0.1:9000",
+		"127.0.0.1:80":  "http://127.0.0.1:80",
+		"":              "",
 	}
-	if got.Config.Executors[0].TokenEnv != "CXG_BRIDGE_TOKEN_EXE_DASHY_ID" {
-		t.Errorf("token env = %s", got.Config.Executors[0].TokenEnv)
+	for in, want := range cases {
+		if got := loopbackInternalURL(in); got != want {
+			t.Errorf("loopbackInternalURL(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

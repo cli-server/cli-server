@@ -64,7 +64,7 @@ func TestManager_RemoveTmpDir_RejectsOutsideRoot(t *testing.T) {
 	}
 }
 
-func TestRenderConfigTOML_DisablesBuiltinShellAndRegistersMCPServers(t *testing.T) {
+func TestRenderConfigTOML_DisablesBuiltinShellAndRegistersAgentserverMCP(t *testing.T) {
 	cfg := ConfigInput{
 		ModelProvider: "modelserver",
 		Model:         "gpt-5.5",
@@ -76,25 +76,13 @@ func TestRenderConfigTOML_DisablesBuiltinShellAndRegistersMCPServers(t *testing.
 				WireAPI: "responses",
 			},
 		},
-		Executors: []ExecutorEntry{
-			{
-				ID:        "exe_alpha",
-				BridgeURL: "ws://exec-gw:6060/bridge/exe_alpha",
-				TokenEnv:  "CXG_BRIDGE_TOKEN_EXE_ALPHA",
-				TokenVal:  "tok-alpha",
-				Desc:      "Daisy's MacBook",
-				CodexBin:  "/usr/local/bin/codex-app-gateway",
-				TurnID:    "trn_xxx",
-			},
-			{
-				ID:        "exe_beta",
-				BridgeURL: "ws://exec-gw:6060/bridge/exe_beta",
-				TokenEnv:  "CXG_BRIDGE_TOKEN_EXE_BETA",
-				TokenVal:  "tok-beta",
-				Desc:      "EC2 us-east-1",
-				CodexBin:  "/usr/local/bin/codex-app-gateway",
-				TurnID:    "trn_xxx",
-			},
+		AgentServer: AgentServerMCP{
+			CodexBin:              "/usr/local/bin/codex-app-gateway",
+			WorkspaceID:           "ws_a",
+			ExecGatewayURL:        "wss://exec-gw.example/bridge",
+			AppGatewayInternalURL: "http://127.0.0.1:8086",
+			WorkspaceToken:        "wstok",
+			LoopbackToken:         "lbtok",
 		},
 		ProjectTrustedPaths: []string{"/tmp"},
 	}
@@ -107,11 +95,14 @@ func TestRenderConfigTOML_DisablesBuiltinShellAndRegistersMCPServers(t *testing.
 		`shell_tool = false`,
 		`unified_exec = false`,
 		`apply_patch_freeform = false`,
-		`[mcp_servers.exe_alpha]`,
-		`"--exe-id"`, `"exe_alpha"`,
-		`"--bridge-url"`, `"ws://exec-gw:6060/bridge/exe_alpha"`,
-		`"--token-env"`, `"CXG_BRIDGE_TOKEN_EXE_ALPHA"`,
-		`[mcp_servers.exe_beta]`,
+		`[mcp_servers.agentserver]`,
+		`"--workspace-id"`, `"ws_a"`,
+		`"--exec-gateway-url"`, `"wss://exec-gw.example/bridge"`,
+		`"--app-gateway-internal"`, `"http://127.0.0.1:8086"`,
+		`"--workspace-token-env"`, `"CXG_WORKSPACE_TOKEN"`,
+		`"--loopback-token-env"`, `"CXG_LOOPBACK_TOKEN"`,
+		`CXG_WORKSPACE_TOKEN = "wstok"`,
+		`CXG_LOOPBACK_TOKEN = "lbtok"`,
 		`[projects."/tmp"]`,
 		`trust_level = "trusted"`,
 	} {

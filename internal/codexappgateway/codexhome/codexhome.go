@@ -17,21 +17,24 @@ type ModelProvider struct {
 	WireAPI string
 }
 
-type ExecutorEntry struct {
-	ID        string
-	BridgeURL string
-	TokenEnv  string
-	TokenVal  string // injected via env, not written to TOML
-	Desc      string
-	CodexBin  string // path to codex-app-gateway binary (for `env-mcp` subcommand)
-	TurnID    string
+// AgentServerMCP carries everything codexhome needs to emit one
+// fixed `[mcp_servers.agentserver]` block per the 2026-05-16 redesign.
+// One env-mcp child per codex app-server handles every executor in
+// the workspace via env_id routing — no per-executor sections.
+type AgentServerMCP struct {
+	CodexBin              string // absolute path to codex-app-gateway binary
+	WorkspaceID           string
+	ExecGatewayURL        string // ws base URL; env-mcp appends /<exe_id>
+	AppGatewayInternalURL string // http base for /internal/connected loopback
+	WorkspaceToken        string // workspace-scoped cap token (env-injected)
+	LoopbackToken         string // per-spawn loopback token (env-injected)
 }
 
 type ConfigInput struct {
 	ModelProvider       string
 	Model               string
 	ModelProviders      map[string]ModelProvider
-	Executors           []ExecutorEntry
+	AgentServer         AgentServerMCP
 	ProjectTrustedPaths []string
 }
 
@@ -106,24 +109,23 @@ func RenderConfigTOML(cfg ConfigInput) (string, error) {
 	}
 
 	// Disable codex's builtin local-execution paths so the only way the
-	// LLM can reach a shell is through the env-mcp children below.
+	// LLM can reach a shell is through the agentserver MCP server below.
 	b.WriteString("[features]\n")
 	b.WriteString("shell_tool = false\n")
 	b.WriteString("unified_exec = false\n")
 	b.WriteString("apply_patch_freeform = false\n\n")
 
-	for _, e := range cfg.Executors {
-		fmt.Fprintf(&b, "[mcp_servers.%s]\n", tomlKey(e.ID))
-		fmt.Fprintf(&b, "command = %q\n", e.CodexBin)
+	m := cfg.AgentServer
+	if m.CodexBin != "" {
+		b.WriteString("[mcp_servers.agentserver]\n")
+		fmt.Fprintf(&b, "command = %q\n", m.CodexBin)
 		args := []string{
 			"env-mcp",
-			"--exe-id", e.ID,
-			"--bridge-url", e.BridgeURL,
-			"--token-env", e.TokenEnv,
-			"--exe-desc", e.Desc,
-		}
-		if e.TurnID != "" {
-			args = append(args, "--turn-id", e.TurnID)
+			"--workspace-id", m.WorkspaceID,
+			"--exec-gateway-url", m.ExecGatewayURL,
+			"--app-gateway-internal", m.AppGatewayInternalURL,
+			"--workspace-token-env", "CXG_WORKSPACE_TOKEN",
+			"--loopback-token-env", "CXG_LOOPBACK_TOKEN",
 		}
 		b.WriteString("args = [")
 		for i, a := range args {
@@ -133,7 +135,8 @@ func RenderConfigTOML(cfg ConfigInput) (string, error) {
 			fmt.Fprintf(&b, "%q", a)
 		}
 		b.WriteString("]\n")
-		fmt.Fprintf(&b, "env = { %s = %q }\n\n", e.TokenEnv, e.TokenVal)
+		fmt.Fprintf(&b, "env = { CXG_WORKSPACE_TOKEN = %q, CXG_LOOPBACK_TOKEN = %q }\n\n",
+			m.WorkspaceToken, m.LoopbackToken)
 	}
 	return b.String(), nil
 }

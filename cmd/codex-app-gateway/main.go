@@ -89,6 +89,7 @@ func runServe(rawArgs []string) {
 		fmt.Fprintln(os.Stderr, "codex-app-gateway serve: config:", err)
 		os.Exit(2)
 	}
+	cfg.ListenAddr = args.ListenAddr
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

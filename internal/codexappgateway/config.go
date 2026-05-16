@@ -57,6 +57,14 @@ type ServeConfig struct {
 	// AgentserverInternalSecret matches the agentserver's INTERNAL_API_SECRET
 	// env. Sent in every verify request as X-Internal-Secret.
 	AgentserverInternalSecret string
+
+	// ListenAddr is the gateway's HTTP listen address (e.g. ":8086"). Used
+	// to derive the loopback URL env-mcp uses for /internal/connected.
+	// Set by main.go before NewServer; tests may leave it empty (codexhome
+	// then emits no AppGatewayInternalURL and env-mcp won't be able to
+	// list environments, which is fine for tests that don't exercise
+	// list_environments).
+	ListenAddr string
 }
 
 func LoadServeConfigFromEnv() (ServeConfig, error) {
