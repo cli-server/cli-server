@@ -93,7 +93,7 @@ export default function CodexTokensPanel({ workspaceId }: Props) {
         <p className="mb-3 text-xs text-[var(--muted-foreground)]">
           Use these tokens with{' '}
           <code className="rounded bg-[var(--background)] px-1 py-0.5 font-mono text-[11px] text-[var(--foreground)]">
-            codex --remote wss://&lt;host&gt;/codex-app/ws --remote-auth-token-env &lt;ENV_VAR&gt;
+            codex --remote wss://codex-app.&lt;host&gt;:443 --remote-auth-token-env &lt;ENV_VAR&gt;
           </code>
         </p>
 
@@ -229,7 +229,7 @@ export default function CodexTokensPanel({ workspaceId }: Props) {
               </button>
             </div>
             <pre className="mb-4 overflow-x-auto rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-[11px] text-[var(--foreground)]">{`export AGENTSERVER_TOKEN='${generated.token}'
-codex --remote wss://${typeof window !== 'undefined' ? window.location.host : '<host>'}/codex-app/ws \\
+codex --remote wss://codex-app.${typeof window !== 'undefined' ? window.location.host : '<host>'}:443 \\
       --remote-auth-token-env AGENTSERVER_TOKEN`}</pre>
             <div className="flex justify-end">
               <button
