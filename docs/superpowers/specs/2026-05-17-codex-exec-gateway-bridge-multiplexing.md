@@ -3,6 +3,16 @@
 **Date:** 2026-05-17
 **Status:** Approved — supersedes the one-bridge-at-a-time invariant in 2026-05-05 spec § "AcquireBridge".
 
+## Authoritative upstream reference
+
+Codex commit `ac466c0dbd` (`feat(exec-server): use protobuf relay frames #22343`, 2026-05-12) introduces the relay protocol with the explicit goal:
+
+> Remote exec-server now needs **one executor websocket to serve multiple harness JSON-RPC sessions**. Rendezvous routes by `stream_id`...
+>
+> harness and executor endpoints own sequencing, acks, retries, duplicate suppression, segmentation, and reassembly; **rendezvous only routes frames**.
+
+Our codex-exec-gateway IS the "rendezvous". The exec-server side multiplex is implemented in `codex-rs/exec-server/src/relay.rs::run_multiplexed_executor` (lines 295-389 in that commit) — useful as a working reference, but our job is strictly simpler: we route frames, we do not terminate any JSON-RPC session ourselves.
+
 ## Goal
 
 Allow **multiple concurrent `/bridge/{exe_id}` sessions** to share a single inbound executor connection, demultiplexed by the relay protocol's `stream_id`. Required so codex's sub-agents (which spawn independent MCP children and therefore independent `BridgeClient`s) can dispatch tools to the same executor in parallel instead of returning 409.
