@@ -33,7 +33,7 @@ func TestLoadServeConfig_Defaults(t *testing.T) {
 	if cfg.S3.Region != "us-east-1" {
 		t.Errorf("S3 default region = %q", cfg.S3.Region)
 	}
-	if cfg.CapTokenTTL != time.Hour {
+	if cfg.CapTokenTTL != 24*time.Hour {
 		t.Errorf("CapTokenTTL = %v", cfg.CapTokenTTL)
 	}
 	if cfg.ModelProvider != "modelserver" || cfg.Model != "gpt-5.5" {

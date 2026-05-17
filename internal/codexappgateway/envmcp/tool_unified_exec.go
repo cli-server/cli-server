@@ -84,7 +84,7 @@ func NewUnifiedExecTool(pool *BridgePool, store *sessionStore) *UnifiedExecTool 
 var unifiedExecSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
-    "env_id": {"type": "string"},
+    "env_id": {"type": "string", "description": "Target environment's exe_id (from list_environments output). NOT the description."},
     "command": {"type": "array", "items": {"type": "string"}},
     "cwd": {"type": "string"},
     "tty": {"type": "boolean", "description": "Allocate a PTY"},
@@ -154,7 +154,7 @@ func NewWriteStdinTool(pool *BridgePool, store *sessionStore) *WriteStdinTool {
 var writeStdinSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
-    "env_id": {"type": "string"},
+    "env_id": {"type": "string", "description": "Target environment's exe_id (from list_environments output). NOT the description."},
     "session_id": {"type": "string"},
     "data": {"type": "string", "description": "UTF-8 text written to the process's stdin. Trailing newlines must be included explicitly."}
   },
@@ -208,7 +208,7 @@ func NewReadOutputTool(pool *BridgePool, store *sessionStore) *ReadOutputTool {
 var readOutputSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
-    "env_id": {"type": "string"},
+    "env_id": {"type": "string", "description": "Target environment's exe_id (from list_environments output). NOT the description."},
     "session_id": {"type": "string"},
     "after_seq": {"type": "integer", "description": "Skip output up to this seq number (returned by previous read)"},
     "wait_ms": {"type": "integer", "description": "How long to block waiting for new output; default 1000"}
@@ -270,7 +270,7 @@ func NewTerminateTool(pool *BridgePool, store *sessionStore) *TerminateTool {
 var terminateSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
-    "env_id": {"type": "string"},
+    "env_id": {"type": "string", "description": "Target environment's exe_id (from list_environments output). NOT the description."},
     "session_id": {"type": "string"}
   },
   "required": ["env_id", "session_id"]

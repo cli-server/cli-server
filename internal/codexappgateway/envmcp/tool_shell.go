@@ -14,7 +14,7 @@ import (
 var shellSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
-    "env_id": {"type": "string", "description": "Target environment id from list_environments"},
+    "env_id": {"type": "string", "description": "Target environment's exe_id (the exe_id field from list_environments output, e.g. exe_c1fa4893-...). NOT the description."},
     "command": {"type": "array", "items": {"type": "string"}, "description": "argv as a list of strings"},
     "cwd": {"type": "string", "description": "Working directory; defaults to /tmp"},
     "timeout_ms": {"type": "integer", "description": "Per-call wait cap; defaults to 60000"}

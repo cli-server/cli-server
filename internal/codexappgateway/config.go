@@ -69,10 +69,16 @@ type ServeConfig struct {
 
 func LoadServeConfigFromEnv() (ServeConfig, error) {
 	cfg := ServeConfig{
-		TmpRoot:      envOr("CXG_TMP_ROOT", "/tmp/codex-app-gateway"),
+		TmpRoot: envOr("CXG_TMP_ROOT", "/tmp/codex-app-gateway"),
 		IdleShutdown: 30 * time.Minute,
-		CapTokenTTL:  1 * time.Hour,
-		LogLevel:     slog.LevelInfo,
+		// CapTokenTTL bounds the cap-token's validity. The token is
+		// minted at codex app-server spawn and re-used by env-mcp for
+		// the subprocess's whole lifetime. IdleShutdown is 30 min, so
+		// 24h is comfortably longer than any realistic session — keeps
+		// long-running codex --remote TUIs from hitting 401 mid-call
+		// without giving up the bound altogether.
+		CapTokenTTL: 24 * time.Hour,
+		LogLevel:    slog.LevelInfo,
 		S3: S3Config{
 			Endpoint:        os.Getenv("CXG_S3_ENDPOINT"),
 			Region:          envOr("CXG_S3_REGION", "us-east-1"),

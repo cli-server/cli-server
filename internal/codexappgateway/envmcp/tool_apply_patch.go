@@ -26,7 +26,7 @@ func NewApplyPatchTool(pool *BridgePool) *ApplyPatchTool {
 var applyPatchSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
-    "env_id": {"type": "string"},
+    "env_id": {"type": "string", "description": "Target environment's exe_id (from list_environments output). NOT the description."},
     "patch": {"type": "string", "description": "A codex apply_patch document beginning with '*** Begin Patch' and ending with '*** End Patch'"}
   },
   "required": ["env_id", "patch"]

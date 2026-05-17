@@ -22,7 +22,7 @@ func NewReadFileTool(pool *BridgePool) *ReadFileTool {
 var readFileSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
-    "env_id": {"type": "string"},
+    "env_id": {"type": "string", "description": "Target environment's exe_id (from list_environments output). NOT the description."},
     "path": {"type": "string", "description": "Absolute path on the executor"},
     "offset": {"type": "integer", "description": "Byte offset to start reading from"},
     "limit": {"type": "integer", "description": "Max bytes to return; 0 = whole file"}
