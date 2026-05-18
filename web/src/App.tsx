@@ -20,7 +20,6 @@ import { OAuthLogin, PENDING_LOGIN_CHALLENGE_KEY } from './components/OAuthLogin
 const PENDING_CONSENT_CHALLENGE_KEY = 'agentserver_pending_consent_challenge'
 const PENDING_DEVICE_PARAMS_KEY = 'agentserver_pending_device_params'
 import { TopBar } from './components/TopBar'
-import { SandboxList } from './components/SandboxList'
 import { SandboxDetail } from './components/SandboxDetail'
 import { ManageWorkspaces } from './components/ManageWorkspaces'
 import { AdminPanel } from './components/AdminPanel'
@@ -38,10 +37,12 @@ function WorkspaceDetailRoute({
   workspaces,
   onRename,
   initialTab,
+  sandboxOverride,
 }: {
   workspaces: Workspace[]
   onRename?: (id: string, name: string) => void
   initialTab?: WorkspaceTab
+  sandboxOverride?: React.ReactNode
 }) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const workspace = workspaces.find((w) => w.id === workspaceId)
@@ -49,7 +50,12 @@ function WorkspaceDetailRoute({
     return <Navigate to="/" replace />
   }
   return (
-    <WorkspaceDetail workspace={workspace} onRename={onRename} initialTab={initialTab} />
+    <WorkspaceDetail
+      workspace={workspace}
+      onRename={onRename}
+      initialTab={initialTab}
+      sandboxOverride={sandboxOverride}
+    />
   )
 }
 
@@ -117,7 +123,6 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null)
   const [sandboxes, setSandboxes] = useState<Sandbox[]>([])
-  const [creating, setCreating] = useState(false)
 
   const refreshSandboxes = useCallback(async () => {
     if (!selectedWorkspaceId) return
@@ -275,26 +280,6 @@ export default function App() {
     )
   }
 
-  const sandboxList = (
-    <SandboxList
-      selectedWorkspaceId={selectedWorkspaceId}
-      sandboxes={sandboxes}
-      setSandboxes={setSandboxes}
-      onRefreshSandboxes={refreshSandboxes}
-      creating={creating}
-      setCreating={setCreating}
-    />
-  )
-
-  const sandboxLayout = (content: React.ReactNode) => (
-    <div className="flex flex-1 min-h-0">
-      {sandboxList}
-      <div className="flex flex-1 flex-col bg-[var(--background)]">
-        {content}
-      </div>
-    </div>
-  )
-
   return (
     <div className="flex flex-col h-screen">
       <TopBar
@@ -317,15 +302,22 @@ export default function App() {
         } />
         <Route
           path="/w/:workspaceId/sandboxes/:sandboxId"
-          element={sandboxLayout(
-            <SandboxDetailRoute
-              sandboxes={sandboxes}
-              onPause={handlePause}
-              onResume={handleResume}
-              onDelete={handleDelete}
-              onRename={handleRenameSandbox}
+          element={
+            <WorkspaceDetailRoute
+              workspaces={workspaces}
+              onRename={handleRenameWorkspace}
+              initialTab="sandbox"
+              sandboxOverride={
+                <SandboxDetailRoute
+                  sandboxes={sandboxes}
+                  onPause={handlePause}
+                  onResume={handleResume}
+                  onDelete={handleDelete}
+                  onRename={handleRenameSandbox}
+                />
+              }
             />
-          )}
+          }
         />
         <Route
           path="/workspaces"
