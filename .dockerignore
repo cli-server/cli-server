@@ -1,0 +1,24 @@
+# Conservative dockerignore for the agentserver repo.
+#
+# Excludes only build artifacts that are regenerated inside the build —
+# node_modules are reinstalled by pnpm/bun in the multi-stage Dockerfile,
+# python venvs are local-dev only, and git history is never needed by
+# any Dockerfile here.
+
+.git/
+
+# Python local dev artifacts
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+
+# Node — reinstalled inside the relevant build stage
+**/node_modules/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
