@@ -49,7 +49,7 @@ func BuildDeployment(k Key, c Config) (*appsv1.Deployment, error) {
 	for k2, v := range c.ExtraEnvVars {
 		envVars = append(envVars, corev1.EnvVar{
 			Name:  k2,
-			Value: strings.ReplaceAll(v, "{workspace_id}", k.WorkspaceID),
+			Value: substituteWorkspaceID(v, k.WorkspaceID),
 		})
 	}
 	container := corev1.Container{
@@ -65,7 +65,7 @@ func BuildDeployment(k Key, c Config) (*appsv1.Deployment, error) {
 			{Name: workspaceVolumeName, MountPath: workspaceMountPath},
 		},
 	}
-	pvcName := strings.ReplaceAll(c.WorkspacePVCName, "{workspace_id}", k.WorkspaceID)
+	pvcName := substituteWorkspaceID(c.WorkspacePVCName, k.WorkspaceID)
 	pod := corev1.PodSpec{
 		Containers: []corev1.Container{container},
 		Volumes: []corev1.Volume{
@@ -120,6 +120,18 @@ func BuildService(k Key) (*corev1.Service, error) {
 			}},
 		},
 	}, nil
+}
+
+// substituteWorkspaceID replaces both {workspace_id} (full UUID) and
+// {workspace_id_short} (first 8 chars, matching the agent-ws-<short>
+// convention used by internal/storage/workspacedrive.go) in s.
+func substituteWorkspaceID(s, workspaceID string) string {
+	short := workspaceID
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	s = strings.ReplaceAll(s, "{workspace_id_short}", short)
+	return strings.ReplaceAll(s, "{workspace_id}", workspaceID)
 }
 
 // ServiceURL returns the cluster-internal HTTP url for the Service.

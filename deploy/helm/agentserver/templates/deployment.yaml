@@ -283,6 +283,28 @@ spec:
             {{- end }}
             - name: NOTEBOOK_BASE_URL_PATTERN
               value: {{ .Values.notebook.baseURLPattern | quote }}
+            - name: NOTEBOOK_IMAGE
+              value: {{ printf "%s:%s" .Values.notebook.image.repository .Values.notebook.image.tag | quote }}
+            - name: NOTEBOOK_IMAGE_PULL_POLICY
+              value: {{ .Values.notebook.image.pullPolicy | quote }}
+            - name: NOTEBOOK_CPU_REQUEST
+              value: {{ .Values.notebook.resources.cpuRequest | quote }}
+            - name: NOTEBOOK_CPU_LIMIT
+              value: {{ .Values.notebook.resources.cpuLimit | quote }}
+            - name: NOTEBOOK_MEM_REQUEST
+              value: {{ .Values.notebook.resources.memoryRequest | quote }}
+            - name: NOTEBOOK_MEM_LIMIT
+              value: {{ .Values.notebook.resources.memoryLimit | quote }}
+            - name: NOTEBOOK_EPHEMERAL_STORAGE
+              value: {{ .Values.notebook.resources.ephemeralStorage | quote }}
+            - name: NOTEBOOK_WORKSPACE_PVC
+              value: {{ .Values.notebook.workspacePVCName | quote }}
+            - name: NOTEBOOK_IDLE_TTL_SECONDS
+              value: {{ .Values.notebook.idleTTLSeconds | quote }}
+            - name: NOTEBOOK_REAP_INTERVAL_SECONDS
+              value: {{ .Values.notebook.reapIntervalSeconds | quote }}
+            - name: NOTEBOOK_READY_TIMEOUT_SECONDS
+              value: {{ .Values.notebook.readyTimeoutSeconds | quote }}
           livenessProbe:
             httpGet:
               path: /healthz

@@ -402,8 +402,12 @@ notebook:
   idleTTLSeconds: 14400      # 4h
   reapIntervalSeconds: 300   # 5min
   readyTimeoutSeconds: 60
-  # PVC name pattern. Must match the existing workspace-volume provisioner.
-  # The literal "{workspace_id}" is substituted at runtime by the supervisor.
-  workspacePVCName: "ws-{workspace_id}"
+  # PVC name pattern. Must match the existing workspace-volume provisioner
+  # (internal/storage/workspacedrive.go names workspace PVCs
+  # `agent-ws-<first-8-of-workspace-id>-disk`).
+  # Placeholders substituted at runtime by the supervisor:
+  #   {workspace_id}        – full UUID
+  #   {workspace_id_short}  – first 8 chars
+  workspacePVCName: "agent-ws-{workspace_id_short}-disk"
   jwtSecret: ""  # Empty = feature disabled. Generate with `openssl rand -hex 32`
   baseURLPattern: "/api/notebooks/{workspace_id}/"

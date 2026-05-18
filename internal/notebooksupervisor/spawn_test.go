@@ -181,6 +181,37 @@ func TestBuildDeployment_PVCNameNoTemplate(t *testing.T) {
 	}
 }
 
+func TestBuildDeployment_PVCNameShortIDSubstitution(t *testing.T) {
+	c := Config{
+		Image:            "img:tag",
+		WorkspacePVCName: "agent-ws-{workspace_id_short}-disk",
+	}.WithDefaults()
+	k := Key{
+		WorkspaceID: "77f66719-313d-4574-a13a-2fdb41224bef",
+		Namespace:   "agent-ws-77f66719",
+	}
+	d, err := BuildDeployment(k, c)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var pvcName string
+	for _, v := range d.Spec.Template.Spec.Volumes {
+		if v.PersistentVolumeClaim != nil {
+			pvcName = v.PersistentVolumeClaim.ClaimName
+		}
+	}
+	if pvcName != "agent-ws-77f66719-disk" {
+		t.Errorf("pvc name = %q, want agent-ws-77f66719-disk", pvcName)
+	}
+}
+
+func TestSubstituteWorkspaceID_ShortIDFallsBackToFullForShortInput(t *testing.T) {
+	got := substituteWorkspaceID("ws-{workspace_id_short}-x", "abc")
+	if got != "ws-abc-x" {
+		t.Errorf("short<=8 should pass through full id, got=%q", got)
+	}
+}
+
 func TestBuildDeployment_ExtraEnvVarsWithSubstitution(t *testing.T) {
 	c := Config{
 		Image:            "img:tag",
