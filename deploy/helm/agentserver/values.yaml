@@ -383,3 +383,25 @@ gateway:
     - name: cilium-gateway
       namespace: cilium-gateway
   host: agentserver.example.com
+
+notebook:
+  # Image for the per-workspace Jupyter Server. Built by
+  # Dockerfile.notebook (Plan 1).
+  image:
+    repository: ghcr.io/agentserver/agentserver-notebook
+    tag: dev
+    pullPolicy: IfNotPresent
+  # Per-workspace resource limits. Apply to the notebook container.
+  resources:
+    cpuRequest: "500m"
+    cpuLimit: "2"
+    memoryRequest: "1Gi"
+    memoryLimit: "4Gi"
+    ephemeralStorage: "5Gi"
+  # Lifecycle.
+  idleTTLSeconds: 14400      # 4h
+  reapIntervalSeconds: 300   # 5min
+  readyTimeoutSeconds: 60
+  # PVC name pattern. Must match the existing workspace-volume provisioner.
+  # The literal "{workspace_id}" is substituted at runtime by the supervisor.
+  workspacePVCName: "ws-{workspace_id}"
