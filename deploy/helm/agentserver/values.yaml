@@ -386,10 +386,10 @@ gateway:
 
 notebook:
   # Image for the per-workspace Jupyter Server. Built by
-  # Dockerfile.notebook (Plan 1).
+  # Dockerfile.notebook (Plan 1) + .github/workflows/build.yml.
   image:
     repository: ghcr.io/agentserver/agentserver-notebook
-    tag: dev
+    tag: latest
     pullPolicy: IfNotPresent
   # Per-workspace resource limits. Apply to the notebook container.
   resources:
