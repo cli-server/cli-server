@@ -189,6 +189,8 @@ spec:
             - name: INTERNAL_API_SECRET
               value: {{ .Values.internal.apiSecret | quote }}
             {{- end }}
+            - name: AGENTSERVER_OPERATIONS_RETENTION_DAYS
+              value: {{ .Values.operations.retentionDays | quote }}
             {{- if .Values.codexExecGateway.enabled }}
             - name: CODEX_EXEC_GATEWAY_INTERNAL_URL
               value: "http://{{ .Release.Name }}-codex-exec-gateway.{{ .Release.Namespace }}.svc:{{ .Values.codexExecGateway.port }}"
