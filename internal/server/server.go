@@ -369,6 +369,9 @@ func (s *Server) Router() http.Handler {
 		r.Put("/api/workspaces/{id}/members/{userId}", s.handleUpdateMemberRole)
 		r.Delete("/api/workspaces/{id}/members/{userId}", s.handleRemoveMember)
 
+		// Workspace operations log (read-only, member-gated, wraps /internal/operations)
+		r.Get("/api/workspaces/{id}/operations", s.getWorkspaceOperations)
+
 		// Workspace LLM quota (read-only for members)
 		r.Get("/api/workspaces/{id}/llm-quota", s.handleGetWorkspaceLLMQuota)
 

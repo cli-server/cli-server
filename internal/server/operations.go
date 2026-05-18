@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/agentserver/agentserver/internal/db"
 )
 
@@ -165,4 +167,25 @@ func (s *Server) getInternalOperations(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"operations": out})
+}
+
+// getWorkspaceOperations is GET /api/workspaces/{id}/operations.
+// User-session authed via the existing chi protected group; workspace
+// membership enforced. Filter query params are the same as
+// getInternalOperations; workspace_id is forced from the URL so a
+// caller can't query a workspace they're not a member of.
+func (s *Server) getWorkspaceOperations(w http.ResponseWriter, r *http.Request) {
+	wsID := chi.URLParam(r, "id")
+	if wsID == "" {
+		http.Error(w, "workspace id required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := s.requireWorkspaceMember(w, r, wsID); !ok {
+		return // requireWorkspaceMember has already written the response
+	}
+	// Force workspace_id from the URL; ignore any user-supplied query value.
+	q := r.URL.Query()
+	q.Set("workspace_id", wsID)
+	r.URL.RawQuery = q.Encode()
+	s.getInternalOperations(w, r)
 }
