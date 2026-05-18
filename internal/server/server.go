@@ -86,6 +86,11 @@ type Server struct {
 	ExecutorsClient            *ExecutorsClient
 	CodexExecGatewayPublicHost string // e.g. "codex-exec.example.com" — used to compose connect commands
 
+	// OperationsRetention is the TTL for rows in the operations table.
+	// 0 disables the background retention loop. Configurable via
+	// AGENTSERVER_OPERATIONS_RETENTION_DAYS (default 90).
+	OperationsRetention time.Duration
+
 	// In-memory pending device code flows (OIDC credential creation).
 	deviceFlows   map[string]*pendingDeviceFlow
 	deviceFlowsMu sync.Mutex

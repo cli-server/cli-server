@@ -234,6 +234,18 @@ var serveCmd = &cobra.Command{
 		}
 		srv.CodexExecGatewayPublicHost = os.Getenv("CODEX_EXEC_GATEWAY_PUBLIC_HOST")
 
+		// Operations retention TTL — 90 days default, 0 disables. Env var
+		// AGENTSERVER_OPERATIONS_RETENTION_DAYS overrides.
+		retentionDays := 90
+		if v := os.Getenv("AGENTSERVER_OPERATIONS_RETENTION_DAYS"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				retentionDays = n
+			} else {
+				log.Printf("Warning: AGENTSERVER_OPERATIONS_RETENTION_DAYS=%q invalid, using default %d", v, retentionDays)
+			}
+		}
+		srv.OperationsRetention = time.Duration(retentionDays) * 24 * time.Hour
+
 		// Hydra OAuth2 for agent Device Flow.
 		hydraAdminURL := os.Getenv("HYDRA_ADMIN_URL")
 		hydraPublicURL := os.Getenv("HYDRA_PUBLIC_URL")
@@ -284,6 +296,9 @@ var serveCmd = &cobra.Command{
 		// Leak worker: cleans up stale active turns and responders.
 		lw := server.NewLeakWorker(srv, server.LeakWorkerConfig{})
 		go lw.Run(healthCtx)
+
+		// Operations retention background loop. Disabled when TTL is 0.
+		go srv.StartRetentionLoop(healthCtx, srv.OperationsRetention, time.Hour)
 
 		httpServer := &http.Server{Addr: addr, Handler: srv.Router()}
 
