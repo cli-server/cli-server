@@ -70,7 +70,7 @@ import { SandboxList } from './SandboxList'
 
 export type Tab =
   | 'overview'
-  | 'browser'
+  | 'explorers'
   | 'executor'
   | 'sandbox'
   | 'llm'
@@ -142,9 +142,9 @@ export function WorkspaceDetail({ workspace, onRename, initialTab, sandboxOverri
 
   const sidebarItems: { key: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { key: 'overview', label: 'Overview', icon: <LayoutDashboard size={16} /> },
-    { key: 'browser', label: 'Browser', icon: <Globe size={16} /> },
-    { key: 'executor', label: 'Executor', icon: <Server size={16} /> },
-    { key: 'sandbox', label: 'Sandbox', icon: <Box size={16} /> },
+    { key: 'explorers', label: 'Explorers', icon: <Globe size={16} /> },
+    { key: 'executor', label: 'Executors', icon: <Server size={16} /> },
+    { key: 'sandbox', label: 'Sandboxes', icon: <Box size={16} /> },
     { key: 'llm', label: 'LLM', icon: <Brain size={16} /> },
     { key: 'im', label: 'IM', icon: <Bot size={16} /> },
     { key: 'traces', label: 'Traces', icon: <MessageSquare size={16} />, badge: tracesTotal > 0 ? tracesTotal : undefined },
@@ -194,8 +194,8 @@ export function WorkspaceDetail({ workspace, onRename, initialTab, sandboxOverri
               onRename={onRename}
             />
           )}
-          {tab === 'browser' && (
-            <BrowserPanel workspaceId={workspace.id} />
+          {tab === 'explorers' && (
+            <ExplorersPanel workspaceId={workspace.id} />
           )}
           {tab === 'executor' && (
             <RemoteExecutorsPanel workspaceId={workspace.id} />
@@ -322,7 +322,7 @@ function OverviewTab({ workspace, sbxQuota, defaults, llmQuota, onRename }: {
   )
 }
 
-function BrowserPanel({ workspaceId }: { workspaceId: string }) {
+function ExplorersPanel({ workspaceId }: { workspaceId: string }) {
   return (
     <div className="flex flex-col gap-6">
       <CodexTokensPanel workspaceId={workspaceId} />
