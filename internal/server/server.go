@@ -24,6 +24,7 @@ import (
 	"github.com/agentserver/agentserver/internal/bridge"
 	"github.com/agentserver/agentserver/internal/db"
 	"github.com/agentserver/agentserver/internal/namespace"
+	"github.com/agentserver/agentserver/internal/notebooksupervisor"
 	"github.com/agentserver/agentserver/internal/process"
 	"github.com/agentserver/agentserver/internal/sbxstore"
 	"github.com/agentserver/agentserver/internal/shortid"
@@ -85,6 +86,12 @@ type Server struct {
 	// Codex exec gateway
 	ExecutorsClient            *ExecutorsClient
 	CodexExecGatewayPublicHost string // e.g. "codex-exec.example.com" — used to compose connect commands
+
+	// NotebookSupervisor manages per-workspace Jupyter notebook pods.
+	// nil when no k8s client is available (e.g. docker backend or k8s
+	// init failure). Plan 3b's handler reads this; do not access until
+	// boot completes.
+	NotebookSupervisor *notebooksupervisor.Supervisor
 
 	// In-memory pending device code flows (OIDC credential creation).
 	deviceFlows   map[string]*pendingDeviceFlow
