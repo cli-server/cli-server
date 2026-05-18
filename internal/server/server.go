@@ -99,6 +99,16 @@ type Server struct {
 	// with — both come from the same Helm Secret in production.
 	NotebookJWTSecret []byte
 
+	// NotebookHostBaseDomain enables the per-workspace notebook subdomain
+	// vhost (e.g. "agent.cs.ac.cn" → "nb-<8hex>.agent.cs.ac.cn"). Empty
+	// disables the vhost; postNotebookSession falls back to returning the
+	// legacy "/api/notebooks/{ws}/lab" path-based proxy URL.
+	NotebookHostBaseDomain string
+
+	// NotebookSubdomainPrefix is the leftmost label of the vhost (default
+	// "nb"). Subdomain pattern: "{prefix}-{ws_short}.{baseDomain}".
+	NotebookSubdomainPrefix string
+
 	// testNotebookUpstream, if non-nil, replaces the supervisor lookup
 	// in notebookProxy. ONLY used in tests; never set in production.
 	testNotebookUpstream func(wsID string) (string, error)
@@ -191,6 +201,22 @@ func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+
+	// Per-workspace notebook subdomain vhost (e.g. nb-<8hex>.agent.cs.ac.cn).
+	// When the Host matches, dispatch every path to notebookVhost and
+	// SHORT-CIRCUIT the rest of the router so paths like /lab don't
+	// accidentally hit a chi 404.
+	if s.NotebookHostBaseDomain != "" {
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if short := s.notebookVhostHostMatch(req); short != "" {
+					s.notebookVhost(w, req, short)
+					return
+				}
+				next.ServeHTTP(w, req)
+			})
+		})
+	}
 
 	// Health endpoint (no auth required, for K8s probes)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {

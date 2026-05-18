@@ -18,6 +18,24 @@ import (
 // tokens on every subsequent HTTP request.
 const notebookSessionTTL = 10 * time.Minute
 
+// notebookSessionURL returns the URL the frontend should open to
+// reach JupyterLab for the given workspace. When the per-workspace
+// subdomain vhost is configured (NotebookHostBaseDomain non-empty)
+// it returns an absolute URL that triggers the token-for-cookie
+// exchange. Otherwise it falls back to the legacy in-router proxy
+// path.
+func (s *Server) notebookSessionURL(wsID, tok string) string {
+	if s.NotebookHostBaseDomain == "" {
+		return "/api/notebooks/" + wsID + "/lab"
+	}
+	short := wsID
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	return "https://" + s.notebookSubdomainPrefixOrDefault() + "-" + short +
+		"." + s.NotebookHostBaseDomain + "/auth?token=" + tok
+}
+
 // postNotebookSession is POST /api/notebooks/{ws}/session.
 //
 // Auth: cookie session middleware (s.Auth.Middleware) populates the
@@ -95,7 +113,7 @@ func (s *Server) postNotebookSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"url":        "/api/notebooks/" + wsID + "/lab",
+		"url":        s.notebookSessionURL(wsID, tok),
 		"token":      tok,
 		"expires_at": time.Now().Add(notebookSessionTTL).Unix(),
 	}

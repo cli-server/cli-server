@@ -344,6 +344,11 @@ var serveCmd = &cobra.Command{
 			if v := os.Getenv("NOTEBOOK_JWT_SECRET"); v != "" {
 				srv.NotebookJWTSecret = []byte(v)
 			}
+			// Per-workspace notebook subdomain vhost. Empty disables the
+			// vhost; postNotebookSession falls back to returning the
+			// legacy "/api/notebooks/{ws}/lab" relative URL.
+			srv.NotebookHostBaseDomain = os.Getenv("NOTEBOOK_HOST_BASE_DOMAIN")
+			srv.NotebookSubdomainPrefix = envOrDefault("NOTEBOOK_SUBDOMAIN_PREFIX", "nb")
 		}
 
 		// Operations retention background loop. Disabled when TTL is 0.

@@ -411,3 +411,13 @@ notebook:
   workspacePVCName: "agent-ws-{workspace_id_short}-disk"
   jwtSecret: ""  # Empty = feature disabled. Generate with `openssl rand -hex 32`
   baseURLPattern: "/api/notebooks/{workspace_id}/"
+  # Per-workspace notebook subdomain vhost (Plan 3c follow-up).
+  # When baseDomain is non-empty, the session endpoint returns
+  #   https://{prefix}-{workspace_id_short}.{baseDomain}/auth?token=…
+  # which sets an HttpOnly cookie and 302s to /lab. The reverse proxy
+  # then forwards the full path to Jupyter (base_url=/ on the upstream).
+  # When baseDomain is empty, the legacy /api/notebooks/{ws}/lab proxy
+  # on the main host is used.
+  host:
+    baseDomain: ""
+    subdomainPrefix: "nb"

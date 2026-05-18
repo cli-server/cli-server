@@ -282,7 +282,17 @@ spec:
               value: {{ .Values.notebook.jwtSecret | quote }}
             {{- end }}
             - name: NOTEBOOK_BASE_URL_PATTERN
+              {{- if .Values.notebook.host.baseDomain }}
+              value: "/"
+              {{- else }}
               value: {{ .Values.notebook.baseURLPattern | quote }}
+              {{- end }}
+            {{- if .Values.notebook.host.baseDomain }}
+            - name: NOTEBOOK_HOST_BASE_DOMAIN
+              value: {{ .Values.notebook.host.baseDomain | quote }}
+            - name: NOTEBOOK_SUBDOMAIN_PREFIX
+              value: {{ .Values.notebook.host.subdomainPrefix | quote }}
+            {{- end }}
             - name: NOTEBOOK_IMAGE
               value: {{ printf "%s:%s" .Values.notebook.image.repository .Values.notebook.image.tag | quote }}
             - name: NOTEBOOK_IMAGE_PULL_POLICY
