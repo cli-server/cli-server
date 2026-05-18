@@ -58,8 +58,8 @@ export default function NotebooksPanel({ workspaceId }: Props) {
 
   if (loading && !session) {
     return (
-      <div className="flex items-center justify-center h-96 text-gray-500">
-        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+      <div className="flex h-96 items-center justify-center text-sm text-[var(--muted-foreground)]">
+        <Loader2 size={16} className="mr-2 animate-spin" />
         Starting notebook environment…
       </div>
     )
@@ -67,11 +67,11 @@ export default function NotebooksPanel({ workspaceId }: Props) {
 
   if (error) {
     return (
-      <div className="flex items-start gap-3 p-4 border border-red-300 bg-red-50 rounded">
-        <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+      <div className="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-4">
+        <AlertCircle size={18} className="mt-0.5 shrink-0 text-red-400" />
         <div>
-          <div className="font-medium text-red-900">Could not start notebook</div>
-          <div className="text-sm text-red-800 mt-1 whitespace-pre-wrap">{error}</div>
+          <div className="text-sm font-medium text-[var(--foreground)]">Could not start notebook</div>
+          <div className="mt-1 whitespace-pre-wrap text-xs text-red-400">{error}</div>
         </div>
       </div>
     )
@@ -82,12 +82,12 @@ export default function NotebooksPanel({ workspaceId }: Props) {
   const iframeSrc = `${session.url}?token=${encodeURIComponent(session.token)}`
 
   return (
-    <div className="h-[80vh] w-full">
+    <div className="h-[80vh] w-full overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)]">
       <iframe
         key={session.token}
         src={iframeSrc}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-        className="w-full h-full border rounded"
+        className="h-full w-full"
         title="Notebook"
       />
     </div>

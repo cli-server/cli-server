@@ -18,6 +18,7 @@ interface SandboxListProps {
   onRefreshSandboxes: () => void
   creating: boolean
   setCreating: (v: boolean) => void
+  variant?: 'rail' | 'flat'
 }
 
 function StatusDot({ status }: { status: string }) {
@@ -44,7 +45,9 @@ export function SandboxList({
   onRefreshSandboxes,
   creating,
   setCreating,
+  variant = 'rail',
 }: SandboxListProps) {
+  const isFlat = variant === 'flat'
   const navigate = useNavigate()
   const location = useLocation()
   const sandboxMatch = location.pathname.match(/\/sandboxes\/(.+)$/)
@@ -156,7 +159,11 @@ export function SandboxList({
   }
 
   return (
-    <div className="flex h-full w-60 flex-col border-r border-[var(--border)] bg-[var(--muted)]">
+    <div className={
+      isFlat
+        ? 'flex h-full w-full flex-col rounded-lg border border-[var(--border)] bg-[var(--card)] overflow-hidden'
+        : 'flex h-full w-60 flex-col border-r border-[var(--border)] bg-[var(--muted)]'
+    }>
       {/* Sandbox header */}
       <div className="flex items-center justify-between border-b border-[var(--border)] p-3">
         <div className="flex items-center gap-1.5">
@@ -226,7 +233,7 @@ export function SandboxList({
                   code
                 </span>
               )}
-              <div className="hidden gap-0.5 group-hover:flex">
+              <div className={isFlat ? 'flex gap-0.5' : 'hidden gap-0.5 group-hover:flex'}>
                 {!sbx.is_local && sbx.status === 'running' && (
                   <button
                     onClick={(e) => handlePause(sbx.id, e)}

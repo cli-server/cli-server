@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import {
   Clock,
   Users,
@@ -18,6 +19,7 @@ import {
   Globe,
   Server,
   Brain,
+  Activity,
 } from 'lucide-react'
 import {
   listMembers,
@@ -74,6 +76,7 @@ export type Tab =
   | 'llm'
   | 'im'
   | 'traces'
+  | 'operations'
   | 'credentials'
   | 'members'
   | 'settings'
@@ -82,10 +85,20 @@ interface WorkspaceDetailProps {
   workspace: Workspace
   onRename?: (id: string, name: string) => void
   initialTab?: Tab
+  sandboxOverride?: React.ReactNode
 }
 
-export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDetailProps) {
+export function WorkspaceDetail({ workspace, onRename, initialTab, sandboxOverride }: WorkspaceDetailProps) {
   const [tab, setTab] = useState<Tab>(initialTab ?? 'sandbox')
+  const navigate = useNavigate()
+  const location = useLocation()
+  const selectTab = (next: Tab) => {
+    setTab(next)
+    // If we're on a sub-route like /sandboxes/:id, return to the workspace root so the URL matches the visible tab.
+    if (location.pathname !== `/w/${workspace.id}`) {
+      navigate(`/w/${workspace.id}`)
+    }
+  }
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [sbxQuota, setSbxQuota] = useState<{ current: number; max: number } | null>(null)
   const [defaults, setDefaults] = useState<WorkspaceSandboxDefaults | null>(null)
@@ -93,8 +106,6 @@ export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDe
   const [traces, setTraces] = useState<TraceItem[]>([])
   const [tracesTotal, setTracesTotal] = useState(0)
   const [tracesPage, setTracesPage] = useState(0)
-  const [editing, setEditing] = useState(false)
-  const [editName, setEditName] = useState(workspace.name)
 
   useEffect(() => {
     setTab(initialTab ?? 'sandbox')
@@ -130,65 +141,21 @@ export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDe
   const fetchDetail = useCallback((traceId: string) => getWorkspaceTraceDetail(workspace.id, traceId), [workspace.id])
 
   const sidebarItems: { key: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
-    { key: 'overview', label: 'Overview', icon: <LayoutDashboard size={15} /> },
-    { key: 'browser', label: 'Browser 管理', icon: <Globe size={15} /> },
-    { key: 'executor', label: 'Executor 管理', icon: <Server size={15} /> },
-    { key: 'sandbox', label: 'Sandbox 管理', icon: <Box size={15} /> },
-    { key: 'llm', label: 'LLM 管理', icon: <Brain size={15} /> },
-    { key: 'im', label: 'IM 管理', icon: <Bot size={15} /> },
-    { key: 'traces', label: 'Traces 管理', icon: <MessageSquare size={15} />, badge: tracesTotal > 0 ? tracesTotal : undefined },
-    { key: 'credentials', label: 'Credential 管理', icon: <Key size={15} /> },
-    { key: 'members', label: 'Member 管理', icon: <Users size={15} />, badge: members.length > 0 ? members.length : undefined },
-    { key: 'settings', label: 'Settings', icon: <Settings size={15} /> },
+    { key: 'overview', label: 'Overview', icon: <LayoutDashboard size={16} /> },
+    { key: 'browser', label: 'Browser', icon: <Globe size={16} /> },
+    { key: 'executor', label: 'Executor', icon: <Server size={16} /> },
+    { key: 'sandbox', label: 'Sandbox', icon: <Box size={16} /> },
+    { key: 'llm', label: 'LLM', icon: <Brain size={16} /> },
+    { key: 'im', label: 'IM', icon: <Bot size={16} /> },
+    { key: 'traces', label: 'Traces', icon: <MessageSquare size={16} />, badge: tracesTotal > 0 ? tracesTotal : undefined },
+    { key: 'operations', label: 'Operations', icon: <Activity size={16} /> },
+    { key: 'credentials', label: 'Credentials', icon: <Key size={16} /> },
+    { key: 'members', label: 'Members', icon: <Users size={16} />, badge: members.length > 0 ? members.length : undefined },
+    { key: 'settings', label: 'Settings', icon: <Settings size={16} /> },
   ]
 
   return (
     <div className="flex h-full w-full flex-col">
-      {/* Header */}
-      <div className="shrink-0 border-b border-[var(--border)] bg-[var(--card)] px-6 py-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              {editing ? (
-                <input
-                  autoFocus
-                  className="text-lg font-semibold text-[var(--foreground)] bg-transparent border-b border-[var(--border)] outline-none"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const trimmed = editName.trim()
-                      if (trimmed && trimmed !== workspace.name) {
-                        renameWorkspace(workspace.id, trimmed).then(() => onRename?.(workspace.id, trimmed)).catch(() => {})
-                      }
-                      setEditing(false)
-                    } else if (e.key === 'Escape') {
-                      setEditName(workspace.name)
-                      setEditing(false)
-                    }
-                  }}
-                  onBlur={() => {
-                    const trimmed = editName.trim()
-                    if (trimmed && trimmed !== workspace.name) {
-                      renameWorkspace(workspace.id, trimmed).then(() => onRename?.(workspace.id, trimmed)).catch(() => {})
-                    }
-                    setEditing(false)
-                  }}
-                />
-              ) : (
-                <>
-                  <h1 className="text-lg font-semibold text-[var(--foreground)] truncate">{workspace.name}</h1>
-                  <button onClick={() => { setEditName(workspace.name); setEditing(true) }} className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
-                    <Pencil size={14} />
-                  </button>
-                </>
-              )}
-            </div>
-            <div className="mt-1 text-xs text-[var(--muted-foreground)]">Workspace</div>
-          </div>
-        </div>
-      </div>
-
       {/* Body: sidebar + content */}
       <div className="flex min-h-0 flex-1">
         {/* Sidebar */}
@@ -197,8 +164,8 @@ export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDe
             {sidebarItems.map((t) => (
               <button
                 key={t.key}
-                onClick={() => setTab(t.key)}
-                className={`inline-flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                onClick={() => selectTab(t.key)}
+                className={`inline-flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                   tab === t.key
                     ? 'bg-[var(--secondary)] text-[var(--foreground)]'
                     : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)]/50'
@@ -224,6 +191,7 @@ export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDe
               sbxQuota={sbxQuota}
               defaults={defaults}
               llmQuota={llmQuota}
+              onRename={onRename}
             />
           )}
           {tab === 'browser' && (
@@ -233,7 +201,7 @@ export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDe
             <RemoteExecutorsPanel workspaceId={workspace.id} />
           )}
           {tab === 'sandbox' && (
-            <SandboxPanel workspaceId={workspace.id} />
+            sandboxOverride ?? <SandboxPanel workspaceId={workspace.id} />
           )}
           {tab === 'llm' && (
             <LLMTab workspaceId={workspace.id} />
@@ -242,18 +210,18 @@ export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDe
             <IMTab workspaceId={workspace.id} />
           )}
           {tab === 'traces' && (
-            <div className="flex flex-col gap-6">
-              <TracesTab
-                traces={traces}
-                tracesTotal={tracesTotal}
-                tracesPage={tracesPage}
-                totalPages={totalPages}
-                onPageChange={setTracesPage}
-                fetchDetail={fetchDetail}
-                showSandboxId
-              />
-              <OperationsPanel workspaceId={workspace.id} />
-            </div>
+            <TracesTab
+              traces={traces}
+              tracesTotal={tracesTotal}
+              tracesPage={tracesPage}
+              totalPages={totalPages}
+              onPageChange={setTracesPage}
+              fetchDetail={fetchDetail}
+              showSandboxId
+            />
+          )}
+          {tab === 'operations' && (
+            <OperationsPanel workspaceId={workspace.id} />
           )}
           {tab === 'credentials' && (
             <CredentialsTab workspaceId={workspace.id} />
@@ -274,15 +242,49 @@ export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDe
   )
 }
 
-function OverviewTab({ workspace, sbxQuota, defaults, llmQuota }: {
+function OverviewTab({ workspace, sbxQuota, defaults, llmQuota, onRename }: {
   workspace: Workspace
   sbxQuota: { current: number; max: number } | null
   defaults: WorkspaceSandboxDefaults | null
   llmQuota: WorkspaceLLMQuota | null
+  onRename?: (id: string, name: string) => void
 }) {
   const effectiveMaxRpd = llmQuota?.workspace_quota?.max_rpd ?? llmQuota?.default_max_rpd ?? null
+  const [editing, setEditing] = useState(false)
+  const [editName, setEditName] = useState(workspace.name)
+  const commit = () => {
+    const trimmed = editName.trim()
+    if (trimmed && trimmed !== workspace.name) {
+      renameWorkspace(workspace.id, trimmed).then(() => onRename?.(workspace.id, trimmed)).catch(() => {})
+    }
+    setEditing(false)
+  }
   return (
     <div className="flex flex-col gap-6 max-w-3xl">
+      {/* Name + rename */}
+      <div className="flex items-center gap-2">
+        {editing ? (
+          <input
+            autoFocus
+            className="text-xl font-semibold text-[var(--foreground)] bg-transparent border-b border-[var(--border)] outline-none"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commit()
+              else if (e.key === 'Escape') { setEditName(workspace.name); setEditing(false) }
+            }}
+            onBlur={commit}
+          />
+        ) : (
+          <>
+            <h1 className="text-xl font-semibold text-[var(--foreground)] truncate">{workspace.name}</h1>
+            <button onClick={() => { setEditName(workspace.name); setEditing(true) }} className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]" title="Rename workspace">
+              <Pencil size={14} />
+            </button>
+          </>
+        )}
+      </div>
+
       {/* Info cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <InfoCard icon={<Clock size={14} />} label="Created" value={new Date(workspace.created_at).toLocaleString()} />
@@ -337,16 +339,15 @@ function SandboxPanel({ workspaceId }: { workspaceId: string }) {
   }, [workspaceId])
   useEffect(() => { refresh() }, [refresh])
   return (
-    <div className="-m-6 flex h-[calc(100%+3rem)]">
-      <SandboxList
-        selectedWorkspaceId={workspaceId}
-        sandboxes={sandboxes}
-        setSandboxes={setSandboxes}
-        onRefreshSandboxes={refresh}
-        creating={creating}
-        setCreating={setCreating}
-      />
-    </div>
+    <SandboxList
+      selectedWorkspaceId={workspaceId}
+      sandboxes={sandboxes}
+      setSandboxes={setSandboxes}
+      onRefreshSandboxes={refresh}
+      creating={creating}
+      setCreating={setCreating}
+      variant="flat"
+    />
   )
 }
 
@@ -957,7 +958,7 @@ function SettingsTab({ workspace }: { workspace: Workspace }) {
         </div>
       </div>
       <p className="mt-3 text-xs text-[var(--muted-foreground)]">
-        To rename this workspace, use the pencil icon next to the name in the header.
+        To rename this workspace, use the pencil icon next to the name in the Overview tab.
       </p>
     </div>
   )
