@@ -7,7 +7,6 @@ Handler signature: `handler(params: dict) -> result_dict | {"error": {...}}`.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any, Callable
 
