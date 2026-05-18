@@ -215,6 +215,18 @@ credentialproxy:
 internal:
   apiSecret: ""
 
+# Operation log (Plan 2): codex-app-gateway records every MCP tool call to
+# agentserver's /internal/operations endpoint for audit + replay.
+operations:
+  # When true, codex-app-gateway POSTs every mcpServer/tool/call to
+  # agentserver's /internal/operations. Disable to revert to pre-Plan-2
+  # behavior (no logging).
+  enabled: true
+  # Retention in days. 0 disables the cleanup loop.
+  retentionDays: 90
+  # Bounded channel capacity inside the gateway. Drops on overflow.
+  channelCapacity: 1024
+
 # cc-broker: runs Claude Code workers on demand and exposes the bridge +
 # MCP server used by stateless-CC sessions.
 ccbroker:

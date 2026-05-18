@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System deps kept tiny — jupyter is pure-python.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates tini \
+ && rm -rf /var/lib/apt/lists/*
+
+# Install jupyter + ipykernel
+RUN pip install --no-cache-dir \
+      jupyter-server~=2.14 \
+      jupyterlab~=4.2 \
+      ipykernel~=6.29
+
+# Install agentserver-sdk from local source.
+COPY sdk/python /tmp/sdk
+RUN pip install --no-cache-dir /tmp/sdk && rm -rf /tmp/sdk
+
+# IPython startup hook → injects `ctx`
+RUN mkdir -p /etc/ipython/profile_default/startup
+COPY notebook/ipython_startup/00-ctx.py /etc/ipython/profile_default/startup/
+
+# Jupyter config
+COPY notebook/jupyter_server_config.py /etc/jupyter/
+
+# Workspace mount point — host bind or k8s PV later.
+RUN mkdir -p /workspace
+WORKDIR /workspace
+
+ENV IPYTHONDIR=/etc/ipython \
+    JUPYTER_CONFIG_DIR=/etc/jupyter
+
+EXPOSE 8888
+ENTRYPOINT ["tini", "--", "jupyter", "server", "--config=/etc/jupyter/jupyter_server_config.py"]

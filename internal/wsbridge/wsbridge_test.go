@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -183,4 +184,219 @@ func TestPumpFrames_PreservesTextAndBinary(t *testing.T) {
 
 	cliA.Close(websocket.StatusNormalClosure, "")
 	cliB.Close(websocket.StatusNormalClosure, "")
+}
+
+// newWSPair returns two server-side websocket conns. They are the
+// "bridge ends" the tests pass to RunProxyWithInterceptor. The
+// corresponding client-side dial conns are stashed and the
+// writeText/readText helpers route through them automatically by
+// looking up the pair in pairRegistry.
+//
+// Why two ends rather than one conn-pair: RunProxyWithInterceptor
+// reads from `a`, writes to `b`, and vice versa. To exercise that, the
+// test must inject a frame into `a` from the "other side" (so the
+// pump's Read on `a` returns it) and observe a forwarded frame out the
+// other side of `b`. That requires four endpoints: a-server (bridge),
+// a-client (test), b-server (bridge), b-client (test).
+func newWSPair(t *testing.T) (*websocket.Conn, *websocket.Conn) {
+	t.Helper()
+	srvCh := func() (*httptest.Server, chan *websocket.Conn) {
+		ch := make(chan *websocket.Conn, 1)
+		hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ws, err := websocket.Accept(w, r, nil)
+			if err != nil {
+				return
+			}
+			ch <- ws
+			<-r.Context().Done()
+		}))
+		return hs, ch
+	}
+	hsA, chA := srvCh()
+	t.Cleanup(hsA.Close)
+	hsB, chB := srvCh()
+	t.Cleanup(hsB.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cliA, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(hsA.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial A: %v", err)
+	}
+	cliB, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(hsB.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial B: %v", err)
+	}
+	srvA := <-chA
+	srvB := <-chB
+	t.Cleanup(func() {
+		cliA.Close(websocket.StatusNormalClosure, "")
+		cliB.Close(websocket.StatusNormalClosure, "")
+	})
+	// Register the client-side counterparts so writeText/readText can
+	// find them when given the server-side conns.
+	pairRegistry.Lock()
+	if pairRegistry.m == nil {
+		pairRegistry.m = map[*websocket.Conn]*websocket.Conn{}
+	}
+	pairRegistry.m[srvA] = cliA
+	pairRegistry.m[srvB] = cliB
+	pairRegistry.Unlock()
+	t.Cleanup(func() {
+		pairRegistry.Lock()
+		delete(pairRegistry.m, srvA)
+		delete(pairRegistry.m, srvB)
+		pairRegistry.Unlock()
+	})
+	return srvA, srvB
+}
+
+// pairRegistry maps a bridge-side conn to its client-side counterpart
+// so writeText/readText can route a "write on a" → "actually write on
+// the client end of a so the bridge reads it" without changing the
+// test surface.
+var pairRegistry = struct {
+	sync.Mutex
+	m map[*websocket.Conn]*websocket.Conn
+}{}
+
+func pairOf(c *websocket.Conn) *websocket.Conn {
+	pairRegistry.Lock()
+	defer pairRegistry.Unlock()
+	if peer, ok := pairRegistry.m[c]; ok {
+		return peer
+	}
+	return c
+}
+
+// writeText writes a text frame "to c" — but actually writes on c's
+// client-side peer so the bridge reading from c receives it.
+func writeText(c *websocket.Conn, s string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return pairOf(c).Write(ctx, websocket.MessageText, []byte(s))
+}
+
+// readText reads a text frame "from c" — but actually reads on c's
+// client-side peer so it observes what the bridge wrote to c.
+func readText(t *testing.T, c *websocket.Conn) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	mt, data, err := pairOf(c).Read(ctx)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if mt != websocket.MessageText {
+		t.Fatalf("expected text frame, got %v", mt)
+	}
+	return string(data)
+}
+
+func TestRunProxyWithInterceptor_CallbacksAndRewrite(t *testing.T) {
+	a, b := newWSPair(t)
+	defer a.Close(websocket.StatusNormalClosure, "")
+	defer b.Close(websocket.StatusNormalClosure, "")
+
+	var (
+		ctc, stc [][]byte
+		mu       sync.Mutex
+	)
+	intc := wsbridge.Interceptor{
+		OnClientFrame: func(frame []byte) []byte {
+			mu.Lock()
+			defer mu.Unlock()
+			ctc = append(ctc, append([]byte(nil), frame...))
+			return nil
+		},
+		OnServerFrame: func(frame []byte) []byte {
+			mu.Lock()
+			defer mu.Unlock()
+			stc = append(stc, append([]byte(nil), frame...))
+			if string(frame) == "swap-me" {
+				return []byte(`{"intercepted":true}`)
+			}
+			return nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go wsbridge.RunProxyWithInterceptor(ctx, a, b, intc, nil)
+
+	if err := writeText(a, "hello-server"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readText(t, b); got != "hello-server" {
+		t.Fatalf("server got %q", got)
+	}
+
+	if err := writeText(b, "swap-me"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readText(t, a); got != `{"intercepted":true}` {
+		t.Fatalf("client got %q", got)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ctc) != 1 || string(ctc[0]) != "hello-server" {
+		t.Fatalf("ctc=%q", ctc)
+	}
+	if len(stc) != 1 || string(stc[0]) != "swap-me" {
+		t.Fatalf("stc=%q", stc)
+	}
+}
+
+func TestRunProxyWithInterceptor_DropFrameSwallows(t *testing.T) {
+	a, b := newWSPair(t)
+	defer a.Close(websocket.StatusNormalClosure, "")
+	defer b.Close(websocket.StatusNormalClosure, "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go wsbridge.RunProxyWithInterceptor(ctx, a, b, wsbridge.Interceptor{
+		OnClientFrame: func(frame []byte) []byte {
+			if string(frame) == "drop-me" {
+				return wsbridge.DropFrame
+			}
+			return nil
+		},
+	}, nil)
+
+	if err := writeText(a, "drop-me"); err != nil {
+		t.Fatal(err)
+	}
+	// b must not receive the dropped frame within a window. Read on b's
+	// client-side peer; the bridge's write-out of b is what we'd see.
+	bctx, bcancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer bcancel()
+	_, _, err := pairOf(b).Read(bctx)
+	if err == nil {
+		t.Fatal("b should not have received the dropped frame")
+	}
+}
+
+func TestRunProxyWithInterceptor_NilCallbacksForwardUnchanged(t *testing.T) {
+	a, b := newWSPair(t)
+	defer a.Close(websocket.StatusNormalClosure, "")
+	defer b.Close(websocket.StatusNormalClosure, "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// All-nil interceptor — should behave exactly like RunProxy
+	go wsbridge.RunProxyWithInterceptor(ctx, a, b, wsbridge.Interceptor{}, nil)
+
+	if err := writeText(a, "ping"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readText(t, b); got != "ping" {
+		t.Fatalf("got %q", got)
+	}
+	if err := writeText(b, "pong"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readText(t, a); got != "pong" {
+		t.Fatalf("got %q", got)
+	}
 }

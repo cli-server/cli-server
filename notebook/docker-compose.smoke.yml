@@ -1,0 +1,31 @@
+# Local smoke test: jupyter + stub gateway, no agentserver backend.
+# Run:  docker compose -f notebook/docker-compose.smoke.yml up --build
+# Open: http://localhost:8888/lab
+services:
+  stub-gateway:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ../sdk/python/tests/stub_gateway.py:/app/stub_gateway.py:ro
+      - ./stub_gateway_runner.py:/app/runner.py:ro
+    command: >
+      sh -c "pip install --quiet websockets~=14.0 &&
+             python /app/runner.py"
+    ports:
+      - "8086:8086"
+
+  notebook:
+    build:
+      context: ..
+      dockerfile: Dockerfile.notebook
+    depends_on:
+      - stub-gateway
+    environment:
+      AGENTSERVER_GATEWAY_URL: ws://stub-gateway:8086
+      AGENTSERVER_WORKSPACE_TOKEN: smoke-token
+      AGENTSERVER_WORKSPACE_ID: smoke-ws
+      AGENTSERVER_USER_ID: smoke-user
+    volumes:
+      - ./smoke-workspace:/workspace
+    ports:
+      - "8888:8888"

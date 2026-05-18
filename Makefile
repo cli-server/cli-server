@@ -56,3 +56,16 @@ docker-openclaw:
 	docker build -f Dockerfile.openclaw -t openclaw-agent:latest .
 
 docker-all: docker docker-agent docker-llmproxy docker-credentialproxy
+
+sdk-test:
+	cd sdk/python && .venv/bin/pytest -v
+
+sdk-lint:
+	cd sdk/python && .venv/bin/ruff check . && .venv/bin/ruff format --check .
+
+notebook-image:
+	docker build -f Dockerfile.notebook -t agentserver-notebook:dev .
+
+notebook-smoke: notebook-image
+	mkdir -p notebook/smoke-workspace
+	docker compose -f notebook/docker-compose.smoke.yml up --build

@@ -8,3 +8,4 @@ agentserver/dist/
 AuthKey_*.p8
 .worktrees/
 .claude/worktrees/
+notebook/smoke-workspace/

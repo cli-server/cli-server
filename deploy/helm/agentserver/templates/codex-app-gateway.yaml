@@ -121,6 +121,14 @@ spec:
               value: "http://{{ .Release.Name }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}"
             - name: CXG_AGENTSERVER_INTERNAL_SECRET
               value: {{ required "internal.apiSecret is required when codexAppGateway.enabled is true" .Values.internal.apiSecret | quote }}
+            {{- if .Values.operations.enabled }}
+            - name: CXG_OPLOG_URL
+              value: "http://{{ .Release.Name }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}/internal/operations"
+            - name: CXG_OPLOG_SECRET
+              value: {{ .Values.internal.apiSecret | quote }}
+            - name: CXG_OPLOG_CHAN
+              value: {{ .Values.operations.channelCapacity | quote }}
+            {{- end }}
           # CODEX_HOME tmpdirs (sqlite + session jsonl) live here. emptyDir
           # is sufficient because state is round-tripped to S3 on idle
           # shutdown — pod restart loses no data.
