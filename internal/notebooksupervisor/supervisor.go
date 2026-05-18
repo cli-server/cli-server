@@ -52,9 +52,21 @@ func (s *Supervisor) EnsureRunning(ctx context.Context, k Key) (*Handle, error) 
 
 	s.mu.Lock()
 	if e, ok := s.children[k]; ok {
-		e.lastActive = time.Now()
-		s.mu.Unlock()
-		return e.handle, nil
+		// Verify the Deployment still exists in k8s. An external
+		// `kubectl delete` (or any out-of-band cleanup) leaves the
+		// in-memory cache stale; returning the cached Handle would
+		// hand the caller a ServiceURL that DNS no longer resolves.
+		name, _ := k.SafeDeploymentName()
+		if _, err := s.k8s.AppsV1().Deployments(k.Namespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			e.lastActive = time.Now()
+			s.mu.Unlock()
+			return e.handle, nil
+		} else if !apierrors.IsNotFound(err) {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("verify cached deployment: %w", err)
+		}
+		// Deployment gone — evict and fall through to recreate.
+		delete(s.children, k)
 	}
 	s.mu.Unlock()
 

@@ -77,6 +77,38 @@ func TestEnsureRunning_IdempotentOnAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestEnsureRunning_EvictsStaleCacheWhenDeploymentDeletedOutOfBand(t *testing.T) {
+	c := fake.NewClientset()
+	sup := New(c, testConfig(), nil)
+	k := Key{WorkspaceID: "alpha", Namespace: "ns-alpha"}
+	markReady(c, "notebook-alpha", "ns-alpha")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := sup.EnsureRunning(ctx, k); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	// External delete (e.g. `kubectl delete deploy …`). The
+	// supervisor's in-memory cache still has the Handle but the
+	// Deployment + Service are gone.
+	if err := c.AppsV1().Deployments("ns-alpha").Delete(ctx, "notebook-alpha", metav1.DeleteOptions{}); err != nil {
+		t.Fatalf("external delete: %v", err)
+	}
+	if err := c.CoreV1().Services("ns-alpha").Delete(ctx, "notebook-alpha", metav1.DeleteOptions{}); err != nil {
+		t.Fatalf("external delete svc: %v", err)
+	}
+	// Re-arm ready so the recreate path can complete.
+	markReady(c, "notebook-alpha", "ns-alpha")
+
+	if _, err := sup.EnsureRunning(ctx, k); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	// The new Deployment should exist again.
+	if _, err := c.AppsV1().Deployments("ns-alpha").Get(ctx, "notebook-alpha", metav1.GetOptions{}); err != nil {
+		t.Errorf("deployment should be recreated after stale-cache eviction: %v", err)
+	}
+}
+
 func TestStop_DeletesDeploymentAndService(t *testing.T) {
 	c := fake.NewClientset()
 	sup := New(c, testConfig(), nil)
