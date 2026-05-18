@@ -137,3 +137,46 @@ func TestServiceURL(t *testing.T) {
 		t.Errorf("got=%q want=%q", got, want)
 	}
 }
+
+func TestBuildDeployment_PVCNameTemplateSubstitution(t *testing.T) {
+	c := Config{
+		Image:            "img:tag",
+		WorkspacePVCName: "ws-{workspace_id}-data",
+	}.WithDefaults()
+	k := Key{WorkspaceID: "alpha", Namespace: "ns-alpha"}
+
+	d, err := BuildDeployment(k, c)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var pvcName string
+	for _, v := range d.Spec.Template.Spec.Volumes {
+		if v.PersistentVolumeClaim != nil {
+			pvcName = v.PersistentVolumeClaim.ClaimName
+		}
+	}
+	if pvcName != "ws-alpha-data" {
+		t.Errorf("pvc name = %q, want ws-alpha-data", pvcName)
+	}
+}
+
+func TestBuildDeployment_PVCNameNoTemplate(t *testing.T) {
+	c := Config{
+		Image:            "img:tag",
+		WorkspacePVCName: "literal-pvc-name",
+	}.WithDefaults()
+	k := Key{WorkspaceID: "alpha", Namespace: "ns"}
+	d, err := BuildDeployment(k, c)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var pvcName string
+	for _, v := range d.Spec.Template.Spec.Volumes {
+		if v.PersistentVolumeClaim != nil {
+			pvcName = v.PersistentVolumeClaim.ClaimName
+		}
+	}
+	if pvcName != "literal-pvc-name" {
+		t.Errorf("pvc name = %q (no template should pass through literally)", pvcName)
+	}
+}

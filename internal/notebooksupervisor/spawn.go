@@ -2,6 +2,7 @@ package notebooksupervisor
 
 import (
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -56,6 +57,7 @@ func BuildDeployment(k Key, c Config) (*appsv1.Deployment, error) {
 			{Name: workspaceVolumeName, MountPath: workspaceMountPath},
 		},
 	}
+	pvcName := strings.ReplaceAll(c.WorkspacePVCName, "{workspace_id}", k.WorkspaceID)
 	pod := corev1.PodSpec{
 		Containers: []corev1.Container{container},
 		Volumes: []corev1.Volume{
@@ -63,7 +65,7 @@ func BuildDeployment(k Key, c Config) (*appsv1.Deployment, error) {
 				Name: workspaceVolumeName,
 				VolumeSource: corev1.VolumeSource{
 					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: c.WorkspacePVCName,
+						ClaimName: pvcName,
 					},
 				},
 			},
