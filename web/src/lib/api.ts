@@ -1074,3 +1074,94 @@ export async function unbindRemoteExecutor(workspaceId: string, exeId: string): 
   const res = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/executors/${encodeURIComponent(exeId)}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Failed to unbind executor')
 }
+
+// === Notebook (Plan 3c) ===
+
+export interface NotebookSession {
+  url: string         // path to load in iframe (relative to current origin)
+  token: string       // JWT to include as ?token=
+  expires_at: number  // unix seconds
+}
+
+/**
+ * Mint a fresh notebook session. The returned token is good for 10 min.
+ * 503 if the notebook feature is not enabled for this deployment.
+ * 403 if the current user is not a workspace member.
+ *
+ * Backend endpoint added in Plan 3b (#86).
+ */
+export async function createNotebookSession(workspaceId: string): Promise<NotebookSession> {
+  const res = await fetch(`/api/notebooks/${encodeURIComponent(workspaceId)}/session`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  if (res.status === 503) {
+    throw new Error('Notebook feature is not enabled for this deployment.')
+  }
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`createNotebookSession: ${res.status} ${body || res.statusText}`)
+  }
+  return res.json()
+}
+
+// === Operations (Plan 3c) ===
+
+export interface Operation {
+  id: string
+  workspace_id: string
+  user_id?: string | null
+  source: 'sdk' | 'tui' | 'llm'
+  thread_id?: string | null
+  env_id: string
+  tool: string
+  arguments?: unknown
+  arguments_meta?: { truncated: true; size_bytes: number; sha256: string } | null
+  is_error: boolean
+  result_summary?: string | null
+  result_meta?: { truncated: true; total_bytes: number } | null
+  started_at: string  // RFC3339
+  completed_at: string
+  duration_ms: number
+}
+
+export interface ListOperationsFilters {
+  env_id?: string
+  tool?: string
+  source?: 'sdk' | 'tui' | 'llm'
+  is_error?: boolean
+  since?: string  // RFC3339Nano
+  limit?: number  // default 100, max 1000
+}
+
+/**
+ * List operations for a workspace, server-side filtered.
+ *
+ * Backend endpoint `GET /api/workspaces/{id}/operations` is a small
+ * follow-up that lands AFTER Plan 2 (#84) and this PR merge. It wraps
+ * Plan 2's internal endpoint with user-session auth + membership check.
+ * Until that lands, this client returns the "X is not available" error
+ * if the endpoint 404s.
+ */
+export async function listOperations(
+  workspaceId: string,
+  filters: ListOperationsFilters = {},
+): Promise<Operation[]> {
+  const params = new URLSearchParams({ workspace_id: workspaceId })
+  if (filters.env_id) params.set('env_id', filters.env_id)
+  if (filters.tool) params.set('tool', filters.tool)
+  if (filters.source) params.set('source', filters.source)
+  if (filters.is_error !== undefined) params.set('is_error', String(filters.is_error))
+  if (filters.since) params.set('since', filters.since)
+  if (filters.limit) params.set('limit', String(filters.limit))
+
+  const res = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/operations?${params}`, {
+    credentials: 'include',
+  })
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`listOperations: ${res.status} ${body || res.statusText}`)
+  }
+  const data = await res.json()
+  return data.operations ?? []
+}
