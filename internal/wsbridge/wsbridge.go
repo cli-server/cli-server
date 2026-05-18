@@ -5,6 +5,7 @@
 package wsbridge
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -79,6 +80,80 @@ func KeepAlive(ctx context.Context, conn *websocket.Conn, interval time.Duration
 // Returns nil when src closes cleanly; otherwise the underlying error.
 func PumpFrames(ctx context.Context, src, dst *websocket.Conn) error {
 	return pump(ctx, src, dst, nil)
+}
+
+// DropFrame is returned by an Interceptor callback to indicate the frame
+// should NOT be forwarded downstream. Distinct from returning nil
+// (forward unchanged) and from returning a rewritten slice (forward
+// replacement).
+var DropFrame = []byte("__wsbridge_drop_frame__")
+
+// Interceptor lets a caller observe and optionally rewrite frames as
+// they cross the bridge. Both callbacks may be nil. Returning a non-nil
+// slice replaces the frame written downstream; returning nil forwards
+// the original frame untouched. Return DropFrame to swallow the frame
+// entirely. Callbacks MUST NOT block.
+type Interceptor struct {
+	OnClientFrame func(frame []byte) []byte // a → b direction
+	OnServerFrame func(frame []byte) []byte // b → a direction
+}
+
+// RunProxyWithInterceptor is like RunProxy but lets the caller observe
+// and rewrite frames per direction. `onFrame` is invoked on every
+// successfully forwarded frame (pass nil to skip).
+func RunProxyWithInterceptor(ctx context.Context, a, b *websocket.Conn, intc Interceptor, onFrame func()) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errCh := make(chan error, 2)
+	go func() { errCh <- pumpWithIntercept(ctx, a, b, intc.OnClientFrame, onFrame) }()
+	go func() { errCh <- pumpWithIntercept(ctx, b, a, intc.OnServerFrame, onFrame) }()
+	go keepAlive(ctx, a)
+	err := <-errCh
+	cancel()
+	<-errCh
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
+func pumpWithIntercept(
+	ctx context.Context,
+	src, dst *websocket.Conn,
+	onFrameBytes func([]byte) []byte,
+	onTick func(),
+) error {
+	for {
+		mt, data, err := src.Read(ctx)
+		if err != nil {
+			closeErr := websocket.CloseStatus(err)
+			if closeErr == websocket.StatusNormalClosure || closeErr == websocket.StatusGoingAway {
+				return nil
+			}
+			if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
+		}
+		out := data
+		if onFrameBytes != nil {
+			if rewritten := onFrameBytes(data); rewritten != nil {
+				if bytes.Equal(rewritten, DropFrame) {
+					if onTick != nil {
+						onTick()
+					}
+					continue
+				}
+				out = rewritten
+			}
+		}
+		if onTick != nil {
+			onTick()
+		}
+		if err := dst.Write(ctx, mt, out); err != nil {
+			return err
+		}
+	}
 }
 
 func pump(ctx context.Context, src, dst *websocket.Conn, onFrame func()) error {
