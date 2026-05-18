@@ -15,6 +15,8 @@ import {
   Key,
   Bot,
   Hash,
+  BookOpen,
+  Activity,
 } from 'lucide-react'
 import {
   listMembers,
@@ -57,8 +59,10 @@ import { TelegramConfigModal } from './TelegramConfigModal'
 import { MatrixConfigModal } from './MatrixConfigModal'
 import CodexTokensPanel from './CodexTokensPanel'
 import RemoteExecutorsPanel from './RemoteExecutorsPanel'
+import NotebooksPanel from './NotebooksPanel'
+import OperationsPanel from './OperationsPanel'
 
-export type Tab = 'overview' | 'members' | 'traces' | 'credentials' | 'settings'
+export type Tab = 'overview' | 'members' | 'traces' | 'notebooks' | 'operations' | 'credentials' | 'settings'
 
 interface WorkspaceDetailProps {
   workspace: Workspace
@@ -115,6 +119,8 @@ export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDe
     { key: 'overview', label: 'Overview', icon: <LayoutDashboard size={15} /> },
     { key: 'members', label: 'Members', icon: <Users size={15} /> },
     { key: 'traces', label: 'Traces', icon: <MessageSquare size={15} /> },
+    { key: 'notebooks',  label: 'Notebooks',  icon: <BookOpen className="w-4 h-4" /> },
+    { key: 'operations', label: 'Operations', icon: <Activity className="w-4 h-4" /> },
     { key: 'credentials', label: 'Credentials', icon: <Key size={15} /> },
     { key: 'settings', label: 'Settings', icon: <Settings size={15} /> },
   ]
@@ -219,6 +225,12 @@ export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDe
             fetchDetail={fetchDetail}
             showSandboxId
           />
+        )}
+        {tab === 'notebooks' && (
+          <NotebooksPanel workspaceId={workspace.id} />
+        )}
+        {tab === 'operations' && (
+          <OperationsPanel workspaceId={workspace.id} />
         )}
         {tab === 'credentials' && (
           <CredentialsTab workspaceId={workspace.id} />
