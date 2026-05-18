@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -65,6 +66,13 @@ type ServeConfig struct {
 	// list environments, which is fine for tests that don't exercise
 	// list_environments).
 	ListenAddr string
+
+	// OperationLog endpoint + auth. When OperationLogURL is empty, the
+	// /notebook/ws Interceptor is constructed but oplog Submit is a no-op
+	// (Client is nil and the Interceptor guards check nil).
+	OperationLogURL    string
+	OperationLogSecret string // X-Internal-Secret header value
+	OperationLogChan   int    // bounded channel capacity, default 1024
 }
 
 func LoadServeConfigFromEnv() (ServeConfig, error) {
@@ -108,6 +116,16 @@ func LoadServeConfigFromEnv() (ServeConfig, error) {
 	}
 	cfg.AgentserverInternalURL = os.Getenv("CXG_AGENTSERVER_INTERNAL_URL")
 	cfg.AgentserverInternalSecret = os.Getenv("CXG_AGENTSERVER_INTERNAL_SECRET")
+	cfg.OperationLogURL = os.Getenv("CXG_OPLOG_URL")
+	cfg.OperationLogSecret = os.Getenv("CXG_OPLOG_SECRET")
+	cfg.OperationLogChan = 1024
+	if v := os.Getenv("CXG_OPLOG_CHAN"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return cfg, fmt.Errorf("parse CXG_OPLOG_CHAN: %q", v)
+		}
+		cfg.OperationLogChan = n
+	}
 	if cfg.S3.Endpoint == "" {
 		return cfg, fmt.Errorf("CXG_S3_ENDPOINT is required")
 	}
