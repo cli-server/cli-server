@@ -405,3 +405,5 @@ notebook:
   # PVC name pattern. Must match the existing workspace-volume provisioner.
   # The literal "{workspace_id}" is substituted at runtime by the supervisor.
   workspacePVCName: "ws-{workspace_id}"
+  jwtSecret: ""  # Empty = feature disabled. Generate with `openssl rand -hex 32`
+  baseURLPattern: "/api/notebooks/{workspace_id}/"

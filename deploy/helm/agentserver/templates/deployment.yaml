@@ -277,6 +277,12 @@ spec:
             - name: CREDPROXY_PUBLIC_URL
               value: {{ printf "http://%s-credentialproxy.%s.svc:%v" .Release.Name .Release.Namespace (int .Values.credentialproxy.port) | quote }}
             {{- end }}
+            {{- if .Values.notebook.jwtSecret }}
+            - name: NOTEBOOK_JWT_SECRET
+              value: {{ .Values.notebook.jwtSecret | quote }}
+            {{- end }}
+            - name: NOTEBOOK_BASE_URL_PATTERN
+              value: {{ .Values.notebook.baseURLPattern | quote }}
           livenessProbe:
             httpGet:
               path: /healthz

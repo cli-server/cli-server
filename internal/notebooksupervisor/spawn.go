@@ -45,10 +45,18 @@ func BuildDeployment(k Key, c Config) (*appsv1.Deployment, error) {
 			corev1.ResourceEphemeralStorage: resource.MustParse(c.EphemeralStorage),
 		},
 	}
+	envVars := []corev1.EnvVar{}
+	for k2, v := range c.ExtraEnvVars {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  k2,
+			Value: strings.ReplaceAll(v, "{workspace_id}", k.WorkspaceID),
+		})
+	}
 	container := corev1.Container{
 		Name:            "notebook",
 		Image:           c.Image,
 		ImagePullPolicy: corev1.PullPolicy(c.ImagePullPolicy),
+		Env:             envVars,
 		Ports: []corev1.ContainerPort{
 			{ContainerPort: notebookPort, Name: "http", Protocol: corev1.ProtocolTCP},
 		},

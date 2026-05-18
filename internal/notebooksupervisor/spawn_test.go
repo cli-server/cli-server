@@ -180,3 +180,31 @@ func TestBuildDeployment_PVCNameNoTemplate(t *testing.T) {
 		t.Errorf("pvc name = %q (no template should pass through literally)", pvcName)
 	}
 }
+
+func TestBuildDeployment_ExtraEnvVarsWithSubstitution(t *testing.T) {
+	c := Config{
+		Image:            "img:tag",
+		WorkspacePVCName: "pvc",
+		ExtraEnvVars: map[string]string{
+			"NOTEBOOK_BASE_URL": "/api/notebooks/{workspace_id}/",
+			"STATIC_VAR":        "literal",
+		},
+	}.WithDefaults()
+	k := Key{WorkspaceID: "alpha", Namespace: "ns"}
+
+	d, err := BuildDeployment(k, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := d.Spec.Template.Spec.Containers[0].Env
+	got := map[string]string{}
+	for _, e := range env {
+		got[e.Name] = e.Value
+	}
+	if got["NOTEBOOK_BASE_URL"] != "/api/notebooks/alpha/" {
+		t.Errorf("base_url=%q", got["NOTEBOOK_BASE_URL"])
+	}
+	if got["STATIC_VAR"] != "literal" {
+		t.Errorf("static=%q", got["STATIC_VAR"])
+	}
+}

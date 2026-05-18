@@ -16,13 +16,16 @@ RUN pip install --no-cache-dir \
       jupyterlab~=4.2 \
       ipykernel~=6.29
 
-# Install agentserver-sdk from local source.
-COPY sdk/python /tmp/sdk
-RUN pip install --no-cache-dir /tmp/sdk && rm -rf /tmp/sdk
+# Agentserver-sdk install lands with Plan 1 (feat/python-env-sdk).
+# When that branch is merged, restore:
+#   COPY sdk/python /tmp/sdk
+#   RUN pip install --no-cache-dir /tmp/sdk && rm -rf /tmp/sdk
 
-# IPython startup hook → injects `ctx`
-RUN mkdir -p /etc/ipython/profile_default/startup
-COPY notebook/ipython_startup/00-ctx.py /etc/ipython/profile_default/startup/
+# Agentserver jupyter extensions (Plan 3b).
+# Registers AgentserverKernelProvisioner via jupyter_client.kernel_provisioners
+# entry-point so it's discoverable by name (vs. silently-ignored traitlet config).
+COPY notebook/agentserver_jupyter_ext /tmp/agentserver_jupyter_ext
+RUN pip install --no-cache-dir /tmp/agentserver_jupyter_ext && rm -rf /tmp/agentserver_jupyter_ext
 
 # Jupyter config
 COPY notebook/jupyter_server_config.py /etc/jupyter/
@@ -31,8 +34,7 @@ COPY notebook/jupyter_server_config.py /etc/jupyter/
 RUN mkdir -p /workspace
 WORKDIR /workspace
 
-ENV IPYTHONDIR=/etc/ipython \
-    JUPYTER_CONFIG_DIR=/etc/jupyter
+ENV JUPYTER_CONFIG_DIR=/etc/jupyter
 
 EXPOSE 8888
 ENTRYPOINT ["tini", "--", "jupyter", "server", "--config=/etc/jupyter/jupyter_server_config.py"]

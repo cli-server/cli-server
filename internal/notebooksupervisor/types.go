@@ -44,17 +44,21 @@ type Handle struct {
 
 // Config tunes Supervisor lifetime + per-Deployment template.
 type Config struct {
-	Image            string        // e.g. "ghcr.io/agentserver/agentserver-notebook:dev"
-	ImagePullPolicy  string        // e.g. "Always" or "IfNotPresent"
-	CPURequest       string        // k8s quantity, e.g. "500m"
-	CPULimit         string        // e.g. "2"
-	MemoryRequest    string        // e.g. "1Gi"
-	MemoryLimit      string        // e.g. "4Gi"
-	EphemeralStorage string        // e.g. "5Gi"
-	WorkspacePVCName string        // mounted at /workspace inside the pod
-	ReadyTimeout     time.Duration // how long EnsureRunning blocks waiting for ReadyReplicas >= 1
-	IdleTTL          time.Duration // idle threshold for reaper
-	ReapInterval     time.Duration // how often the reaper loop ticks
+	Image            string // e.g. "ghcr.io/agentserver/agentserver-notebook:dev"
+	ImagePullPolicy  string // e.g. "Always" or "IfNotPresent"
+	CPURequest       string // k8s quantity, e.g. "500m"
+	CPULimit         string // e.g. "2"
+	MemoryRequest    string // e.g. "1Gi"
+	MemoryLimit      string // e.g. "4Gi"
+	EphemeralStorage string // e.g. "5Gi"
+	WorkspacePVCName string // mounted at /workspace inside the pod
+	// ExtraEnvVars are injected into the notebook container env. Values
+	// may contain `{workspace_id}` which BuildDeployment substitutes with
+	// the Key.WorkspaceID. Keys are passed through as-is.
+	ExtraEnvVars map[string]string
+	ReadyTimeout time.Duration // how long EnsureRunning blocks waiting for ReadyReplicas >= 1
+	IdleTTL      time.Duration // idle threshold for reaper
+	ReapInterval time.Duration // how often the reaper loop ticks
 }
 
 // WithDefaults returns a copy of c with zero-valued fields replaced by

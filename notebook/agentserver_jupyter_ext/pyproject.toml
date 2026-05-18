@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentserver-jupyter-ext"
+version = "0.1.0"
+description = "Agentserver IdentityProvider + KernelProvisioner for the notebook image"
+requires-python = ">=3.12"
+
+[project.entry-points."jupyter_client.kernel_provisioners"]
+agentserver-local = "agentserver_jupyter_ext.kernel_provisioner:AgentserverKernelProvisioner"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentserver_jupyter_ext"]

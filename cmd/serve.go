@@ -330,9 +330,20 @@ var serveCmd = &cobra.Command{
 					nbCfg.ReadyTimeout = time.Duration(n) * time.Second
 				}
 			}
+			// Plan 3b: per-workspace base URL via ExtraEnvVars.
+			baseURLPattern := envOrDefault("NOTEBOOK_BASE_URL_PATTERN", "/api/notebooks/{workspace_id}/")
+			nbCfg.ExtraEnvVars = map[string]string{
+				"NOTEBOOK_BASE_URL": baseURLPattern,
+			}
 			srv.NotebookSupervisor = notebooksupervisor.New(k8sClient, nbCfg, nil)
 			go srv.NotebookSupervisor.StartReaper(healthCtx)
 			log.Printf("Notebook supervisor started (image: %s, idle TTL: %s)", nbCfg.Image, nbCfg.WithDefaults().IdleTTL)
+			// Plan 3b: HMAC secret for the per-workspace JWT cookie. Empty
+			// disables the /api/notebooks/{ws}/session endpoint + reverse
+			// proxy (they 503).
+			if v := os.Getenv("NOTEBOOK_JWT_SECRET"); v != "" {
+				srv.NotebookJWTSecret = []byte(v)
+			}
 		}
 
 		// Operations retention background loop. Disabled when TTL is 0.
