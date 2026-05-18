@@ -16,10 +16,9 @@ RUN pip install --no-cache-dir \
       jupyterlab~=4.2 \
       ipykernel~=6.29
 
-# Agentserver-sdk install lands with Plan 1 (feat/python-env-sdk).
-# When that branch is merged, restore:
-#   COPY sdk/python /tmp/sdk
-#   RUN pip install --no-cache-dir /tmp/sdk && rm -rf /tmp/sdk
+# Agentserver Python SDK — exposes Ctx, Env, Process, errors.
+COPY sdk/python /tmp/sdk
+RUN pip install --no-cache-dir /tmp/sdk && rm -rf /tmp/sdk
 
 # Agentserver jupyter extensions (Plan 3b).
 # Registers AgentserverKernelProvisioner via jupyter_client.kernel_provisioners
@@ -29,6 +28,10 @@ RUN pip install --no-cache-dir /tmp/agentserver_jupyter_ext && rm -rf /tmp/agent
 
 # Jupyter config
 COPY notebook/jupyter_server_config.py /etc/jupyter/
+
+# IPython startup hook — auto-injects `ctx` and `asyncio` into every kernel.
+RUN mkdir -p /root/.ipython/profile_default/startup
+COPY notebook/ipython_startup/00-ctx.py /root/.ipython/profile_default/startup/00-ctx.py
 
 # Workspace mount point — host bind or k8s PV later.
 RUN mkdir -p /workspace
