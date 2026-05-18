@@ -90,6 +90,15 @@ func runServe(rawArgs []string) {
 		os.Exit(2)
 	}
 	cfg.ListenAddr = args.ListenAddr
+	if args.OperationLogURL != "" {
+		cfg.OperationLogURL = args.OperationLogURL
+	}
+	if args.OperationLogSecret != "" {
+		cfg.OperationLogSecret = args.OperationLogSecret
+	}
+	if args.OperationLogChan > 0 {
+		cfg.OperationLogChan = args.OperationLogChan
+	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
