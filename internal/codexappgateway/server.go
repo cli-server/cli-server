@@ -354,7 +354,9 @@ func (s *Server) handleNotebookWS(w http.ResponseWriter, r *http.Request) {
 			// 1) operations/list — handle in gateway, never forward.
 			if s.oplogList != nil {
 				if resp, handled := oplog.TryHandleOperationsList(ctx, s.oplogList, id.WorkspaceID, frame); handled {
-					_ = userWS.Write(ctx, websocket.MessageText, resp)
+					if werr := userWS.Write(ctx, websocket.MessageText, resp); werr != nil {
+						s.logger.Warn("notebook oplog list write", "err", werr, "workspace_id", id.WorkspaceID)
+					}
 					return wsbridge.DropFrame
 				}
 			}
