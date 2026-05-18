@@ -10,6 +10,7 @@ from .types import ShellResult, ToolMetadata
 
 if TYPE_CHECKING:
     from .client import WSClient
+    from .process import Process
 
 
 _TOOL_SERVER = "env_mcp"  # all env-mcp tools live under one MCP server name
@@ -65,6 +66,14 @@ class Env:
 
     async def apply_patch(self, patch: str) -> None:
         await self.call("apply_patch", {"patch": patch})
+
+    def spawn(self, command: str) -> "Process":
+        """Start a long-running command. Use as `async with env.spawn(cmd) as proc:`.
+
+        Returns a `Process`; the actual `exec_command` is sent on `__aenter__`.
+        """
+        from .process import Process  # avoid circular at module load
+        return Process(self, command=command)
 
 
 # ---------- helpers ----------
