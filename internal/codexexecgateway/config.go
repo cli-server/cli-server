@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // WebSocket keepalive (ping interval + idle timeout) is phase-2; nhooyr's defaults govern for now.
@@ -20,7 +22,20 @@ type Config struct {
 	// endpoint synthesises a URL from the incoming request's Host header
 	// (less reliable behind proxies but useful in dev).
 	PublicWSBaseURL string
-	LogLevel        slog.Level
+	// PublicHTTPSBaseURL is the https:// origin the relay endpoint is
+	// reachable at — embedded in CreateRelay responses so env-mcp can
+	// build curl PUT/GET commands. Example:
+	// "https://codex-exec.agent.cs.ac.cn". When empty, the relay
+	// /api/exec-gateway/relay/create endpoint refuses to mint tickets
+	// (env-mcp falls back to the ws cat-pump path).
+	PublicHTTPSBaseURL string
+	// RelayDefaultTTL caps how long a minted ticket waits for both
+	// sides to connect before timing out. Defaults to 5 minutes.
+	RelayDefaultTTL time.Duration
+	// RelayMaxPerWorkspace caps concurrent relays per workspace.
+	// Defaults to 16; protects gateway memory from runaway agents.
+	RelayMaxPerWorkspace int
+	LogLevel             slog.Level
 }
 
 // Validate checks that security-critical fields are populated. NewServer calls
@@ -43,6 +58,9 @@ func LoadConfigFromEnv() (Config, error) {
 		InternalSharedSecret:      os.Getenv("CXG_INTERNAL_SHARED_SECRET"),
 		AgentserverInternalSecret: os.Getenv("CXG_AGENTSERVER_INTERNAL_SECRET"),
 		PublicWSBaseURL:           os.Getenv("CXG_PUBLIC_WS_BASE_URL"),
+		PublicHTTPSBaseURL:        os.Getenv("CXG_PUBLIC_HTTPS_BASE_URL"),
+		RelayDefaultTTL:           parseDurationOr("CXG_RELAY_DEFAULT_TTL", 5*time.Minute),
+		RelayMaxPerWorkspace:      parseIntOr("CXG_RELAY_MAX_PER_WORKSPACE", 16),
 		LogLevel:                  slog.LevelInfo,
 	}
 	if cfg.DatabaseURL == "" {
@@ -69,4 +87,28 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func parseDurationOr(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return def
+	}
+	return d
+}
+
+func parseIntOr(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
 }

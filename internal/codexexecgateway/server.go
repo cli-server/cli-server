@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/agentserver/agentserver/internal/codexexecgateway/handlers"
+	"github.com/agentserver/agentserver/internal/codexexecgateway/relay"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -16,11 +17,12 @@ import (
 // always be constructed with a real *Store; tests that exercise only
 // auth-rejection paths may use newServerNoStoreForTesting.
 type Server struct {
-	config   Config
-	store    *Store
-	registry *ConnRegistry
-	revoked  *RevokedSet
-	logger   *slog.Logger
+	config        Config
+	store         *Store
+	registry      *ConnRegistry
+	revoked       *RevokedSet
+	relayRegistry *relay.Registry // nil if PublicHTTPSBaseURL unset (dev/disabled)
+	logger        *slog.Logger
 }
 
 // NewServer is the production constructor. Refuses a nil store so a
@@ -35,12 +37,17 @@ func NewServer(cfg Config, store *Store) (*Server, error) {
 		return nil, fmt.Errorf("codexexecgateway: store is required")
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	var relayReg *relay.Registry
+	if cfg.PublicHTTPSBaseURL != "" {
+		relayReg = relay.NewRegistry(cfg.RelayMaxPerWorkspace, cfg.RelayDefaultTTL, logger)
+	}
 	return &Server{
-		config:   cfg,
-		store:    store,
-		registry: NewConnRegistry(),
-		revoked:  NewRevokedSet(10000),
-		logger:   logger,
+		config:        cfg,
+		store:         store,
+		registry:      NewConnRegistry(),
+		revoked:       NewRevokedSet(10000),
+		relayRegistry: relayReg,
+		logger:        logger,
 	}, nil
 }
 
@@ -53,12 +60,17 @@ func newServerNoStoreForTesting(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	var relayReg *relay.Registry
+	if cfg.PublicHTTPSBaseURL != "" {
+		relayReg = relay.NewRegistry(cfg.RelayMaxPerWorkspace, cfg.RelayDefaultTTL, logger)
+	}
 	return &Server{
-		config:   cfg,
-		store:    nil,
-		registry: NewConnRegistry(),
-		revoked:  NewRevokedSet(10000),
-		logger:   logger,
+		config:        cfg,
+		store:         nil,
+		registry:      NewConnRegistry(),
+		revoked:       NewRevokedSet(10000),
+		relayRegistry: relayReg,
+		logger:        logger,
 	}, nil
 }
 
@@ -73,6 +85,12 @@ func (s *Server) Routes() http.Handler {
 
 	r.Get("/codex-exec/{exe_id}", s.handleInbound)
 	r.Get("/bridge/{exe_id}", s.handleBridge)
+
+	// HTTP relay public endpoints — ticket Bearer is auth; no other
+	// middleware. Registered even when relayRegistry is nil so the
+	// handlers can return a clear 404 to misconfigured callers.
+	r.Put("/relay/{ticket}", s.handleRelayPut)
+	r.Get("/relay/{ticket}", s.handleRelayGet)
 
 	// Upstream codex `exec-server --remote` compat: clients POST here
 	// with bearer auth, get back the ws URL above.
@@ -100,6 +118,7 @@ func (s *Server) Routes() http.Handler {
 		r.Use(handlers.RequireSharedSecret(s.config.InternalSharedSecret))
 		r.Get("/connected", handlers.Connected(s.store, s.registry))
 		r.Post("/revoke-turn", handlers.RevokeTurn(s.revoked))
+		r.Post("/relay/create", s.handleRelayCreate)
 	})
 
 	// More routes added in later tasks.
