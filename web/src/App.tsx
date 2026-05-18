@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Routes, Route, useNavigate, useParams, useLocation, useSearchParams, Navigate } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
 import {
   checkAuth,
   listWorkspaces,
@@ -24,8 +23,8 @@ import { TopBar } from './components/TopBar'
 import { SandboxList } from './components/SandboxList'
 import { SandboxDetail } from './components/SandboxDetail'
 import { ManageWorkspaces } from './components/ManageWorkspaces'
-import { WorkspaceEmptyState } from './components/WorkspaceEmptyState'
 import { AdminPanel } from './components/AdminPanel'
+import { WorkspaceDetail, type Tab as WorkspaceTab } from './components/WorkspaceDetail'
 
 export interface UserInfo {
   id: string
@@ -33,6 +32,25 @@ export interface UserInfo {
   name?: string | null
   picture?: string | null
   role: string
+}
+
+function WorkspaceDetailRoute({
+  workspaces,
+  onRename,
+  initialTab,
+}: {
+  workspaces: Workspace[]
+  onRename?: (id: string, name: string) => void
+  initialTab?: WorkspaceTab
+}) {
+  const { workspaceId } = useParams<{ workspaceId: string }>()
+  const workspace = workspaces.find((w) => w.id === workspaceId)
+  if (!workspace) {
+    return <Navigate to="/" replace />
+  }
+  return (
+    <WorkspaceDetail workspace={workspace} onRename={onRename} initialTab={initialTab} />
+  )
 }
 
 function SandboxDetailRoute({
@@ -268,15 +286,6 @@ export default function App() {
     />
   )
 
-  const defaultContent = creating ? (
-    <div className="flex flex-col items-center justify-center gap-3 h-full">
-      <Loader2 size={24} className="animate-spin text-[var(--muted-foreground)]" />
-      <span className="text-[var(--muted-foreground)]">Creating sandbox...</span>
-    </div>
-  ) : (
-    <WorkspaceEmptyState workspaceId={selectedWorkspaceId!} sandboxes={sandboxes} />
-  )
-
   const sandboxLayout = (content: React.ReactNode) => (
     <div className="flex flex-1 min-h-0">
       {sandboxList}
@@ -299,7 +308,13 @@ export default function App() {
         onShowManageWorkspaces={() => navigate('/workspaces')}
       />
       <Routes>
-        <Route path="/w/:workspaceId" element={sandboxLayout(defaultContent)} />
+        <Route path="/w/:workspaceId" element={
+          <WorkspaceDetailRoute
+            workspaces={workspaces}
+            onRename={handleRenameWorkspace}
+            initialTab="sandbox"
+          />
+        } />
         <Route
           path="/w/:workspaceId/sandboxes/:sandboxId"
           element={sandboxLayout(

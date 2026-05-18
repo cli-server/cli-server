@@ -15,8 +15,9 @@ import {
   Key,
   Bot,
   Hash,
-  BookOpen,
-  Activity,
+  Globe,
+  Server,
+  Brain,
 } from 'lucide-react'
 import {
   listMembers,
@@ -40,6 +41,7 @@ import {
   deleteCredentialBinding,
   setDefaultCredentialBinding,
   pollDeviceCodeComplete,
+  listSandboxes,
   type CredentialBinding,
   type DeviceCodeResponse,
   type Workspace,
@@ -51,6 +53,7 @@ import {
   type TraceItem,
   type ModelserverStatus,
   type IMChannel,
+  type Sandbox,
 } from '../lib/api'
 import { ConfirmModal } from './Modals'
 import { TracesTab, TRACES_PER_PAGE } from './SandboxDetail'
@@ -61,8 +64,19 @@ import CodexTokensPanel from './CodexTokensPanel'
 import RemoteExecutorsPanel from './RemoteExecutorsPanel'
 import NotebooksPanel from './NotebooksPanel'
 import OperationsPanel from './OperationsPanel'
+import { SandboxList } from './SandboxList'
 
-export type Tab = 'overview' | 'members' | 'traces' | 'notebooks' | 'operations' | 'credentials' | 'settings'
+export type Tab =
+  | 'overview'
+  | 'browser'
+  | 'executor'
+  | 'sandbox'
+  | 'llm'
+  | 'im'
+  | 'traces'
+  | 'credentials'
+  | 'members'
+  | 'settings'
 
 interface WorkspaceDetailProps {
   workspace: Workspace
@@ -71,7 +85,7 @@ interface WorkspaceDetailProps {
 }
 
 export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDetailProps) {
-  const [tab, setTab] = useState<Tab>(initialTab ?? 'overview')
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'sandbox')
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [sbxQuota, setSbxQuota] = useState<{ current: number; max: number } | null>(null)
   const [defaults, setDefaults] = useState<WorkspaceSandboxDefaults | null>(null)
@@ -83,7 +97,7 @@ export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDe
   const [editName, setEditName] = useState(workspace.name)
 
   useEffect(() => {
-    setTab(initialTab ?? 'overview')
+    setTab(initialTab ?? 'sandbox')
     setMembers([])
     setSbxQuota(null)
     setDefaults(null)
@@ -115,13 +129,16 @@ export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDe
   const totalPages = Math.ceil(tracesTotal / TRACES_PER_PAGE)
   const fetchDetail = useCallback((traceId: string) => getWorkspaceTraceDetail(workspace.id, traceId), [workspace.id])
 
-  const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
+  const sidebarItems: { key: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { key: 'overview', label: 'Overview', icon: <LayoutDashboard size={15} /> },
-    { key: 'members', label: 'Members', icon: <Users size={15} /> },
-    { key: 'traces', label: 'Traces', icon: <MessageSquare size={15} /> },
-    { key: 'notebooks',  label: 'Notebooks',  icon: <BookOpen className="w-4 h-4" /> },
-    { key: 'operations', label: 'Operations', icon: <Activity className="w-4 h-4" /> },
-    { key: 'credentials', label: 'Credentials', icon: <Key size={15} /> },
+    { key: 'browser', label: 'Browser 管理', icon: <Globe size={15} /> },
+    { key: 'executor', label: 'Executor 管理', icon: <Server size={15} /> },
+    { key: 'sandbox', label: 'Sandbox 管理', icon: <Box size={15} /> },
+    { key: 'llm', label: 'LLM 管理', icon: <Brain size={15} /> },
+    { key: 'im', label: 'IM 管理', icon: <Bot size={15} /> },
+    { key: 'traces', label: 'Traces 管理', icon: <MessageSquare size={15} />, badge: tracesTotal > 0 ? tracesTotal : undefined },
+    { key: 'credentials', label: 'Credential 管理', icon: <Key size={15} /> },
+    { key: 'members', label: 'Member 管理', icon: <Users size={15} />, badge: members.length > 0 ? members.length : undefined },
     { key: 'settings', label: 'Settings', icon: <Settings size={15} /> },
   ]
 
@@ -170,74 +187,88 @@ export function WorkspaceDetail({ workspace, onRename, initialTab }: WorkspaceDe
             <div className="mt-1 text-xs text-[var(--muted-foreground)]">Workspace</div>
           </div>
         </div>
-        <div className="mt-4 flex gap-1">
-          {tabs.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                tab === t.key
-                  ? 'bg-[var(--secondary)] text-[var(--foreground)]'
-                  : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)]/50'
-              }`}
-            >
-              {t.icon}
-              {t.label}
-              {t.key === 'members' && members.length > 0 && (
-                <span className="ml-0.5 rounded-full bg-[var(--muted)] px-1.5 py-0 text-[10px] text-[var(--muted-foreground)]">
-                  {members.length}
-                </span>
-              )}
-              {t.key === 'traces' && tracesTotal > 0 && (
-                <span className="ml-0.5 rounded-full bg-[var(--muted)] px-1.5 py-0 text-[10px] text-[var(--muted-foreground)]">
-                  {tracesTotal}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {tab === 'overview' && (
-          <OverviewTab
-            workspace={workspace}
-            sbxQuota={sbxQuota}
-            defaults={defaults}
-            llmQuota={llmQuota}
-          />
-        )}
-        {tab === 'members' && (
-          <MembersTab
-            workspaceId={workspace.id}
-            members={members}
-            setMembers={setMembers}
-          />
-        )}
-        {tab === 'traces' && (
-          <TracesTab
-            traces={traces}
-            tracesTotal={tracesTotal}
-            tracesPage={tracesPage}
-            totalPages={totalPages}
-            onPageChange={setTracesPage}
-            fetchDetail={fetchDetail}
-            showSandboxId
-          />
-        )}
-        {tab === 'notebooks' && (
-          <NotebooksPanel workspaceId={workspace.id} />
-        )}
-        {tab === 'operations' && (
-          <OperationsPanel workspaceId={workspace.id} />
-        )}
-        {tab === 'credentials' && (
-          <CredentialsTab workspaceId={workspace.id} />
-        )}
-        {tab === 'settings' && (
-          <SettingsTab workspaceId={workspace.id} />
-        )}
+      {/* Body: sidebar + content */}
+      <div className="flex min-h-0 flex-1">
+        {/* Sidebar */}
+        <div className="w-[200px] shrink-0 border-r border-[var(--border)] bg-[var(--card)] overflow-y-auto">
+          <nav className="flex flex-col gap-0.5 p-2">
+            {sidebarItems.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`inline-flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  tab === t.key
+                    ? 'bg-[var(--secondary)] text-[var(--foreground)]'
+                    : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--secondary)]/50'
+                }`}
+              >
+                {t.icon}
+                <span className="flex-1 text-left">{t.label}</span>
+                {t.badge !== undefined && (
+                  <span className="rounded-full bg-[var(--muted)] px-1.5 py-0 text-[10px] text-[var(--muted-foreground)]">
+                    {t.badge}
+                  </span>
+                )}
+              </button>
+            ))}
+          </nav>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {tab === 'overview' && (
+            <OverviewTab
+              workspace={workspace}
+              sbxQuota={sbxQuota}
+              defaults={defaults}
+              llmQuota={llmQuota}
+            />
+          )}
+          {tab === 'browser' && (
+            <BrowserPanel workspaceId={workspace.id} />
+          )}
+          {tab === 'executor' && (
+            <RemoteExecutorsPanel workspaceId={workspace.id} />
+          )}
+          {tab === 'sandbox' && (
+            <SandboxPanel workspaceId={workspace.id} />
+          )}
+          {tab === 'llm' && (
+            <LLMTab workspaceId={workspace.id} />
+          )}
+          {tab === 'im' && (
+            <IMTab workspaceId={workspace.id} />
+          )}
+          {tab === 'traces' && (
+            <div className="flex flex-col gap-6">
+              <TracesTab
+                traces={traces}
+                tracesTotal={tracesTotal}
+                tracesPage={tracesPage}
+                totalPages={totalPages}
+                onPageChange={setTracesPage}
+                fetchDetail={fetchDetail}
+                showSandboxId
+              />
+              <OperationsPanel workspaceId={workspace.id} />
+            </div>
+          )}
+          {tab === 'credentials' && (
+            <CredentialsTab workspaceId={workspace.id} />
+          )}
+          {tab === 'members' && (
+            <MembersTab
+              workspaceId={workspace.id}
+              members={members}
+              setMembers={setMembers}
+            />
+          )}
+          {tab === 'settings' && (
+            <SettingsTab workspace={workspace} />
+          )}
+        </div>
       </div>
     </div>
   )
@@ -259,14 +290,14 @@ function OverviewTab({ workspace, sbxQuota, defaults, llmQuota }: {
           <InfoCard
             icon={<Box size={14} />}
             label="Sandboxes"
-            value={`${sbxQuota.current} / ${sbxQuota.max === 0 ? '\u221E' : sbxQuota.max}`}
+            value={`${sbxQuota.current} / ${sbxQuota.max === 0 ? '∞' : sbxQuota.max}`}
           />
         )}
         {effectiveMaxRpd !== null && (
           <InfoCard
             icon={<Box size={14} />}
             label="RPD"
-            value={`${llmQuota?.today_request_count ?? 0} / ${effectiveMaxRpd === 0 ? '\u221E' : String(effectiveMaxRpd)}`}
+            value={`${llmQuota?.today_request_count ?? 0} / ${effectiveMaxRpd === 0 ? '∞' : String(effectiveMaxRpd)}`}
           />
         )}
       </div>
@@ -281,10 +312,40 @@ function OverviewTab({ workspace, sbxQuota, defaults, llmQuota }: {
             <StatCell label="Max CPU" value={`${(defaults.max_sandbox_cpu / 1000).toFixed(1)} cores`} />
             <StatCell label="Max Memory" value={`${Math.round(defaults.max_sandbox_memory / (1024 * 1024))} MB`} />
             <StatCell label="Max Idle" value={defaults.max_idle_timeout > 0 ? `${Math.round(defaults.max_idle_timeout / 60)} min` : 'Unlimited'} />
-            <StatCell label="Max Sandboxes" value={defaults.max_sandboxes === 0 ? '\u221E' : String(defaults.max_sandboxes)} />
+            <StatCell label="Max Sandboxes" value={defaults.max_sandboxes === 0 ? '∞' : String(defaults.max_sandboxes)} />
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function BrowserPanel({ workspaceId }: { workspaceId: string }) {
+  return (
+    <div className="flex flex-col gap-6">
+      <CodexTokensPanel workspaceId={workspaceId} />
+      <NotebooksPanel workspaceId={workspaceId} />
+    </div>
+  )
+}
+
+function SandboxPanel({ workspaceId }: { workspaceId: string }) {
+  const [sandboxes, setSandboxes] = useState<Sandbox[]>([])
+  const [creating, setCreating] = useState(false)
+  const refresh = useCallback(() => {
+    listSandboxes(workspaceId).then(setSandboxes).catch(() => {})
+  }, [workspaceId])
+  useEffect(() => { refresh() }, [refresh])
+  return (
+    <div className="-m-6 flex h-[calc(100%+3rem)]">
+      <SandboxList
+        selectedWorkspaceId={workspaceId}
+        sandboxes={sandboxes}
+        setSandboxes={setSandboxes}
+        onRefreshSandboxes={refresh}
+        creating={creating}
+        setCreating={setCreating}
+      />
     </div>
   )
 }
@@ -432,7 +493,7 @@ function MembersTab({ workspaceId, members, setMembers }: {
   )
 }
 
-function SettingsTab({ workspaceId }: { workspaceId: string }) {
+function LLMTab({ workspaceId }: { workspaceId: string }) {
   const [config, setConfig] = useState<WorkspaceLLMConfig | null>(null)
   const [editMode, setEditMode] = useState(false)
   const [baseUrl, setBaseUrl] = useState('')
@@ -443,23 +504,11 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [msStatus, setMsStatus] = useState<ModelserverStatus | null>(null)
 
-  // IM Channels state
-  const [imChannels, setImChannels] = useState<IMChannel[]>([])
-  const [showWeixinLogin, setShowWeixinLogin] = useState(false)
-  const [showTelegramConfig, setShowTelegramConfig] = useState(false)
-  const [showMatrixConfig, setShowMatrixConfig] = useState(false)
-  const [confirmDeleteChannel, setConfirmDeleteChannel] = useState<IMChannel | null>(null)
-
-  const loadChannels = useCallback(() => {
-    listWorkspaceIMChannels(workspaceId).then(r => setImChannels(r.channels || [])).catch(() => {})
-  }, [workspaceId])
-
   const load = useCallback(() => {
     getWorkspaceLLMConfig(workspaceId).then(setConfig).catch(() => {})
   }, [workspaceId])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { loadChannels() }, [loadChannels])
 
   useEffect(() => {
     getModelserverStatus(workspaceId).then(setMsStatus).catch(() => setMsStatus({ connected: false }))
@@ -478,7 +527,7 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
       url.searchParams.delete('message')
       window.history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : ''))
     }
-  }, [])
+  }, [workspaceId])
 
   const startEdit = () => {
     if (config?.configured) {
@@ -722,9 +771,28 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
           onCancel={() => setConfirmDelete(false)}
         />
       )}
+    </div>
+  )
+}
 
-      {/* IM Channels */}
-      <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--card)]">
+function IMTab({ workspaceId }: { workspaceId: string }) {
+  const [imChannels, setImChannels] = useState<IMChannel[]>([])
+  const [showWeixinLogin, setShowWeixinLogin] = useState(false)
+  const [showTelegramConfig, setShowTelegramConfig] = useState(false)
+  const [showMatrixConfig, setShowMatrixConfig] = useState(false)
+  const [confirmDeleteChannel, setConfirmDeleteChannel] = useState<IMChannel | null>(null)
+
+  const loadChannels = useCallback(() => {
+    listWorkspaceIMChannels(workspaceId).then(r => setImChannels(r.channels || [])).catch(() => {})
+  }, [workspaceId])
+
+  useEffect(() => { loadChannels() }, [loadChannels])
+
+  return (
+    <div className="max-w-2xl">
+      <h3 className="text-base font-semibold text-[var(--foreground)] mb-4">IM Channels</h3>
+
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--card)]">
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
           <div className="flex items-center gap-2">
             <MessageSquare size={14} className="text-green-400" />
@@ -822,7 +890,6 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
         </div>
       </div>
 
-      {/* IM Channel modals */}
       {confirmDeleteChannel && (
         <ConfirmModal
           title="Delete IM Channel"
@@ -861,10 +928,37 @@ function SettingsTab({ workspaceId }: { workspaceId: string }) {
           onConnected={() => { loadChannels() }}
         />
       )}
+    </div>
+  )
+}
 
-      {/* Codex Remote Access Tokens */}
-      <CodexTokensPanel workspaceId={workspaceId} />
-      <RemoteExecutorsPanel workspaceId={workspaceId} />
+function SettingsTab({ workspace }: { workspace: Workspace }) {
+  return (
+    <div className="max-w-2xl">
+      <h3 className="text-base font-semibold text-[var(--foreground)] mb-4">Workspace Settings</h3>
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--card)]">
+        <div className="flex items-center gap-2 border-b border-[var(--border)] px-5 py-3">
+          <Settings size={14} className="text-[var(--muted-foreground)]" />
+          <span className="text-sm font-medium text-[var(--foreground)]">Workspace Info</span>
+        </div>
+        <div className="px-5 py-4 flex flex-col gap-3 text-sm">
+          <div className="flex justify-between">
+            <span className="text-[var(--muted-foreground)]">Name</span>
+            <span className="text-[var(--foreground)]">{workspace.name}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--muted-foreground)]">ID</span>
+            <span className="text-[var(--foreground)] font-mono text-xs">{workspace.id}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--muted-foreground)]">Created</span>
+            <span className="text-[var(--foreground)]">{new Date(workspace.created_at).toLocaleString()}</span>
+          </div>
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-[var(--muted-foreground)]">
+        To rename this workspace, use the pencil icon next to the name in the header.
+      </p>
     </div>
   )
 }
