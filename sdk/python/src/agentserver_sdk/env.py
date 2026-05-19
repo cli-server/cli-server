@@ -10,7 +10,7 @@ from .errors import ToolError
 from .types import ShellResult, ToolMetadata
 
 if TYPE_CHECKING:
-    from .client import WSClient
+    from .client import HTTPClient
     from .process import Process
 
 
@@ -22,7 +22,7 @@ class Env:
     name: str
     type: str
     tools: list[ToolMetadata]
-    _client: WSClient
+    _client: HTTPClient  # type: ignore[assignment]  # C2 will wire REST calls
     _tool_index: dict[str, ToolMetadata] = field(init=False)
 
     def __post_init__(self) -> None:

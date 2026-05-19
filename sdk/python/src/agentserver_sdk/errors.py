@@ -10,7 +10,15 @@ class SdkError(Exception):
 
 
 class ConnectionError(SdkError):
-    """Failure to establish or maintain the WS connection to the gateway."""
+    """Failure to establish or maintain the connection to the gateway."""
+
+
+# Public alias used by client.py and importers.
+SdkConnectionError = ConnectionError
+
+
+class SdkUnauthorized(ConnectionError):
+    """Bearer token rejected by the gateway (HTTP 401)."""
 
 
 class NotConnectedError(SdkError):

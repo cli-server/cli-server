@@ -12,7 +12,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from .client import WSClient
+from .client import HTTPClient
 from .env import Env
 from .types import OperationRecord, ToolMetadata
 
@@ -22,17 +22,17 @@ class Ctx:
     gateway_url: str
     workspace_id: str
     user_id: str | None
-    _client: WSClient
+    _client: HTTPClient  # type: ignore[assignment]  # C2 will wire REST calls
     _envs_cache: list[Env] | None = field(init=False, default=None)
     _envs_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)
 
     @classmethod
     def from_env(cls) -> Ctx:
-        url = os.environ.get("AGENTSERVER_GATEWAY_URL", "ws://localhost:8086/notebook/ws")
+        url = os.environ.get("AGENTSERVER_GATEWAY_URL", "http://localhost:8086")
         token = os.environ.get("AGENTSERVER_WORKSPACE_TOKEN", "")
         workspace_id = os.environ.get("AGENTSERVER_WORKSPACE_ID", "")
         user_id = os.environ.get("AGENTSERVER_USER_ID")
-        client = WSClient(url, token=token, workspace_id=workspace_id, user_id=user_id)
+        client = HTTPClient(url, token=token)  # type: ignore[arg-type]  # C2 will rewrite body
         return cls(gateway_url=url, workspace_id=workspace_id, user_id=user_id, _client=client)
 
     async def _fetch_envs(self) -> list[Env]:
