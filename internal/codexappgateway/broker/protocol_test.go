@@ -81,16 +81,24 @@ func TestIsApprovalRequest(t *testing.T) {
 	}
 }
 
-func TestApprovalReplyForPermsUsesAllow(t *testing.T) {
-	got := string(approvalReply(methodItemPermsApproval))
-	if got != `{"decision":"allow"}` {
-		t.Errorf("perms reply = %s", got)
+func TestApprovalReplyShapes(t *testing.T) {
+	cases := []struct {
+		method string
+		want   string
+	}{
+		{methodItemCmdApproval, `{"decision":"accept"}`},
+		{methodItemFileApproval, `{"decision":"accept"}`},
+		{methodItemPermsApproval, `{"permissions":{}}`},
+		{methodItemUserInput, `{"answers":{}}`},
+		{methodMcpElicitation, `{"action":"accept","content":null,"_meta":null}`},
+		{"unknown/method", `{}`},
 	}
-}
-
-func TestApprovalReplyDefaultsToApprove(t *testing.T) {
-	got := string(approvalReply(methodItemCmdApproval))
-	if got != `{"decision":"approve"}` {
-		t.Errorf("cmd reply = %s", got)
+	for _, c := range cases {
+		t.Run(c.method, func(t *testing.T) {
+			got := string(approvalReply(c.method))
+			if got != c.want {
+				t.Errorf("got %s, want %s", got, c.want)
+			}
+		})
 	}
 }

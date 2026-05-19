@@ -125,16 +125,38 @@ func isApprovalRequest(method string) bool {
 	return false
 }
 
-// approvalReply returns the JSON we send back. Codex's decision enums
-// differ per request type but all accept "approve"/"allow" shapes —
-// per CommandExecutionApprovalDecision, FileChangeApprovalDecision,
-// PermissionsApprovalDecision (all carry "approve" or equivalent).
-// requestUserInput is generic; codex accepts {} or {"decision":"allow"}.
+// approvalReply returns a schema-valid response for an approval-style
+// server-to-client request. Payloads are taken from the codex v2 type
+// definitions in app-server-protocol/src/protocol/v2/ — sending the
+// wrong shape causes codex to reject the response and stall the turn.
+//
+// commandExecution / fileChange: enum variants {accept | acceptForSession
+// | decline | cancel}. We use "accept" — the most permissive choice.
+//
+// permissions: {permissions: GrantedPermissionProfile, scope?, strictAutoReview?}.
+// We send {permissions:{}} which grants no additional permissions — codex
+// is configured to never request approval (default_tools_approval_mode =
+// "approve" in codex config), so the message rarely fires; this reply is
+// defense-in-depth.
+//
+// requestUserInput: {answers: HashMap<questionId, answer>}. We send no
+// answers — same rationale.
+//
+// mcpServer/elicitation/request: {action, content?, _meta?} where action
+// is "accept" | "decline" | "cancel". We send "accept" with null content.
 func approvalReply(method string) json.RawMessage {
 	switch method {
+	case methodItemCmdApproval, methodItemFileApproval:
+		return json.RawMessage(`{"decision":"accept"}`)
 	case methodItemPermsApproval:
-		return json.RawMessage(`{"decision":"allow"}`)
+		return json.RawMessage(`{"permissions":{}}`)
+	case methodItemUserInput:
+		return json.RawMessage(`{"answers":{}}`)
+	case methodMcpElicitation:
+		return json.RawMessage(`{"action":"accept","content":null,"_meta":null}`)
 	default:
-		return json.RawMessage(`{"decision":"approve"}`)
+		// Unknown approval method — send empty object to avoid stalling
+		// the protocol; codex will likely reject but at least won't hang.
+		return json.RawMessage(`{}`)
 	}
 }
