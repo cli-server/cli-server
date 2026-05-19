@@ -62,13 +62,19 @@ func (f *fakeSessionStore) CreateSession(ctx context.Context, workspaceID, exter
 	return sessionView{ID: "sess-created", CodexThreadID: nil}, nil
 }
 
-// fakeCodexClient lets us inject CXG responses.
+// fakeCodexClient lets us inject CXG responses. If turnFn is set it
+// takes precedence (per-call dynamic behavior, e.g. for retry tests);
+// otherwise the static resp/err pair is returned.
 type fakeCodexClient struct {
-	resp *CodexTurnResponse
-	err  error
+	resp   *CodexTurnResponse
+	err    error
+	turnFn func(req CodexTurnRequest) (*CodexTurnResponse, error)
 }
 
-func (f *fakeCodexClient) RunTurn(_ context.Context, _ CodexTurnRequest) (*CodexTurnResponse, error) {
+func (f *fakeCodexClient) RunTurn(_ context.Context, req CodexTurnRequest) (*CodexTurnResponse, error) {
+	if f.turnFn != nil {
+		return f.turnFn(req)
+	}
 	return f.resp, f.err
 }
 
@@ -310,3 +316,82 @@ func waitFor(t *testing.T, cond func() bool) {
 }
 
 func strPtr(s string) *string { return &s }
+
+func TestCodexInboundRetriesOnThreadNotFound(t *testing.T) {
+	sendURL, sends, stop := newCapturingImbridge(t)
+	defer stop()
+
+	var calls int
+	var clearedThread bool
+	h := newCodexInboundHandler(
+		&fakeCodexClient{
+			turnFn: func(req CodexTurnRequest) (*CodexTurnResponse, error) {
+				calls++
+				if calls == 1 {
+					if req.ThreadID == nil || *req.ThreadID != "thr-stale" {
+						t.Errorf("first call: ThreadID=%v want thr-stale", req.ThreadID)
+					}
+					return &CodexTurnResponse{
+						ThreadID:  "thr-stale",
+						Transport: &CodexTransportError{Code: "wsDisconnect", Message: "codex rpc error -32600: thread not found: thr-stale"},
+					}, nil
+				}
+				// Second call should have ThreadID=nil (cleared).
+				if req.ThreadID != nil {
+					t.Errorf("retry call: ThreadID=%v want nil", req.ThreadID)
+				}
+				return &CodexTurnResponse{
+					ThreadID: "thr-fresh",
+					Turn:     json.RawMessage(`{"id":"trn-1","status":"completed","items":[{"type":"agentMessage","id":"m","text":"recovered"}],"itemsView":"full","error":null}`),
+				}, nil
+			},
+		},
+		&fakeSessionStore{
+			get: func(_ context.Context, _, _ string) (sessionView, error) {
+				return sessionView{ID: "sess-1", CodexThreadID: strPtr("thr-stale")}, nil
+			},
+			set: func(_ context.Context, _ string, tid *string) error {
+				if tid == nil {
+					clearedThread = true
+				}
+				return nil
+			},
+		},
+		sendURL, "",
+	)
+	defer h.Close()
+
+	r := newCodexInboundRequest(map[string]any{
+		"channel_id": "ch", "workspace_id": "ws", "wechat_user_id": "u", "text": "hi",
+	})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	waitFor(t, func() bool { return len(sends.Load().([]*capturedSend)) == 1 })
+
+	if calls != 2 {
+		t.Errorf("calls=%d want 2 (initial + retry)", calls)
+	}
+	if !clearedThread {
+		t.Error("expected SetSessionCodexThreadID(nil) to be called")
+	}
+	if got := sends.Load().([]*capturedSend)[0].text; got != "recovered" {
+		t.Errorf("text=%q want recovered", got)
+	}
+}
+
+func TestIsThreadNotFoundErr(t *testing.T) {
+	cases := map[string]bool{
+		"codex rpc error -32600: thread not found: abc": true,
+		`thread "thr-abc" unknown`:                      true,
+		"missing thread":                                true,
+		"some other error":                              false,
+		"thread is in progress":                         false,
+		"":                                              false,
+		"connection closed":                             false,
+	}
+	for in, want := range cases {
+		if got := isThreadNotFoundErr(in); got != want {
+			t.Errorf("isThreadNotFoundErr(%q) = %v, want %v", in, got, want)
+		}
+	}
+}

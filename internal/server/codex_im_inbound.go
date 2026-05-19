@@ -115,13 +115,38 @@ func (h *codexInboundHandler) processTurn(ctx context.Context, req codexInboundR
 		Params:      params,
 	})
 	if err != nil {
-		log.Printf("codex_im: cxg call: %v", err)
+		log.Printf("codex_im: cxg call channel=%s user=%s: %v", req.ChannelID, externalID, err)
 		h.sendError(ctx, req, "⚠️ Codex 处理失败，请稍后重试")
 		return
 	}
 
-	// Transport-layer failure.
+	// Detect thread-not-found across all error surfaces: transport.message
+	// (when codex returns -32600 on turn/start because thread is unknown,
+	// e.g. after CXG restart wiped supervisor state) and turn.error.message
+	// (less common — codex completed a turn but reports thread error in
+	// its body). On match: clear the stored thread, retry ONCE with a
+	// fresh thread, and use the new response.
+	if sess.CodexThreadID != nil && cresp.Transport != nil && isThreadNotFoundErr(cresp.Transport.Message) {
+		log.Printf("codex_im: thread %s not found (channel=%s user=%s), clearing and retrying", *sess.CodexThreadID, req.ChannelID, externalID)
+		if err := h.sessions.SetSessionCodexThreadID(ctx, sess.ID, nil); err != nil {
+			log.Printf("codex_im: clear thread id: %v", err)
+		}
+		sess.CodexThreadID = nil
+		cresp, err = h.codex.RunTurn(ctx, CodexTurnRequest{
+			WorkspaceID: req.WorkspaceID,
+			ThreadID:    nil,
+			Params:      params,
+		})
+		if err != nil {
+			log.Printf("codex_im: cxg retry channel=%s user=%s: %v", req.ChannelID, externalID, err)
+			h.sendError(ctx, req, "⚠️ Codex 处理失败，请稍后重试")
+			return
+		}
+	}
+
+	// Transport-layer failure (after potential retry above).
 	if cresp.Transport != nil {
+		log.Printf("codex_im: transport=%s channel=%s user=%s msg=%s", cresp.Transport.Code, req.ChannelID, externalID, cresp.Transport.Message)
 		h.sendError(ctx, req, transportToUserMessage(cresp.Transport))
 		return
 	}
@@ -172,18 +197,19 @@ func (h *codexInboundHandler) processTurn(ctx context.Context, req codexInboundR
 				return
 			}
 		}
-		// Heuristic: thread-not-found.
+		// Heuristic: thread-not-found inside turn.error (rare — codex
+		// usually reports this as an RPC error on turn/start, caught
+		// above as transport. Kept as defensive fallback.)
 		msg := ""
 		if turn.Error != nil {
 			msg = turn.Error.Message
 		}
-		lo := strings.ToLower(msg)
-		if strings.Contains(lo, "thread") && (strings.Contains(lo, "not found") || strings.Contains(lo, "unknown") || strings.Contains(lo, "missing")) {
+		if isThreadNotFoundErr(msg) {
 			_ = h.sessions.SetSessionCodexThreadID(ctx, sess.ID, nil)
 			h.sendError(ctx, req, "⚠️ 会话已重置，请重发消息")
 			return
 		}
-		log.Printf("codex_im: turn failed: %s", msg)
+		log.Printf("codex_im: turn failed channel=%s user=%s: %s", req.ChannelID, externalID, msg)
 		h.sendError(ctx, req, "⚠️ Codex 处理失败")
 	case "interrupted":
 		h.sendError(ctx, req, "⚠️ 处理已取消，请重发")
@@ -195,6 +221,24 @@ func (h *codexInboundHandler) processTurn(ctx context.Context, req codexInboundR
 
 // lastAgentMessageText scans the items list in reverse for the last
 // {type:"agentMessage"} entry and returns its text. Returns "" if none.
+// isThreadNotFoundErr is a substring heuristic over codex error messages.
+// Codex doesn't expose a stable error code for "thread doesn't exist
+// (perhaps because we restarted and lost in-memory state)", so we sniff
+// for the human-readable text. Examples seen in the wild:
+//
+//	codex rpc error -32600: thread not found: 019e4130-...
+//	thread "thr-abc" unknown
+//	missing thread
+func isThreadNotFoundErr(msg string) bool {
+	lo := strings.ToLower(msg)
+	if !strings.Contains(lo, "thread") {
+		return false
+	}
+	return strings.Contains(lo, "not found") ||
+		strings.Contains(lo, "unknown") ||
+		strings.Contains(lo, "missing")
+}
+
 func lastAgentMessageText(items []json.RawMessage) string {
 	for i := len(items) - 1; i >= 0; i-- {
 		var shell struct {
