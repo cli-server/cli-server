@@ -76,7 +76,12 @@ class WSClient:
                 )
                 await self._notify("initialized")
                 ts = await self._request("thread/start", {})
+                # Codex ≥0.130 returns {"thread": {"id": ...}, ...};
+                # older versions returned a flat {"thread_id": ...}.
+                # Accept both.
                 tid = ts.get("thread_id")
+                if not tid:
+                    tid = (ts.get("thread") or {}).get("id")
                 if not tid:
                     raise SdkConnectionError(f"thread/start response missing thread_id: {ts!r}")
                 self.thread_id = tid
