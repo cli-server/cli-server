@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/agentserver/agentserver/internal/db"
 )
 
 // codexInboundHandler routes inbound WeChat messages destined for the
@@ -398,4 +400,25 @@ func (d *codexDispatcher) Stop() {
 	}
 	d.workers = nil
 	d.mu.Unlock()
+}
+
+// dbSessionStore is the production sessionStore that reads/writes the
+// real agent_sessions table.
+type dbSessionStore struct {
+	db *db.DB
+}
+
+func (s *dbSessionStore) GetSessionByExternalID(ctx context.Context, workspaceID, externalID string) (sessionView, error) {
+	sess, err := s.db.GetSessionByExternalID(ctx, workspaceID, externalID)
+	if err != nil {
+		return sessionView{}, err
+	}
+	if sess == nil {
+		return sessionView{}, fmt.Errorf("session not found for externalID=%s workspaceID=%s", externalID, workspaceID)
+	}
+	return sessionView{ID: sess.ID, CodexThreadID: sess.CodexThreadID}, nil
+}
+
+func (s *dbSessionStore) SetSessionCodexThreadID(ctx context.Context, sessionID string, threadID *string) error {
+	return s.db.SetSessionCodexThreadID(ctx, sessionID, threadID)
 }

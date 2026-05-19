@@ -266,6 +266,30 @@ func (s *Server) Router() http.Handler {
 		s.handleIMInbound(w, r)
 	})
 
+	// Codex routing path: WeChat (and other channels) with routing_mode="codex"
+	// land here. Skipped when CODEX_APP_GATEWAY_URL is unset (e.g. dev env without
+	// CXG deployed) so this PR is safe to merge before the gateway is rolled out.
+	if cxgURL := os.Getenv("CODEX_APP_GATEWAY_URL"); cxgURL != "" {
+		codexClient := NewCodexClient(cxgURL, os.Getenv("INTERNAL_API_SECRET"))
+		imbridgeSendURL := s.IMBridgeURL
+		if imbridgeSendURL == "" {
+			imbridgeSendURL = "http://127.0.0.1:8080"
+		}
+		codexHandler := newCodexInboundHandler(codexClient, &dbSessionStore{db: s.DB}, imbridgeSendURL, os.Getenv("INTERNAL_API_SECRET"))
+		r.Post("/api/internal/imbridge/codex/turn", func(w http.ResponseWriter, r *http.Request) {
+			secret := os.Getenv("INTERNAL_API_SECRET")
+			if secret != "" {
+				if r.Header.Get("X-Internal-Secret") != secret {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+			}
+			codexHandler.ServeHTTP(w, r)
+		})
+	} else {
+		log.Printf("server: CODEX_APP_GATEWAY_URL unset; codex routing endpoint disabled")
+	}
+
 	// Agent registration (auth via OAuth Bearer token).
 	r.Post("/api/agent/register", s.handleAgentRegister)
 
