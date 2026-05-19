@@ -33,19 +33,12 @@ type Config struct {
 	JupyterImage               string
 	JupyterPort                int
 	JupyterRuntimeClassName    string
-	// CodexAppGatewayURL is the ws URL the agentserver Python SDK
-	// (installed in the jupyter image) dials to call envs/processes etc.
-	// Example: "ws://agentserver-codex-app-gateway.agentserver.svc:8086/notebook/ws".
-	// Empty leaves the SDK on its localhost:8086 default, which fails
-	// with ECONNREFUSED inside a jupyter sandbox.
-	CodexAppGatewayURL         string
-	// CodexInboundHMACSecret is the secret codex-app-gateway uses to
-	// verify Bearer tokens on `/notebook/ws`. The jupyter case mints a
-	// `<workspaceID>.notebook.<hmac>` token for the sandbox with this
-	// secret. Must match codexGateway.inboundHmacSecret in the chart.
-	// Empty falls back to ProxyToken (which the gateway rejects 401 —
-	// only useful when running without the gateway).
-	CodexInboundHMACSecret     []byte
+	// CodexExecGatewayURL is the HTTP base URL the agentserver Python SDK
+	// (installed in the jupyter image) dials for the REST exec-gateway.
+	// Example: "http://agentserver-codex-exec-gateway.agentserver.svc:6060".
+	// Empty leaves the SDK on its localhost default, which fails with
+	// ECONNREFUSED inside a jupyter sandbox.
+	CodexExecGatewayURL string
 	AgentServerInternalURL     string // agentserver API URL for sandbox MCP bridge (e.g. "http://agentserver.agentserver.svc:8080")
 	CredproxyPublicURL         string // URL sandboxes use to reach credentialproxy (e.g. "http://credentialproxy.agentserver.svc:8083")
 }
@@ -76,8 +69,7 @@ func DefaultConfig() Config {
 		JupyterImage:               os.Getenv("JUPYTER_IMAGE"),
 		JupyterPort:                8888,
 		JupyterRuntimeClassName:    os.Getenv("JUPYTER_RUNTIME_CLASS"),
-		CodexAppGatewayURL:         os.Getenv("CODEX_APP_GATEWAY_URL"),
-		CodexInboundHMACSecret:     []byte(os.Getenv("CODEX_INBOUND_HMAC_SECRET")),
+		CodexExecGatewayURL:        os.Getenv("CODEX_EXEC_GATEWAY_URL"),
 		AgentServerInternalURL:     os.Getenv("AGENTSERVER_INTERNAL_URL"),
 		CredproxyPublicURL:         os.Getenv("CREDPROXY_PUBLIC_URL"),
 	}

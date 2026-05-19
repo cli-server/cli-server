@@ -3,9 +3,6 @@ package sandbox
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"hash/fnv"
@@ -485,23 +482,13 @@ fs.writeFileSync(path, JSON.stringify(existing, null, 2));
 			corev1.EnvVar{Name: "JUPYTER_ROOT_DIR", Value: "/home/agent"},
 		)
 		// agentserver Python SDK (bundled in the jupyter image) reads
-		// these to dial the codex-app-gateway's /notebook/ws endpoint.
+		// these to dial the codex-exec-gateway REST API.
 		// Without them `ctx.envs()` etc. fail with ECONNREFUSED on
-		// the SDK's localhost:8086 default.
-		//
-		// The gateway authenticates the Bearer token as a codex HMAC
-		// (`<wsID>.<threadID>.<hex-hmac>`); we mint one with the
-		// shared inbound HMAC secret. Falling back to ProxyToken when
-		// no secret is configured keeps non-cluster dev runs happy
-		// even though the gateway will 401 that token.
-		if m.cfg.CodexAppGatewayURL != "" {
-			tok := opts.ProxyToken
-			if len(m.cfg.CodexInboundHMACSecret) > 0 {
-				tok = mintCodexHMACToken(m.cfg.CodexInboundHMACSecret, opts.WorkspaceID, "notebook")
-			}
+		// the SDK's localhost default.
+		if m.cfg.CodexExecGatewayURL != "" {
 			containerEnv = append(containerEnv,
-				corev1.EnvVar{Name: "AGENTSERVER_GATEWAY_URL", Value: m.cfg.CodexAppGatewayURL},
-				corev1.EnvVar{Name: "AGENTSERVER_WORKSPACE_TOKEN", Value: tok},
+				corev1.EnvVar{Name: "AGENTSERVER_GATEWAY_URL", Value: m.cfg.CodexExecGatewayURL},
+				corev1.EnvVar{Name: "AGENTSERVER_WORKSPACE_TOKEN", Value: opts.ProxyToken},
 				corev1.EnvVar{Name: "AGENTSERVER_WORKSPACE_ID", Value: opts.WorkspaceID},
 			)
 		}
@@ -909,22 +896,6 @@ func shortID(id string) string {
 
 func strPtr(s string) *string { return &s }
 func int64Ptr(i int64) *int64 { return &i }
-
-// mintCodexHMACToken returns a Bearer token codex-app-gateway accepts
-// on /notebook/ws and /codex-app/ws. Format:
-//
-//	<workspaceID>.<threadID>.<hex(hmac-sha256(secret, wsID || \0 || threadID))>
-//
-// Must stay in sync with internal/codexappgateway/auth.HMAC.Mint —
-// duplicated here to avoid importing the codexappgateway package from
-// the sandbox manager (it pulls a lot of unrelated deps).
-func mintCodexHMACToken(secret []byte, workspaceID, threadID string) string {
-	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(workspaceID))
-	mac.Write([]byte{0})
-	mac.Write([]byte(threadID))
-	return workspaceID + "." + threadID + "." + hex.EncodeToString(mac.Sum(nil))
-}
 
 // cpuQuantity converts millicores to a K8s resource.Quantity.
 // Falls back to 2000m (2 cores) if zero.
