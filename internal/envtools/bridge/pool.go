@@ -1,4 +1,4 @@
-package envmcp
+package bridge
 
 import (
 	"context"
@@ -9,12 +9,12 @@ import (
 	"sync"
 )
 
-// BridgePool maintains one BridgeClient per exe_id, dialed lazily on
+// Pool maintains one BridgeClient per exe_id, dialed lazily on
 // first Get and reused across calls. Closed connections (detected via
 // the BridgeClient's `closed` channel) are dropped and redialed
 // transparently. Used by env-mcp tools to multiplex multiple executor
 // targets behind one stdio MCP server.
-type BridgePool struct {
+type Pool struct {
 	gatewayBaseURL string // e.g. wss://exec-gw.../bridge (exe_id appended per dial)
 	token          string // workspace-scoped cap-token
 	logger         *slog.Logger
@@ -23,15 +23,15 @@ type BridgePool struct {
 	conns map[string]*BridgeClient
 }
 
-// NewBridgePool returns a pool. gatewayBaseURL should be the prefix to
+// NewPool returns a pool. gatewayBaseURL should be the prefix to
 // which `/<exe_id>` is appended (i.e. include `/bridge` but no trailing
 // slash); token is the workspace-scoped capability token issued for
 // this turn.
-func NewBridgePool(gatewayBaseURL, token string, logger *slog.Logger) *BridgePool {
+func NewPool(gatewayBaseURL, token string, logger *slog.Logger) *Pool {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &BridgePool{
+	return &Pool{
 		gatewayBaseURL: strings.TrimRight(gatewayBaseURL, "/"),
 		token:          token,
 		logger:         logger,
@@ -48,9 +48,9 @@ func NewBridgePool(gatewayBaseURL, token string, logger *slog.Logger) *BridgePoo
 // exe_a doesn't block Get(exe_b). If two goroutines race to dial the
 // same exe_id, both will dial but only one connection ends up in the
 // map; the loser closes its connection and returns the winner's.
-func (p *BridgePool) Get(ctx context.Context, exeID string) (*BridgeClient, error) {
+func (p *Pool) Get(ctx context.Context, exeID string) (*BridgeClient, error) {
 	if exeID == "" {
-		return nil, fmt.Errorf("BridgePool.Get: empty exe_id")
+		return nil, fmt.Errorf("Pool.Get: empty exe_id")
 	}
 	p.mu.Lock()
 	if c, ok := p.conns[exeID]; ok {
@@ -98,7 +98,7 @@ func (p *BridgePool) Get(ctx context.Context, exeID string) (*BridgeClient, erro
 }
 
 // Close shuts down every pooled connection. Idempotent.
-func (p *BridgePool) Close() {
+func (p *Pool) Close() {
 	p.mu.Lock()
 	conns := p.conns
 	p.conns = map[string]*BridgeClient{}

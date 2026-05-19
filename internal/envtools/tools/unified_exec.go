@@ -1,4 +1,4 @@
-package envmcp
+package tools
 
 import (
 	"context"
@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/agentserver/agentserver/internal/envtools/bridge"
+	"github.com/agentserver/agentserver/internal/envtools/nameresolver"
 )
 
 // session ties an MCP-facing session_id to a remote process. The
@@ -22,22 +25,23 @@ type unifiedSession struct {
 	createdAt time.Time
 }
 
-// sessionStore tracks open exec_command sessions and GCs old entries
+// SessionStore tracks open exec_command sessions and GCs old entries
 // (anything older than sessionMaxAge gets reaped on each access). The
 // GC is best-effort — sessions whose underlying process exited on its
 // own simply linger until access pressure prunes them.
-type sessionStore struct {
+type SessionStore struct {
 	mu       sync.Mutex
 	sessions map[string]*unifiedSession
 }
 
 const sessionMaxAge = 30 * time.Minute
 
-func newSessionStore() *sessionStore {
-	return &sessionStore{sessions: map[string]*unifiedSession{}}
+// NewSessionStore creates a new empty SessionStore.
+func NewSessionStore() *SessionStore {
+	return &SessionStore{sessions: map[string]*unifiedSession{}}
 }
 
-func (s *sessionStore) add(exeID, processID string) string {
+func (s *SessionStore) add(exeID, processID string) string {
 	sid := uuid.NewString()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -46,7 +50,7 @@ func (s *sessionStore) add(exeID, processID string) string {
 	return sid
 }
 
-func (s *sessionStore) lookup(sessionID string) (*unifiedSession, bool) {
+func (s *SessionStore) lookup(sessionID string) (*unifiedSession, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gcLocked()
@@ -54,13 +58,13 @@ func (s *sessionStore) lookup(sessionID string) (*unifiedSession, bool) {
 	return v, ok
 }
 
-func (s *sessionStore) drop(sessionID string) {
+func (s *SessionStore) drop(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, sessionID)
 }
 
-func (s *sessionStore) gcLocked() {
+func (s *SessionStore) gcLocked() {
 	cutoff := time.Now().Add(-sessionMaxAge)
 	for k, v := range s.sessions {
 		if v.createdAt.Before(cutoff) {
@@ -72,13 +76,13 @@ func (s *sessionStore) gcLocked() {
 // UnifiedExecTool starts a long-lived process and returns a session_id
 // the LLM uses with write_stdin / read_output / terminate.
 type UnifiedExecTool struct {
-	pool     *BridgePool
-	sessions *sessionStore
-	resolver *NameResolver
+	pool     *bridge.Pool
+	sessions *SessionStore
+	resolver *nameresolver.Resolver
 	pidSeq   atomic.Uint64
 }
 
-func NewUnifiedExecTool(pool *BridgePool, store *sessionStore, resolver *NameResolver) *UnifiedExecTool {
+func NewUnifiedExecTool(pool *bridge.Pool, store *SessionStore, resolver *nameresolver.Resolver) *UnifiedExecTool {
 	return &UnifiedExecTool{pool: pool, sessions: store, resolver: resolver}
 }
 
@@ -130,7 +134,7 @@ func (t *UnifiedExecTool) Call(ctx context.Context, raw json.RawMessage) (MCPCal
 		return errResult(fmt.Sprintf("environment %q unavailable: %v", a.EnvironmentID, err)), nil
 	}
 	pid := fmt.Sprintf("uexec-%d", t.pidSeq.Add(1))
-	startParams, _ := json.Marshal(ProcessStartParams{
+	startParams, _ := json.Marshal(bridge.ProcessStartParams{
 		ProcessID: pid,
 		Argv:      a.Command,
 		Cwd:       a.Cwd,
@@ -138,7 +142,7 @@ func (t *UnifiedExecTool) Call(ctx context.Context, raw json.RawMessage) (MCPCal
 		TTY:       a.TTY,
 		PipeStdin: a.PipeStdin,
 	})
-	if _, err := bc.Call(ctx, ExecMethodProcessStart, startParams); err != nil {
+	if _, err := bc.Call(ctx, bridge.ExecMethodProcessStart, startParams); err != nil {
 		return errResult(fmt.Sprintf("[exec failed to start: %v]", err)), nil
 	}
 	// Session stores the resolved exe_id so subsequent write_stdin/
@@ -150,11 +154,11 @@ func (t *UnifiedExecTool) Call(ctx context.Context, raw json.RawMessage) (MCPCal
 
 // WriteStdinTool writes bytes to a session's stdin via process/write.
 type WriteStdinTool struct {
-	pool     *BridgePool
-	sessions *sessionStore
+	pool     *bridge.Pool
+	sessions *SessionStore
 }
 
-func NewWriteStdinTool(pool *BridgePool, store *sessionStore) *WriteStdinTool {
+func NewWriteStdinTool(pool *bridge.Pool, store *SessionStore) *WriteStdinTool {
 	return &WriteStdinTool{pool: pool, sessions: store}
 }
 
@@ -192,11 +196,11 @@ func (t *WriteStdinTool) Call(ctx context.Context, raw json.RawMessage) (MCPCall
 	if err != nil {
 		return errResult(fmt.Sprintf("environment %q unavailable: %v", sess.exeID, err)), nil
 	}
-	params, _ := json.Marshal(ProcessWriteParams{
+	params, _ := json.Marshal(bridge.ProcessWriteParams{
 		ProcessID: sess.processID,
 		Chunk:     base64.StdEncoding.EncodeToString([]byte(a.Chars)),
 	})
-	if _, err := bc.Call(ctx, ExecMethodProcessWrite, params); err != nil {
+	if _, err := bc.Call(ctx, bridge.ExecMethodProcessWrite, params); err != nil {
 		return errResult(fmt.Sprintf("write failed: %v", err)), nil
 	}
 	return MCPCallToolResult{Content: []MCPToolContent{{Type: "text", Text: "ok"}}}, nil
@@ -204,11 +208,11 @@ func (t *WriteStdinTool) Call(ctx context.Context, raw json.RawMessage) (MCPCall
 
 // ReadOutputTool drains stdout/stderr buffered for a session.
 type ReadOutputTool struct {
-	pool     *BridgePool
-	sessions *sessionStore
+	pool     *bridge.Pool
+	sessions *SessionStore
 }
 
-func NewReadOutputTool(pool *BridgePool, store *sessionStore) *ReadOutputTool {
+func NewReadOutputTool(pool *bridge.Pool, store *SessionStore) *ReadOutputTool {
 	return &ReadOutputTool{pool: pool, sessions: store}
 }
 
@@ -251,11 +255,11 @@ func (t *ReadOutputTool) Call(ctx context.Context, raw json.RawMessage) (MCPCall
 	if err != nil {
 		return errResult(fmt.Sprintf("environment %q unavailable: %v", sess.exeID, err)), nil
 	}
-	params, _ := json.Marshal(ProcessReadParams{
+	params, _ := json.Marshal(bridge.ProcessReadParams{
 		ProcessID: sess.processID, AfterSeq: a.AfterSeq,
 		MaxBytes: defaultMaxBytes, WaitMs: a.YieldTimeMs,
 	})
-	rawResp, err := bc.Call(ctx, ExecMethodProcessRead, params)
+	rawResp, err := bc.Call(ctx, bridge.ExecMethodProcessRead, params)
 	if err != nil {
 		return errResult(fmt.Sprintf("read failed: %v", err)), nil
 	}
@@ -266,11 +270,11 @@ func (t *ReadOutputTool) Call(ctx context.Context, raw json.RawMessage) (MCPCall
 
 // TerminateTool sends process/terminate then drops the session entry.
 type TerminateTool struct {
-	pool     *BridgePool
-	sessions *sessionStore
+	pool     *bridge.Pool
+	sessions *SessionStore
 }
 
-func NewTerminateTool(pool *BridgePool, store *sessionStore) *TerminateTool {
+func NewTerminateTool(pool *bridge.Pool, store *SessionStore) *TerminateTool {
 	return &TerminateTool{pool: pool, sessions: store}
 }
 
@@ -307,8 +311,8 @@ func (t *TerminateTool) Call(ctx context.Context, raw json.RawMessage) (MCPCallT
 		// Session already gone — succeed quietly.
 		return MCPCallToolResult{Content: []MCPToolContent{{Type: "text", Text: "terminated"}}}, nil
 	}
-	params, _ := json.Marshal(ProcessTerminateParams{ProcessID: sess.processID})
-	if _, err := bc.Call(ctx, ExecMethodProcessTerminate, params); err != nil {
+	params, _ := json.Marshal(bridge.ProcessTerminateParams{ProcessID: sess.processID})
+	if _, err := bc.Call(ctx, bridge.ExecMethodProcessTerminate, params); err != nil {
 		return errResult(fmt.Sprintf("terminate failed: %v", err)), nil
 	}
 	return MCPCallToolResult{Content: []MCPToolContent{{Type: "text", Text: "terminated"}}}, nil

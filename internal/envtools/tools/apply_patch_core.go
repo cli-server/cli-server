@@ -1,4 +1,4 @@
-package envmcp
+package tools
 
 import (
 	"fmt"

@@ -1,4 +1,4 @@
-package envmcp
+package bridge
 
 import (
 	"context"
@@ -63,7 +63,7 @@ func (f *fakePoolServer) wsBase() string {
 
 func TestBridgePool_DialsOncePerExeID(t *testing.T) {
 	f := newFakePoolServer(t)
-	pool := NewBridgePool(f.wsBase(), "tok", nil)
+	pool := NewPool(f.wsBase(), "tok", nil)
 	defer pool.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -87,7 +87,7 @@ func TestBridgePool_DialsOncePerExeID(t *testing.T) {
 
 func TestBridgePool_RedialsAfterClose(t *testing.T) {
 	f := newFakePoolServer(t)
-	pool := NewBridgePool(f.wsBase(), "tok", nil)
+	pool := NewPool(f.wsBase(), "tok", nil)
 	defer pool.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -114,7 +114,7 @@ func TestBridgePool_RedialsAfterClose(t *testing.T) {
 
 func TestBridgePool_ParallelGetSameID(t *testing.T) {
 	f := newFakePoolServer(t)
-	pool := NewBridgePool(f.wsBase(), "tok", nil)
+	pool := NewPool(f.wsBase(), "tok", nil)
 	defer pool.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -148,7 +148,7 @@ func TestBridgePool_ParallelGetSameID(t *testing.T) {
 }
 
 func TestBridgePool_EmptyExeIDErrors(t *testing.T) {
-	pool := NewBridgePool("ws://example.invalid/bridge", "tok", nil)
+	pool := NewPool("ws://example.invalid/bridge", "tok", nil)
 	if _, err := pool.Get(context.Background(), ""); err == nil {
 		t.Fatal("Get(\"\") should error")
 	}

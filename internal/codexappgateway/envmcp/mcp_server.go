@@ -10,17 +10,10 @@ import (
 	"log/slog"
 	"sync"
 	"unicode/utf8"
-)
 
-// Tool is implemented by every MCP tool env-mcp exposes. tools/list
-// builds its response by querying each registered Tool's metadata;
-// tools/call dispatches by Name.
-type Tool interface {
-	Name() string
-	Description() string
-	InputSchema() json.RawMessage
-	Call(ctx context.Context, args json.RawMessage) (MCPCallToolResult, error)
-}
+	"github.com/agentserver/agentserver/internal/envtools/bridge"
+	"github.com/agentserver/agentserver/internal/envtools/tools"
+)
 
 // MCPServer is a minimal newline-delimited JSON-RPC stdio MCP server
 // that exposes a fixed set of tools through a registry. Concurrency:
@@ -29,7 +22,7 @@ type Tool interface {
 // intra-process synchronization other than the write-mutex.
 type MCPServer struct {
 	name    string // surfaces in initialize/serverInfo
-	tools   map[string]Tool
+	tools   map[string]tools.Tool
 	order   []string // stable tools/list ordering
 	writeMu sync.Mutex
 	logger  *slog.Logger
@@ -38,13 +31,13 @@ type MCPServer struct {
 // NewMCPServer constructs a server bound to a registry. Tool order is
 // preserved as supplied (LLM clients sometimes rely on consistent
 // ordering for caching).
-func NewMCPServer(name string, tools []Tool, logger *slog.Logger) *MCPServer {
+func NewMCPServer(name string, ts []tools.Tool, logger *slog.Logger) *MCPServer {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	reg := make(map[string]Tool, len(tools))
-	order := make([]string, 0, len(tools))
-	for _, t := range tools {
+	reg := make(map[string]tools.Tool, len(ts))
+	order := make([]string, 0, len(ts))
+	for _, t := range ts {
 		if _, dup := reg[t.Name()]; dup {
 			logger.Warn("mcp: duplicate tool name; later registration wins", "name", t.Name())
 		}
@@ -80,7 +73,7 @@ func (s *MCPServer) Serve(ctx context.Context, in io.Reader, out io.Writer) erro
 		if len(line) == 0 {
 			continue
 		}
-		var req JSONRPCMessage
+		var req bridge.JSONRPCMessage
 		if err := json.Unmarshal(line, &req); err != nil {
 			s.logger.Warn("mcp: dropping malformed JSON-RPC line", "err", err, "preview", previewLine(line))
 			continue
@@ -92,45 +85,45 @@ func (s *MCPServer) Serve(ctx context.Context, in io.Reader, out io.Writer) erro
 	return scanner.Err()
 }
 
-func (s *MCPServer) dispatch(ctx context.Context, req *JSONRPCMessage, out io.Writer) error {
+func (s *MCPServer) dispatch(ctx context.Context, req *bridge.JSONRPCMessage, out io.Writer) error {
 	switch req.Method {
 	case "initialize":
-		return s.respond(out, req.ID, MCPInitializeResult{
+		return s.respond(out, req.ID, tools.MCPInitializeResult{
 			ProtocolVersion: "2025-06-18",
 			Capabilities:    map[string]any{"tools": map[string]any{}},
-			ServerInfo:      MCPServerInfo{Name: s.name, Version: "0.2"},
+			ServerInfo:      tools.MCPServerInfo{Name: s.name, Version: "0.2"},
 		}, nil)
 
 	case "notifications/initialized":
 		return nil // notification
 
 	case "tools/list":
-		list := make([]MCPTool, 0, len(s.order))
+		list := make([]tools.MCPTool, 0, len(s.order))
 		for _, name := range s.order {
 			t := s.tools[name]
-			list = append(list, MCPTool{
+			list = append(list, tools.MCPTool{
 				Name:        t.Name(),
 				Description: t.Description(),
 				InputSchema: t.InputSchema(),
 			})
 		}
-		return s.respond(out, req.ID, MCPListToolsResult{Tools: list}, nil)
+		return s.respond(out, req.ID, tools.MCPListToolsResult{Tools: list}, nil)
 
 	case "tools/call":
-		var p MCPCallToolParams
+		var p tools.MCPCallToolParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return s.respond(out, req.ID, nil, &JSONRPCError{Code: -32602, Message: "invalid params: " + err.Error()})
+			return s.respond(out, req.ID, nil, &bridge.JSONRPCError{Code: -32602, Message: "invalid params: " + err.Error()})
 		}
 		t, ok := s.tools[p.Name]
 		if !ok {
-			return s.respond(out, req.ID, nil, &JSONRPCError{Code: -32601, Message: "unknown tool: " + p.Name})
+			return s.respond(out, req.ID, nil, &bridge.JSONRPCError{Code: -32601, Message: "unknown tool: " + p.Name})
 		}
 		res, err := t.Call(ctx, p.Arguments)
 		if err != nil {
 			// Tool returned a hard error (not an isError content) — surface
 			// as JSON-RPC error so the LLM sees a clear protocol failure
 			// rather than a silently-empty content list.
-			return s.respond(out, req.ID, nil, &JSONRPCError{Code: -32000, Message: p.Name + ": " + err.Error()})
+			return s.respond(out, req.ID, nil, &bridge.JSONRPCError{Code: -32000, Message: p.Name + ": " + err.Error()})
 		}
 		return s.respond(out, req.ID, res, nil)
 
@@ -145,15 +138,15 @@ func (s *MCPServer) dispatch(ctx context.Context, req *JSONRPCMessage, out io.Wr
 		if req.ID == nil {
 			return nil // notification of unknown method — drop
 		}
-		return s.respond(out, req.ID, nil, &JSONRPCError{Code: -32601, Message: "method not found: " + req.Method})
+		return s.respond(out, req.ID, nil, &bridge.JSONRPCError{Code: -32601, Message: "method not found: " + req.Method})
 	}
 }
 
-func (s *MCPServer) respond(out io.Writer, id *int64, result any, errObj *JSONRPCError) error {
+func (s *MCPServer) respond(out io.Writer, id *int64, result any, errObj *bridge.JSONRPCError) error {
 	if id == nil && errObj == nil {
 		return nil // nothing to say back
 	}
-	msg := JSONRPCMessage{JSONRPC: "2.0", ID: id, Error: errObj}
+	msg := bridge.JSONRPCMessage{JSONRPC: "2.0", ID: id, Error: errObj}
 	if errObj == nil {
 		raw, err := json.Marshal(result)
 		if err != nil {

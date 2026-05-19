@@ -1,4 +1,4 @@
-package envmcp
+package tools
 
 import (
 	"context"
@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/agentserver/agentserver/internal/envtools/bridge"
+	"github.com/agentserver/agentserver/internal/envtools/nameresolver"
 )
 
 // CopyPathTool copies a file or directory between executors.
@@ -26,13 +29,13 @@ import (
 //   - docs/superpowers/specs/2026-05-18-copy-path-http-relay.md (v0.56.0)
 //   - docs/superpowers/specs/2026-05-18-env-mcp-transfer-tool.md (v0.55.x)
 type CopyPathTool struct {
-	pool     *BridgePool
-	resolver *NameResolver
-	relay    *RelayClient // nil-safe: Enabled() checked before use
+	pool     *bridge.Pool
+	resolver *nameresolver.Resolver
+	relay    *bridge.RelayClient // nil-safe: Enabled() checked before use
 	pidSeq   atomic.Uint64
 }
 
-func NewCopyPathTool(pool *BridgePool, resolver *NameResolver, relay *RelayClient) *CopyPathTool {
+func NewCopyPathTool(pool *bridge.Pool, resolver *nameresolver.Resolver, relay *bridge.RelayClient) *CopyPathTool {
 	return &CopyPathTool{pool: pool, resolver: resolver, relay: relay}
 }
 
@@ -142,7 +145,7 @@ func (t *CopyPathTool) Call(ctx context.Context, raw json.RawMessage) (MCPCallTo
 // declined to handle the call; the caller should drop into the ws
 // fallback" — used in transport=auto for relay-disabled and curl-127
 // situations.
-func (t *CopyPathTool) callHTTPRelay(ctx context.Context, a copyPathArgs, srcExeID, dstExeID string, srcBC, dstBC *BridgeClient) (MCPCallToolResult, error, bool) {
+func (t *CopyPathTool) callHTTPRelay(ctx context.Context, a copyPathArgs, srcExeID, dstExeID string, srcBC, dstBC *bridge.BridgeClient) (MCPCallToolResult, error, bool) {
 	if !t.relay.Enabled() {
 		return MCPCallToolResult{}, nil, true // fall through (auto only path that reaches here)
 	}
@@ -276,20 +279,20 @@ func (t *CopyPathTool) callHTTPRelay(ctx context.Context, a copyPathArgs, srcExe
 // relayCleanup is the http-relay variant of cleanup. Source and dest
 // processes have already exited (we wait on them above); only the dst
 // .partial file may need rm.
-func (t *CopyPathTool) relayCleanup(_ *BridgeClient, dstBC *BridgeClient, tmpPath string, recursive bool) {
+func (t *CopyPathTool) relayCleanup(_ *bridge.BridgeClient, dstBC *bridge.BridgeClient, tmpPath string, recursive bool) {
 	if recursive || dstBC == nil || tmpPath == "" {
 		return
 	}
 	bgCtx, cancel := context.WithTimeout(context.Background(), copyPathCleanupTimeout)
 	defer cancel()
 	rmPID := fmt.Sprintf("relay-rm-%s", uuid.NewString()[:8])
-	startParams, _ := json.Marshal(ProcessStartParams{
+	startParams, _ := json.Marshal(bridge.ProcessStartParams{
 		ProcessID: rmPID,
 		Argv:      []string{"sh", "-c", fmt.Sprintf("rm -f %s", shQuote(tmpPath))},
 		Cwd:       "/tmp",
 		Env:       map[string]string{"PATH": "/usr/bin:/bin:/usr/local/bin"},
 	})
-	_, _ = dstBC.Call(bgCtx, ExecMethodProcessStart, startParams)
+	_, _ = dstBC.Call(bgCtx, bridge.ExecMethodProcessStart, startParams)
 }
 
 // runShellToExit starts a process and polls process/read until it
@@ -298,7 +301,7 @@ func (t *CopyPathTool) relayCleanup(_ *BridgeClient, dstBC *BridgeClient, tmpPat
 // process exits naturally, the remote process is terminated via
 // process/terminate using a fresh background context so the terminate
 // itself isn't cancelled by the cancellation that triggered it.
-func runShellToExit(ctx context.Context, bc *BridgeClient, pid string, argv []string) (retExit int, retStderr string, retErr error) {
+func runShellToExit(ctx context.Context, bc *bridge.BridgeClient, pid string, argv []string) (retExit int, retStderr string, retErr error) {
 	if err := startProcess(ctx, bc, pid, argv, false); err != nil {
 		return -1, "", fmt.Errorf("process/start: %w", err)
 	}
@@ -309,23 +312,23 @@ func runShellToExit(ctx context.Context, bc *BridgeClient, pid string, argv []st
 		if ctx.Err() != nil {
 			bgCtx, cancel := context.WithTimeout(context.Background(), copyPathCleanupTimeout)
 			defer cancel()
-			params, _ := json.Marshal(ProcessTerminateParams{ProcessID: pid})
-			_, _ = bc.Call(bgCtx, ExecMethodProcessTerminate, params)
+			params, _ := json.Marshal(bridge.ProcessTerminateParams{ProcessID: pid})
+			_, _ = bc.Call(bgCtx, bridge.ExecMethodProcessTerminate, params)
 		}
 	}()
 	const stderrCap = 8 * 1024
 	var stderrBuf strings.Builder
 	var afterSeq uint64
 	for {
-		rp, _ := json.Marshal(ProcessReadParams{
+		rp, _ := json.Marshal(bridge.ProcessReadParams{
 			ProcessID: pid, AfterSeq: afterSeq,
 			MaxBytes: 64 * 1024, WaitMs: 500,
 		})
-		raw, err := bc.Call(ctx, ExecMethodProcessRead, rp)
+		raw, err := bc.Call(ctx, bridge.ExecMethodProcessRead, rp)
 		if err != nil {
 			return -1, stderrBuf.String(), fmt.Errorf("process/read: %w", err)
 		}
-		var r ProcessReadResult
+		var r bridge.ProcessReadResult
 		if err := json.Unmarshal(raw, &r); err != nil {
 			return -1, stderrBuf.String(), fmt.Errorf("decode: %w", err)
 		}
@@ -354,7 +357,7 @@ func runShellToExit(ctx context.Context, bc *BridgeClient, pid string, argv []st
 // callWSPump is the v0.55.x ws cat-pump implementation, preserved as
 // fallback for: transport=ws, transport=auto with curl missing, or
 // transport=auto with relay disabled at config.
-func (t *CopyPathTool) callWSPump(pumpCtx context.Context, a copyPathArgs, srcBC, dstBC *BridgeClient) (MCPCallToolResult, error) {
+func (t *CopyPathTool) callWSPump(pumpCtx context.Context, a copyPathArgs, srcBC, dstBC *bridge.BridgeClient) (MCPCallToolResult, error) {
 	xferID := uuid.NewString()
 	srcPID := fmt.Sprintf("copy-src-%s", xferID)
 	dstPID := fmt.Sprintf("copy-dst-%s", xferID)
@@ -415,7 +418,7 @@ func (t *CopyPathTool) callWSPump(pumpCtx context.Context, a copyPathArgs, srcBC
 // dstBC is accepted but unused here — it exists so cleanup callers
 // don't have to special-case the recursive vs non-recursive branch
 // at the call site.
-func tmpPathIfNotRecursive(tmp string, recursive bool, _ *BridgeClient) string {
+func tmpPathIfNotRecursive(tmp string, recursive bool, _ *bridge.BridgeClient) string {
 	if recursive {
 		return ""
 	}
@@ -426,35 +429,35 @@ func tmpPathIfNotRecursive(tmp string, recursive bool, _ *BridgeClient) string {
 // rm -f the destination tmp file (if any). Uses an independent
 // background context with copyPathCleanupTimeout because the main
 // ctx may already be cancelled (caller abort / timeout).
-func (t *CopyPathTool) cleanup(srcBC *BridgeClient, srcPID string, dstBC *BridgeClient, dstPID string, tmpPath string) {
+func (t *CopyPathTool) cleanup(srcBC *bridge.BridgeClient, srcPID string, dstBC *bridge.BridgeClient, dstPID string, tmpPath string) {
 	bgCtx, cancel := context.WithTimeout(context.Background(), copyPathCleanupTimeout)
 	defer cancel()
 	if srcBC != nil && srcPID != "" {
-		params, _ := json.Marshal(ProcessTerminateParams{ProcessID: srcPID})
-		_, _ = srcBC.Call(bgCtx, ExecMethodProcessTerminate, params)
+		params, _ := json.Marshal(bridge.ProcessTerminateParams{ProcessID: srcPID})
+		_, _ = srcBC.Call(bgCtx, bridge.ExecMethodProcessTerminate, params)
 	}
 	if dstBC != nil && dstPID != "" {
-		params, _ := json.Marshal(ProcessTerminateParams{ProcessID: dstPID})
-		_, _ = dstBC.Call(bgCtx, ExecMethodProcessTerminate, params)
+		params, _ := json.Marshal(bridge.ProcessTerminateParams{ProcessID: dstPID})
+		_, _ = dstBC.Call(bgCtx, bridge.ExecMethodProcessTerminate, params)
 	}
 	if dstBC != nil && tmpPath != "" {
 		// rm -f via process/start so we don't depend on fs/remove
 		// (which the spec doesn't reach across this much code).
 		rmPID := fmt.Sprintf("copy-rm-%s", uuid.NewString()[:8])
-		startParams, _ := json.Marshal(ProcessStartParams{
+		startParams, _ := json.Marshal(bridge.ProcessStartParams{
 			ProcessID: rmPID,
 			Argv:      []string{"sh", "-c", fmt.Sprintf("rm -f %s", shQuote(tmpPath))},
 			Cwd:       "/tmp",
 			Env:       map[string]string{"PATH": "/usr/bin:/bin:/usr/local/bin"},
 		})
-		_, _ = dstBC.Call(bgCtx, ExecMethodProcessStart, startParams)
+		_, _ = dstBC.Call(bgCtx, bridge.ExecMethodProcessStart, startParams)
 		// Don't wait for it — best-effort.
 	}
 }
 
 // startProcess is a thin wrapper around process/start.
-func startProcess(ctx context.Context, bc *BridgeClient, pid string, argv []string, pipeStdin bool) error {
-	params, _ := json.Marshal(ProcessStartParams{
+func startProcess(ctx context.Context, bc *bridge.BridgeClient, pid string, argv []string, pipeStdin bool) error {
+	params, _ := json.Marshal(bridge.ProcessStartParams{
 		ProcessID: pid,
 		Argv:      argv,
 		Cwd:       "/tmp",
@@ -462,35 +465,35 @@ func startProcess(ctx context.Context, bc *BridgeClient, pid string, argv []stri
 		TTY:       false,
 		PipeStdin: pipeStdin,
 	})
-	_, err := bc.Call(ctx, ExecMethodProcessStart, params)
+	_, err := bc.Call(ctx, bridge.ExecMethodProcessStart, params)
 	return err
 }
 
 // remoteRename runs `mv <src> <dst>` and waits for it to exit. Used
 // for the final atomic rename of the .partial file to the target.
-func remoteRename(ctx context.Context, bc *BridgeClient, src, dst string) error {
+func remoteRename(ctx context.Context, bc *bridge.BridgeClient, src, dst string) error {
 	pid := fmt.Sprintf("copy-mv-%s", uuid.NewString()[:8])
-	startParams, _ := json.Marshal(ProcessStartParams{
+	startParams, _ := json.Marshal(bridge.ProcessStartParams{
 		ProcessID: pid,
 		Argv:      []string{"sh", "-c", fmt.Sprintf("mv %s %s", shQuote(src), shQuote(dst))},
 		Cwd:       "/tmp",
 		Env:       map[string]string{"PATH": "/usr/bin:/bin:/usr/local/bin"},
 	})
-	if _, err := bc.Call(ctx, ExecMethodProcessStart, startParams); err != nil {
+	if _, err := bc.Call(ctx, bridge.ExecMethodProcessStart, startParams); err != nil {
 		return err
 	}
 	// Poll until exited.
 	var afterSeq uint64
 	for {
-		rp, _ := json.Marshal(ProcessReadParams{
+		rp, _ := json.Marshal(bridge.ProcessReadParams{
 			ProcessID: pid, AfterSeq: afterSeq,
 			MaxBytes: 4096, WaitMs: copyPathPollWaitMs,
 		})
-		raw, err := bc.Call(ctx, ExecMethodProcessRead, rp)
+		raw, err := bc.Call(ctx, bridge.ExecMethodProcessRead, rp)
 		if err != nil {
 			return fmt.Errorf("mv read: %w", err)
 		}
-		var r ProcessReadResult
+		var r bridge.ProcessReadResult
 		if err := json.Unmarshal(raw, &r); err != nil {
 			return fmt.Errorf("mv decode: %w", err)
 		}
@@ -515,20 +518,20 @@ func remoteRename(ctx context.Context, bc *BridgeClient, src, dst string) error 
 // pumpChunks shuttles bytes from src's stdout to dst's stdin one
 // process/read window at a time. Returns the total bytes transferred
 // when src exits cleanly. On any error returns (bytes-so-far, err).
-func pumpChunks(ctx context.Context, srcBC *BridgeClient, srcPID string, dstBC *BridgeClient, dstPID string) (int64, error) {
+func pumpChunks(ctx context.Context, srcBC *bridge.BridgeClient, srcPID string, dstBC *bridge.BridgeClient, dstPID string) (int64, error) {
 	var afterSeq uint64
 	var totalBytes int64
 	for {
 		// Read from source.
-		readParams, _ := json.Marshal(ProcessReadParams{
+		readParams, _ := json.Marshal(bridge.ProcessReadParams{
 			ProcessID: srcPID, AfterSeq: afterSeq,
 			MaxBytes: copyPathChunkBytes, WaitMs: copyPathPollWaitMs,
 		})
-		raw, err := srcBC.Call(ctx, ExecMethodProcessRead, readParams)
+		raw, err := srcBC.Call(ctx, bridge.ExecMethodProcessRead, readParams)
 		if err != nil {
 			return totalBytes, fmt.Errorf("source: read failed at %d bytes: %w", totalBytes, err)
 		}
-		var r ProcessReadResult
+		var r bridge.ProcessReadResult
 		if err := json.Unmarshal(raw, &r); err != nil {
 			return totalBytes, fmt.Errorf("source: decode failed: %w", err)
 		}
@@ -542,11 +545,11 @@ func pumpChunks(ctx context.Context, srcBC *BridgeClient, srcPID string, dstBC *
 			if derr != nil {
 				return totalBytes, fmt.Errorf("source: base64 decode at %d bytes: %w", totalBytes, derr)
 			}
-			writeParams, _ := json.Marshal(ProcessWriteParams{
+			writeParams, _ := json.Marshal(bridge.ProcessWriteParams{
 				ProcessID: dstPID,
 				Chunk:     base64.StdEncoding.EncodeToString(decoded),
 			})
-			if _, err := dstBC.Call(ctx, ExecMethodProcessWrite, writeParams); err != nil {
+			if _, err := dstBC.Call(ctx, bridge.ExecMethodProcessWrite, writeParams); err != nil {
 				return totalBytes, fmt.Errorf("destination: write failed at %d bytes: %w", totalBytes, err)
 			}
 			totalBytes += int64(len(decoded))
@@ -592,8 +595,8 @@ func pumpChunks(ctx context.Context, srcBC *BridgeClient, srcPID string, dstBC *
 		_ = err
 	}
 	// Terminate dst process. It has all its data; exits cleanly on SIGTERM.
-	tparams, _ := json.Marshal(ProcessTerminateParams{ProcessID: dstPID})
-	_, _ = dstBC.Call(ctx, ExecMethodProcessTerminate, tparams)
+	tparams, _ := json.Marshal(bridge.ProcessTerminateParams{ProcessID: dstPID})
+	_, _ = dstBC.Call(ctx, bridge.ExecMethodProcessTerminate, tparams)
 	return totalBytes, nil
 }
 
@@ -605,7 +608,7 @@ func pumpChunks(ctx context.Context, srcBC *BridgeClient, srcPID string, dstBC *
 // shell process (`stat -c %s`) and chains of process/start calls.
 // The "no new chunks" heuristic works because once cat has drained
 // its stdin pipe, it has no stdout to emit either.
-func waitDestinationDrained(ctx context.Context, bc *BridgeClient, pid string, expectedBytes int64) error {
+func waitDestinationDrained(ctx context.Context, bc *bridge.BridgeClient, pid string, expectedBytes int64) error {
 	_ = expectedBytes // reserved for future shell-stat-based check
 	deadline := time.Now().Add(10 * time.Second)
 	var afterSeq uint64
@@ -616,15 +619,15 @@ func waitDestinationDrained(ctx context.Context, bc *BridgeClient, pid string, e
 			return ctx.Err()
 		default:
 		}
-		rp, _ := json.Marshal(ProcessReadParams{
+		rp, _ := json.Marshal(bridge.ProcessReadParams{
 			ProcessID: pid, AfterSeq: afterSeq,
 			MaxBytes: 4096, WaitMs: copyPathPollWaitMs,
 		})
-		raw, err := bc.Call(ctx, ExecMethodProcessRead, rp)
+		raw, err := bc.Call(ctx, bridge.ExecMethodProcessRead, rp)
 		if err != nil {
 			return err
 		}
-		var r ProcessReadResult
+		var r bridge.ProcessReadResult
 		if err := json.Unmarshal(raw, &r); err != nil {
 			return err
 		}

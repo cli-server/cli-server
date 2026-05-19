@@ -13,6 +13,10 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+
+	"github.com/agentserver/agentserver/internal/envtools/bridge"
+	"github.com/agentserver/agentserver/internal/envtools/nameresolver"
+	"github.com/agentserver/agentserver/internal/envtools/tools"
 )
 
 // RunArgs is the parsed CLI input for `codex-app-gateway env-mcp`.
@@ -70,26 +74,26 @@ func Run(ctx context.Context, args RunArgs, stdin io.Reader, stdout, stderr io.W
 		"http_relay_enabled", args.ExecGatewayInternalURL != "" && execGwSecret != "",
 	)
 
-	pool := NewBridgePool(args.ExecGatewayURL, wsToken, logger)
+	pool := bridge.NewPool(args.ExecGatewayURL, wsToken, logger)
 	defer pool.Close()
 
-	sessions := newSessionStore()
+	sessions := tools.NewSessionStore()
 	connectedURL := strings.TrimRight(args.AppGatewayInternal, "/") + "/internal/connected"
-	resolver := NewNameResolver(connectedURL, lbToken, logger)
+	resolver := nameresolver.NewResolver(connectedURL, lbToken, logger)
 
-	relayClient := NewRelayClient(args.ExecGatewayInternalURL, execGwSecret, args.WorkspaceID, logger)
-	tools := []Tool{
-		NewListEnvironmentsTool(resolver),
-		NewShellTool(pool, resolver),
-		NewUnifiedExecTool(pool, sessions, resolver),
-		NewWriteStdinTool(pool, sessions),
-		NewReadOutputTool(pool, sessions),
-		NewTerminateTool(pool, sessions),
-		NewReadFileTool(pool, resolver),
-		NewApplyPatchTool(pool, resolver),
-		NewCopyPathTool(pool, resolver, relayClient),
+	relayClient := bridge.NewRelayClient(args.ExecGatewayInternalURL, execGwSecret, args.WorkspaceID, logger)
+	toolList := []tools.Tool{
+		tools.NewListEnvironmentsTool(resolver),
+		tools.NewShellTool(pool, resolver),
+		tools.NewUnifiedExecTool(pool, sessions, resolver),
+		tools.NewWriteStdinTool(pool, sessions),
+		tools.NewReadOutputTool(pool, sessions),
+		tools.NewTerminateTool(pool, sessions),
+		tools.NewReadFileTool(pool, resolver),
+		tools.NewApplyPatchTool(pool, resolver),
+		tools.NewCopyPathTool(pool, resolver, relayClient),
 	}
-	srv := NewMCPServer("agentserver", tools, logger)
+	srv := NewMCPServer("agentserver", toolList, logger)
 	if err := srv.Serve(ctx, stdin, stdout); err != nil {
 		return fmt.Errorf("mcp serve: %w", err)
 	}

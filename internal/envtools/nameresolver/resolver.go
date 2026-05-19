@@ -1,4 +1,4 @@
-package envmcp
+package nameresolver
 
 import (
 	"context"
@@ -25,7 +25,7 @@ type connectedEntry struct {
 	LastSeenAt  string `json:"last_seen_at,omitempty"`
 }
 
-// NameResolver maintains a workspace-scoped name → exe_id map by
+// Resolver maintains a workspace-scoped name → exe_id map by
 // periodically refreshing from app-gateway's /internal/connected. Tools
 // that take an environment_id (semantically a name) call Resolve to get the
 // underlying exe_id for BridgePool.Get.
@@ -34,7 +34,7 @@ type connectedEntry struct {
 //   - First Resolve populates the cache.
 //   - Subsequent Resolves use the cache if its age is under cacheTTL.
 //   - A Resolve miss forces an immediate refresh before erroring.
-type NameResolver struct {
+type Resolver struct {
 	url        string // loopback /internal/connected
 	token      string // X-Loopback-Token
 	httpClient *http.Client
@@ -53,11 +53,11 @@ type NameResolver struct {
 
 const nameResolverCacheTTL = 10 * time.Second
 
-func NewNameResolver(loopbackURL, loopbackToken string, logger *slog.Logger) *NameResolver {
+func NewResolver(loopbackURL, loopbackToken string, logger *slog.Logger) *Resolver {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &NameResolver{
+	return &Resolver{
 		url:        loopbackURL,
 		token:      loopbackToken,
 		httpClient: &http.Client{Timeout: 3 * time.Second},
@@ -69,7 +69,7 @@ func NewNameResolver(loopbackURL, loopbackToken string, logger *slog.Logger) *Na
 
 // fetch reads the current connected list from the loopback endpoint.
 // Returns the raw entries (caller decides whether to update cache).
-func (r *NameResolver) fetch(ctx context.Context) ([]connectedEntry, error) {
+func (r *Resolver) fetch(ctx context.Context) ([]connectedEntry, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.url, nil)
 	if err != nil {
 		return nil, err
@@ -102,7 +102,7 @@ func (r *NameResolver) fetch(ctx context.Context) ([]connectedEntry, error) {
 // endpoint. cachedAt is bumped on EVERY refresh attempt (success or
 // fail) so a steady stream of misses on an unknown name still
 // throttles to one fetch per cacheTTL.
-func (r *NameResolver) refresh(ctx context.Context) ([]connectedEntry, error) {
+func (r *Resolver) refresh(ctx context.Context) ([]connectedEntry, error) {
 	v, err, _ := r.sf.Do("refresh", func() (any, error) {
 		entries, err := r.fetch(ctx)
 		// Bump cachedAt regardless — see comment above.
@@ -132,7 +132,7 @@ func (r *NameResolver) refresh(ctx context.Context) ([]connectedEntry, error) {
 // Resolve returns the exe_id bound to name in the current workspace.
 // If name isn't in the cache, refreshes once before reporting
 // not-found.
-func (r *NameResolver) Resolve(ctx context.Context, name string) (string, error) {
+func (r *Resolver) Resolve(ctx context.Context, name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("env name required")
 	}
@@ -162,7 +162,7 @@ func (r *NameResolver) Resolve(ctx context.Context, name string) (string, error)
 
 // LLMView returns the entries reshaped for the LLM (omits exe_id).
 // Always refreshes to keep the LLM's view fresh.
-func (r *NameResolver) LLMView(ctx context.Context) ([]byte, error) {
+func (r *Resolver) LLMView(ctx context.Context) ([]byte, error) {
 	entries, err := r.refresh(ctx)
 	if err != nil {
 		return nil, err

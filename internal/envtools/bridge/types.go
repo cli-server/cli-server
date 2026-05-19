@@ -1,8 +1,6 @@
-package envmcp
+package bridge
 
 import "encoding/json"
-
-// --- MCP wire types (subset implemented) ---
 
 // JSONRPCMessage is the JSON-RPC 2.0 envelope shared by both MCP (over stdio)
 // and exec-server (over ws). The ID field is a pointer so notifications
@@ -20,46 +18,6 @@ type JSONRPCError struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data,omitempty"`
-}
-
-// MCPInitializeResult is the response to `initialize`.
-type MCPInitializeResult struct {
-	ProtocolVersion string         `json:"protocolVersion"`
-	Capabilities    map[string]any `json:"capabilities"`
-	ServerInfo      MCPServerInfo  `json:"serverInfo"`
-}
-
-type MCPServerInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
-// MCPListToolsResult is the response to `tools/list`.
-type MCPListToolsResult struct {
-	Tools []MCPTool `json:"tools"`
-}
-
-type MCPTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema"`
-}
-
-// MCPCallToolParams is the request body of `tools/call`.
-type MCPCallToolParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
-}
-
-// MCPCallToolResult is the response body of `tools/call`.
-type MCPCallToolResult struct {
-	Content []MCPToolContent `json:"content"`
-	IsError bool             `json:"isError"`
-}
-
-type MCPToolContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
 }
 
 // --- exec-server wire types (subset env-mcp uses) ---

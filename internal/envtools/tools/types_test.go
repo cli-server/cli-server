@@ -1,14 +1,16 @@
-package envmcp
+package tools
 
 import (
 	"encoding/base64"
 	"encoding/json"
 	"testing"
+
+	"github.com/agentserver/agentserver/internal/envtools/bridge"
 )
 
 func TestProcessOutputChunk_DecodesBase64Stream(t *testing.T) {
 	raw := []byte(`{"seq":7,"stream":"stdout","chunk":"aGVsbG8="}`)
-	var c ProcessOutputChunk
+	var c bridge.ProcessOutputChunk
 	if err := json.Unmarshal(raw, &c); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -25,11 +27,11 @@ func TestProcessOutputChunk_DecodesBase64Stream(t *testing.T) {
 }
 
 func TestExecServerMethods_Constants(t *testing.T) {
-	if ExecMethodInitialize != "initialize" ||
-		ExecMethodProcessStart != "process/start" ||
-		ExecMethodProcessRead != "process/read" {
+	if bridge.ExecMethodInitialize != "initialize" ||
+		bridge.ExecMethodProcessStart != "process/start" ||
+		bridge.ExecMethodProcessRead != "process/read" {
 		t.Fatalf("method constants drifted: %s/%s/%s",
-			ExecMethodInitialize, ExecMethodProcessStart, ExecMethodProcessRead)
+			bridge.ExecMethodInitialize, bridge.ExecMethodProcessStart, bridge.ExecMethodProcessRead)
 	}
 }
 

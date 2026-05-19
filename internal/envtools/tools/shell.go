@@ -1,4 +1,4 @@
-package envmcp
+package tools
 
 import (
 	"context"
@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
+
+	"github.com/agentserver/agentserver/internal/envtools/bridge"
+	"github.com/agentserver/agentserver/internal/envtools/nameresolver"
 )
 
 // shellSchema is the JSON schema for the `shell` tool's arguments.
@@ -26,12 +29,12 @@ var shellSchema = json.RawMessage(`{
 // dispatches process/start on the selected executor then polls
 // process/read until the process exits or the timeout elapses.
 type ShellTool struct {
-	pool     *BridgePool
-	resolver *NameResolver
+	pool     *bridge.Pool
+	resolver *nameresolver.Resolver
 	pidSeq   atomic.Uint64
 }
 
-func NewShellTool(pool *BridgePool, resolver *NameResolver) *ShellTool {
+func NewShellTool(pool *bridge.Pool, resolver *nameresolver.Resolver) *ShellTool {
 	return &ShellTool{pool: pool, resolver: resolver}
 }
 
@@ -84,7 +87,7 @@ func (t *ShellTool) Call(ctx context.Context, raw json.RawMessage) (MCPCallToolR
 	}
 
 	pid := fmt.Sprintf("shell-%d", t.pidSeq.Add(1))
-	startParams, _ := json.Marshal(ProcessStartParams{
+	startParams, _ := json.Marshal(bridge.ProcessStartParams{
 		ProcessID: pid,
 		Argv:      a.Command,
 		Cwd:       cwd,
@@ -92,7 +95,7 @@ func (t *ShellTool) Call(ctx context.Context, raw json.RawMessage) (MCPCallToolR
 		TTY:       false,
 		PipeStdin: false,
 	})
-	if _, err := bc.Call(ctx, ExecMethodProcessStart, startParams); err != nil {
+	if _, err := bc.Call(ctx, bridge.ExecMethodProcessStart, startParams); err != nil {
 		return errResult(fmt.Sprintf("[exec failed to start: %v]", err)), nil
 	}
 
@@ -102,15 +105,15 @@ func (t *ShellTool) Call(ctx context.Context, raw json.RawMessage) (MCPCallToolR
 	var failure *string
 
 	for cycle := 0; cycle < maxCycles; cycle++ {
-		readParams, _ := json.Marshal(ProcessReadParams{
+		readParams, _ := json.Marshal(bridge.ProcessReadParams{
 			ProcessID: pid, AfterSeq: afterSeq,
 			MaxBytes: defaultMaxBytes, WaitMs: defaultReadWaitMs,
 		})
-		raw, err := bc.Call(ctx, ExecMethodProcessRead, readParams)
+		raw, err := bc.Call(ctx, bridge.ExecMethodProcessRead, readParams)
 		if err != nil {
 			return errResult(fmt.Sprintf("%s%s\n[exec read failed: %v]", stdout.String(), stderr.String(), err)), nil
 		}
-		var r ProcessReadResult
+		var r bridge.ProcessReadResult
 		if err := json.Unmarshal(raw, &r); err != nil {
 			return errResult(fmt.Sprintf("[exec read decode failed: %v]", err)), nil
 		}

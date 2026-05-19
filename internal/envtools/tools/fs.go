@@ -1,10 +1,13 @@
-package envmcp
+package tools
 
 import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+
+	"github.com/agentserver/agentserver/internal/envtools/bridge"
+	"github.com/agentserver/agentserver/internal/envtools/nameresolver"
 )
 
 // ReadFileTool implements `read_file` via exec-server fs/readFile.
@@ -12,11 +15,11 @@ import (
 // full file from the remote, matching codex's local read_file
 // semantics (exec-server doesn't support partial reads server-side).
 type ReadFileTool struct {
-	pool     *BridgePool
-	resolver *NameResolver
+	pool     *bridge.Pool
+	resolver *nameresolver.Resolver
 }
 
-func NewReadFileTool(pool *BridgePool, resolver *NameResolver) *ReadFileTool {
+func NewReadFileTool(pool *bridge.Pool, resolver *nameresolver.Resolver) *ReadFileTool {
 	return &ReadFileTool{pool: pool, resolver: resolver}
 }
 
@@ -58,12 +61,12 @@ func (t *ReadFileTool) Call(ctx context.Context, raw json.RawMessage) (MCPCallTo
 	if err != nil {
 		return errResult(fmt.Sprintf("environment %q unavailable: %v", a.EnvironmentID, err)), nil
 	}
-	params, _ := json.Marshal(FsReadFileParams{Path: a.Path})
-	rawResp, err := bc.Call(ctx, ExecMethodFsReadFile, params)
+	params, _ := json.Marshal(bridge.FsReadFileParams{Path: a.Path})
+	rawResp, err := bc.Call(ctx, bridge.ExecMethodFsReadFile, params)
 	if err != nil {
 		return errResult(fmt.Sprintf("read_file failed: %v", err)), nil
 	}
-	var r FsReadFileResult
+	var r bridge.FsReadFileResult
 	if err := json.Unmarshal(rawResp, &r); err != nil {
 		return errResult(fmt.Sprintf("read_file decode: %v", err)), nil
 	}

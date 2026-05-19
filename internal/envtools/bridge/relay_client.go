@@ -1,4 +1,4 @@
-package envmcp
+package bridge
 
 import (
 	"bytes"

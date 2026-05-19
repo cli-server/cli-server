@@ -1,4 +1,4 @@
-package envmcp
+package tools
 
 import (
 	"context"
@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/agentserver/agentserver/internal/envtools/bridge"
+	"github.com/agentserver/agentserver/internal/envtools/nameresolver"
 )
 
 // ApplyPatchTool implements `apply_patch`. The patch text is parsed
@@ -16,11 +19,11 @@ import (
 // Per-file outcomes are reported as `path: ok` / `path: error: ...`
 // lines so the LLM sees which files succeeded even on partial failure.
 type ApplyPatchTool struct {
-	pool     *BridgePool
-	resolver *NameResolver
+	pool     *bridge.Pool
+	resolver *nameresolver.Resolver
 }
 
-func NewApplyPatchTool(pool *BridgePool, resolver *NameResolver) *ApplyPatchTool {
+func NewApplyPatchTool(pool *bridge.Pool, resolver *nameresolver.Resolver) *ApplyPatchTool {
 	return &ApplyPatchTool{pool: pool, resolver: resolver}
 }
 
@@ -83,7 +86,7 @@ func (t *ApplyPatchTool) Call(ctx context.Context, raw json.RawMessage) (MCPCall
 	}, nil
 }
 
-func (t *ApplyPatchTool) applyOp(ctx context.Context, bc *BridgeClient, op FileOp) error {
+func (t *ApplyPatchTool) applyOp(ctx context.Context, bc *bridge.BridgeClient, op FileOp) error {
 	switch op.Kind {
 	case OpAdd:
 		return writeFile(ctx, bc, op.Path, []byte(op.Content))
@@ -98,16 +101,16 @@ func (t *ApplyPatchTool) applyOp(ctx context.Context, bc *BridgeClient, op FileO
 		}
 		return writeFile(ctx, bc, op.Path, []byte(patched))
 	case OpDelete:
-		params, _ := json.Marshal(FsRemoveParams{Path: op.Path})
-		_, err := bc.Call(ctx, ExecMethodFsRemove, params)
+		params, _ := json.Marshal(bridge.FsRemoveParams{Path: op.Path})
+		_, err := bc.Call(ctx, bridge.ExecMethodFsRemove, params)
 		return err
 	case OpMove:
-		copyParams, _ := json.Marshal(FsCopyParams{SourcePath: op.Path, DestinationPath: op.NewPath})
-		if _, err := bc.Call(ctx, ExecMethodFsCopy, copyParams); err != nil {
+		copyParams, _ := json.Marshal(bridge.FsCopyParams{SourcePath: op.Path, DestinationPath: op.NewPath})
+		if _, err := bc.Call(ctx, bridge.ExecMethodFsCopy, copyParams); err != nil {
 			return fmt.Errorf("fs/copy: %w", err)
 		}
-		rmParams, _ := json.Marshal(FsRemoveParams{Path: op.Path})
-		_, err := bc.Call(ctx, ExecMethodFsRemove, rmParams)
+		rmParams, _ := json.Marshal(bridge.FsRemoveParams{Path: op.Path})
+		_, err := bc.Call(ctx, bridge.ExecMethodFsRemove, rmParams)
 		return err
 	default:
 		return fmt.Errorf("unknown op kind %d", op.Kind)
@@ -116,13 +119,13 @@ func (t *ApplyPatchTool) applyOp(ctx context.Context, bc *BridgeClient, op FileO
 
 // readFile is a thin helper around the fs/readFile RPC returning the
 // decoded bytes.
-func readFile(ctx context.Context, bc *BridgeClient, path string) ([]byte, error) {
-	params, _ := json.Marshal(FsReadFileParams{Path: path})
-	rawResp, err := bc.Call(ctx, ExecMethodFsReadFile, params)
+func readFile(ctx context.Context, bc *bridge.BridgeClient, path string) ([]byte, error) {
+	params, _ := json.Marshal(bridge.FsReadFileParams{Path: path})
+	rawResp, err := bc.Call(ctx, bridge.ExecMethodFsReadFile, params)
 	if err != nil {
 		return nil, err
 	}
-	var r FsReadFileResult
+	var r bridge.FsReadFileResult
 	if err := json.Unmarshal(rawResp, &r); err != nil {
 		return nil, err
 	}
@@ -131,12 +134,12 @@ func readFile(ctx context.Context, bc *BridgeClient, path string) ([]byte, error
 
 // writeFile is a thin helper around fs/writeFile that base64-wraps
 // and asks the server to create missing parent directories.
-func writeFile(ctx context.Context, bc *BridgeClient, path string, data []byte) error {
-	params, _ := json.Marshal(FsWriteFileParams{
+func writeFile(ctx context.Context, bc *bridge.BridgeClient, path string, data []byte) error {
+	params, _ := json.Marshal(bridge.FsWriteFileParams{
 		Path:          path,
 		DataBase64:    base64.StdEncoding.EncodeToString(data),
 		CreateMissing: true,
 	})
-	_, err := bc.Call(ctx, ExecMethodFsWriteFile, params)
+	_, err := bc.Call(ctx, bridge.ExecMethodFsWriteFile, params)
 	return err
 }

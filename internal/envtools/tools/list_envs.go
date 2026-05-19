@@ -1,8 +1,10 @@
-package envmcp
+package tools
 
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/agentserver/agentserver/internal/envtools/nameresolver"
 )
 
 // listEnvironmentsSchema: empty object, no args.
@@ -14,10 +16,10 @@ var listEnvironmentsSchema = json.RawMessage(`{"type":"object","properties":{}}`
 // as a side effect of every call, so subsequent shell/apply_patch/etc
 // tool calls can look up name → exe_id.
 type ListEnvironmentsTool struct {
-	resolver *NameResolver
+	resolver *nameresolver.Resolver
 }
 
-func NewListEnvironmentsTool(resolver *NameResolver) *ListEnvironmentsTool {
+func NewListEnvironmentsTool(resolver *nameresolver.Resolver) *ListEnvironmentsTool {
 	return &ListEnvironmentsTool{resolver: resolver}
 }
 
