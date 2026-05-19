@@ -236,6 +236,14 @@ func (c *Conn) Turn(ctx context.Context, threadID string, callerParams json.RawM
 		c.mu.Lock()
 		delete(c.pendingTurns, startResp.Turn.ID)
 		c.mu.Unlock()
+		// Best-effort interrupt so codex doesn't keep working.
+		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ipB, _ := json.Marshal(turnInterruptParams{ThreadID: threadID, TurnID: startResp.Turn.ID})
+		interruptID := c.nextID.Add(1)
+		_ = c.writeJSON(bgCtx, rpcRequest{
+			JSONRPC: "2.0", ID: &interruptID, Method: "turn/interrupt", Params: ipB,
+		})
+		cancel()
 		return nil, &TimeoutError{ThreadID: threadID, TurnID: startResp.Turn.ID}
 	}
 }
