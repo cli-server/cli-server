@@ -88,6 +88,20 @@ func (s *Server) handleBridge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 4b. Per-executor stream cap (PR 1 Gap 3): Strategy A — pre-upgrade HTTP 503.
+	// We do the check before websocket.Accept to fail-fast on capacity-exceeded
+	// dials. The check is intentionally not atomic with the eventual addRoute;
+	// concurrent dials slipping past will succeed at addRoute. Acceptable: the
+	// cap is a guardrail, not a strict invariant. Bridge dials are typically
+	// sequential per env-mcp. cap=0 means disabled (no enforcement).
+	if cap := s.config.MaxStreamsPerExecutor; cap > 0 && inbound.streamCount() >= cap {
+		s.logger.Warn("bridge: stream cap exceeded",
+			"exe_id", exeID, "cap", cap, "current", inbound.streamCount())
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, "executor stream cap exceeded", http.StatusServiceUnavailable)
+		return
+	}
+
 	// 5. Upgrade caller to ws.
 	bridgeWS, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true, // auth already enforced above

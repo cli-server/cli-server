@@ -83,6 +83,15 @@ func (i *inboundConn) lookup(streamID string) (*bridgeSession, bool) {
 	return b, ok
 }
 
+// streamCount returns the number of currently registered routes (i.e.
+// concurrent /bridge sessions for this executor). Used by the bridge
+// handler to enforce MaxStreamsPerExecutor.
+func (i *inboundConn) streamCount() int {
+	i.routesMu.RLock()
+	defer i.routesMu.RUnlock()
+	return len(i.routes)
+}
+
 // write sends a frame to the inbound under writeMu. Concurrent writers
 // (multiple bridge sessions) are serialised here.
 func (i *inboundConn) write(ctx context.Context, mt websocket.MessageType, data []byte) error {
