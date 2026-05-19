@@ -1,7 +1,6 @@
 package sandboxproxy
 
 import (
-	"encoding/base64"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -62,14 +61,14 @@ func (s *Server) handleJupyterSubdomainProxy(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Defense-in-depth: inject Jupyter's own token as Basic Auth so a
-	// request that somehow reaches the pod without going through us
-	// still gets bounced by Jupyter. The container is started with
-	// JUPYTER_TOKEN=proxyToken (set in manager.go), so we must send
-	// that same value here — not OpencodeToken.
+	// Defense-in-depth: authenticate to Jupyter using its native header
+	// format. Jupyter Server accepts `Authorization: token <X>` (legacy
+	// but still honored in 2.x); Basic Auth is silently ignored and
+	// Jupyter falls back to its login page. The container is started
+	// with JUPYTER_TOKEN=proxyToken (set in manager.go), so we send
+	// that same value here.
 	if sbx.ProxyToken != "" {
-		cred := base64.StdEncoding.EncodeToString([]byte("jupyter:" + sbx.ProxyToken))
-		r.Header.Set("Authorization", "Basic "+cred)
+		r.Header.Set("Authorization", "token "+sbx.ProxyToken)
 	}
 
 	s.throttledActivity(sandboxID)
