@@ -53,13 +53,14 @@ var goPackageRe = regexp.MustCompile(`(?m)^option go_package[[:space:]]*=.*;\s*$
 // multiBlankRe matches two or more consecutive newlines.
 var multiBlankRe = regexp.MustCompile(`\n{2,}`)
 
-// normalize strips `option go_package = ...;` lines and squeezes multiple
-// consecutive blank lines into one.
+// normalize strips the `option go_package = ...;` directive and collapses any
+// run of 2+ consecutive newlines to exactly one blank line (preserves the
+// standard between-message separator).
 func normalize(content []byte) []byte {
 	// Normalise line endings to \n so the regex is line-end agnostic.
 	b := bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
 	b = goPackageRe.ReplaceAll(b, nil)
-	b = multiBlankRe.ReplaceAll(b, []byte("\n"))
+	b = multiBlankRe.ReplaceAll(b, []byte("\n\n"))
 	return b
 }
 
@@ -96,9 +97,9 @@ func Verify(pinPath, repoRoot, upstreamRoot string) (*Report, error) {
 		if err != nil {
 			report.Mismatches = append(report.Mismatches, Mismatch{
 				File:   upstreamPath,
-				Reason: "tracked-sha",
+				Reason: "missing",
 				Want:   wantSha,
-				Got:    fmt.Sprintf("read error: %v", err),
+				Got:    err.Error(),
 			})
 			continue
 		}
@@ -120,9 +121,9 @@ func Verify(pinPath, repoRoot, upstreamRoot string) (*Report, error) {
 		if err != nil {
 			report.Mismatches = append(report.Mismatches, Mismatch{
 				File:   ourPath,
-				Reason: "normalized-equivalent",
+				Reason: "missing",
 				Want:   entry.NormalizedSha256,
-				Got:    fmt.Sprintf("read error: %v", err),
+				Got:    err.Error(),
 			})
 			continue
 		}

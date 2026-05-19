@@ -176,6 +176,58 @@ func TestVerify_TrackedSha_DriftDetected(t *testing.T) {
 	}
 }
 
+// TestVerify_MissingTrackedFile: pin references item.rs but the file is absent → 1 mismatch with reason "missing".
+func TestVerify_MissingTrackedFile(t *testing.T) {
+	// Pin references item.rs, but upstreamRoot doesn't have it (we delete the file).
+	upstreamRoot := t.TempDir()
+	// Lay down only 3 of the 4 files (deliberately missing item.rs)
+	must := func(path, content string) {
+		full := filepath.Join(upstreamRoot, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must("codex-rs/exec-server/src/proto/codex.exec_server.relay.v1.proto", "// proto\n")
+	must("codex-rs/app-server-protocol/src/protocol/v1.rs", "// v1\n")
+	must("codex-rs/app-server-protocol/src/protocol/v2/mcp.rs", "// mcp\n")
+	// NOT writing item.rs — that's the test point
+
+	tracked := map[string]string{
+		"codex-rs/exec-server/src/proto/codex.exec_server.relay.v1.proto": sha256OfFile(t, filepath.Join(upstreamRoot, "codex-rs/exec-server/src/proto/codex.exec_server.relay.v1.proto")),
+		"codex-rs/app-server-protocol/src/protocol/v1.rs":                 sha256OfFile(t, filepath.Join(upstreamRoot, "codex-rs/app-server-protocol/src/protocol/v1.rs")),
+		"codex-rs/app-server-protocol/src/protocol/v2/item.rs":            "0000000000000000000000000000000000000000000000000000000000000000",
+		"codex-rs/app-server-protocol/src/protocol/v2/mcp.rs":             sha256OfFile(t, filepath.Join(upstreamRoot, "codex-rs/app-server-protocol/src/protocol/v2/mcp.rs")),
+	}
+	// No normalized_equivalent_files needed for this test
+	pin := Pin{
+		UpstreamRepo:    "openai/codex",
+		Tag:             "test",
+		Sha:             "test",
+		TrackedFiles:    tracked,
+		ApprovalMethods: []string{"item/commandExecution/requestApproval"},
+	}
+	pinPath := writePin(t, pin)
+	repoRoot := t.TempDir() // empty repo root is fine — no normalized check
+
+	report, err := Verify(pinPath, repoRoot, upstreamRoot)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(report.Mismatches) != 1 {
+		t.Fatalf("want 1 mismatch (missing item.rs), got %d: %+v", len(report.Mismatches), report.Mismatches)
+	}
+	m := report.Mismatches[0]
+	if m.File != "codex-rs/app-server-protocol/src/protocol/v2/item.rs" {
+		t.Errorf("File: got %q, want item.rs", m.File)
+	}
+	if m.Reason != "missing" {
+		t.Errorf("Reason: got %q, want missing", m.Reason)
+	}
+}
+
 // TestVerify_NormalizedEquivalent_Mismatch: our proto has a different schema → mismatch.
 func TestVerify_NormalizedEquivalent_Mismatch(t *testing.T) {
 	protoUpstreamPath := upstreamOK + "/codex-rs/exec-server/src/proto/codex.exec_server.relay.v1.proto"
