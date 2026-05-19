@@ -49,6 +49,9 @@ func (s *Server) Mount(r chi.Router) {
 		r.Use(s.authMiddleware)
 		r.Post("/api/sdk/envs/list", s.handleEnvsList)
 		r.Post("/api/sdk/envs/{name}/tool/call", s.handleToolCall)
+		r.Post("/api/sdk/processes/{sid}/stdin", s.handleStdin)
+		r.Get("/api/sdk/processes/{sid}/output", s.handleOutput)
+		r.Post("/api/sdk/processes/{sid}/terminate", s.handleTerminate)
 	})
 }
 

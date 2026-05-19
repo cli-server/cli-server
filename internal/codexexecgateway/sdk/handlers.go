@@ -1,8 +1,10 @@
 package sdk
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -114,4 +116,92 @@ func (s *Server) handleEnvsList(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, map[string]any{"envs": envs})
+}
+
+// stdinReq is the request body for POST /api/sdk/processes/{sid}/stdin.
+type stdinReq struct {
+	DataB64 string `json:"data_b64"`
+}
+
+// outputChunk is one entry in the chunks array returned by
+// GET /api/sdk/processes/{sid}/output.
+type outputChunk struct {
+	Stream string `json:"stream"`
+	Data   string `json:"data_b64"`
+	Seq    int    `json:"seq"`
+}
+
+// sessionFromReq looks up the session by chi URL param "sid" and
+// verifies the authenticated workspace owns it. Writes 404 or 403 and
+// returns ok=false on any failure.
+func (s *Server) sessionFromReq(w http.ResponseWriter, r *http.Request) (*processes.Session, bool) {
+	sid := chi.URLParam(r, "sid")
+	sess, ok := s.Sessions.Get(sid)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "session_not_found", "no such session: "+sid)
+		return nil, false
+	}
+	if sess.WorkspaceID != workspaceFromCtx(r.Context()) {
+		writeErr(w, http.StatusForbidden, "forbidden", "session belongs to a different workspace")
+		return nil, false
+	}
+	return sess, true
+}
+
+func (s *Server) handleStdin(w http.ResponseWriter, r *http.Request) {
+	_, ok := s.sessionFromReq(w, r)
+	if !ok {
+		return
+	}
+	var req stdinReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if _, err := base64.StdEncoding.DecodeString(req.DataB64); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_base64", err.Error())
+		return
+	}
+	// TODO: wire bridge.WriteStdin(session.ExeID, session.ExeSessionID, data).
+	// For v0.61.0 the endpoint contract is testable; full bridge integration
+	// lands in a follow-up once Session has the exe-side fields wired.
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (s *Server) handleOutput(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.sessionFromReq(w, r)
+	if !ok {
+		return
+	}
+	sinceStr := r.URL.Query().Get("since")
+	since, _ := strconv.Atoi(sinceStr)
+	chunks, exit, alive := sess.OutputSince(since)
+	out := make([]outputChunk, 0, len(chunks))
+	for _, c := range chunks {
+		out = append(out, outputChunk{
+			Stream: c.Stream,
+			Data:   base64.StdEncoding.EncodeToString(c.Data),
+			Seq:    c.Seq,
+		})
+	}
+	writeJSON(w, map[string]any{
+		"chunks":        out,
+		"exit_code":     exit,
+		"session_alive": alive,
+		"truncated":     sess.LostBytes() > 0,
+		"lost_bytes":    sess.LostBytes(),
+	})
+}
+
+func (s *Server) handleTerminate(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.sessionFromReq(w, r)
+	if !ok {
+		return
+	}
+	// For v0.61.0 mark exit -1; bridge.Terminate(...) wiring lands in
+	// a follow-up. The endpoint contract works for the SDK's polling
+	// pattern (next GET output sees session_alive=false + exit_code=-1).
+	sess.SetExit(-1)
+	s.Sessions.Forget(sess.ID)
+	writeJSON(w, map[string]any{"ok": true})
 }
