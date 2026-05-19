@@ -35,16 +35,24 @@ export interface UserInfo {
 
 function WorkspaceDetailRoute({
   workspaces,
+  workspacesLoaded,
   onRename,
   initialTab,
   sandboxOverride,
 }: {
   workspaces: Workspace[]
+  workspacesLoaded: boolean
   onRename?: (id: string, name: string) => void
   initialTab?: WorkspaceTab
   sandboxOverride?: React.ReactNode
 }) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
+  if (!workspacesLoaded) {
+    // List still loading — don't redirect to "/" on a direct/reload
+    // visit to /w/<id>; otherwise the user gets bounced to the first
+    // workspace before find() ever sees a populated list.
+    return null
+  }
   const workspace = workspaces.find((w) => w.id === workspaceId)
   if (!workspace) {
     return <Navigate to="/" replace />
@@ -121,6 +129,7 @@ export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null)
   const [user, setUser] = useState<UserInfo | null>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [workspacesLoaded, setWorkspacesLoaded] = useState(false)
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null)
   const [sandboxes, setSandboxes] = useState<Sandbox[]>([])
 
@@ -172,7 +181,7 @@ export default function App() {
           } else if (ws.length > 0) {
             setSelectedWorkspaceId(ws[0].id)
           }
-        }).catch(() => {})
+        }).catch(() => {}).finally(() => setWorkspacesLoaded(true))
         getMe().then(setUser).catch(() => {})
       }
     })
@@ -296,6 +305,7 @@ export default function App() {
         <Route path="/w/:workspaceId" element={
           <WorkspaceDetailRoute
             workspaces={workspaces}
+            workspacesLoaded={workspacesLoaded}
             onRename={handleRenameWorkspace}
             initialTab="sandbox"
           />
@@ -305,6 +315,7 @@ export default function App() {
           element={
             <WorkspaceDetailRoute
               workspaces={workspaces}
+              workspacesLoaded={workspacesLoaded}
               onRename={handleRenameWorkspace}
               initialTab="sandbox"
               sandboxOverride={
