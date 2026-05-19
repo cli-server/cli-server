@@ -1567,6 +1567,9 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		// The bridge secret is stored separately after sandbox creation.
 	case "claudecode":
 		// Claude Code only uses proxyToken (as ANTHROPIC_API_KEY).
+	case "jupyter":
+		// Jupyter Server uses proxyToken as its built-in JUPYTER_TOKEN.
+		// No opencodeToken needed.
 	default: // "opencode"
 		opencodeToken = generatePassword()
 	}

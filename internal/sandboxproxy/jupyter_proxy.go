@@ -64,9 +64,11 @@ func (s *Server) handleJupyterSubdomainProxy(w http.ResponseWriter, r *http.Requ
 
 	// Defense-in-depth: inject Jupyter's own token as Basic Auth so a
 	// request that somehow reaches the pod without going through us
-	// still gets bounced by Jupyter.
-	if sbx.OpencodeToken != "" {
-		cred := base64.StdEncoding.EncodeToString([]byte("jupyter:" + sbx.OpencodeToken))
+	// still gets bounced by Jupyter. The container is started with
+	// JUPYTER_TOKEN=proxyToken (set in manager.go), so we must send
+	// that same value here — not OpencodeToken.
+	if sbx.ProxyToken != "" {
+		cred := base64.StdEncoding.EncodeToString([]byte("jupyter:" + sbx.ProxyToken))
 		r.Header.Set("Authorization", "Basic "+cred)
 	}
 
