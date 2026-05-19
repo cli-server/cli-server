@@ -85,3 +85,18 @@ func TestBuildNanoclawConfig_GeminiWithBYOK(t *testing.T) {
 		t.Errorf("BYOK should suppress Gemini proxy vars, got: %s", result)
 	}
 }
+
+func TestDefaultConfig_JupyterEnvWiring(t *testing.T) {
+	t.Setenv("JUPYTER_IMAGE", "img:tag")
+	t.Setenv("JUPYTER_RUNTIME_CLASS", "gvisor")
+	c := DefaultConfig()
+	if c.JupyterImage != "img:tag" {
+		t.Errorf("JupyterImage=%q", c.JupyterImage)
+	}
+	if c.JupyterRuntimeClassName != "gvisor" {
+		t.Errorf("JupyterRuntimeClassName=%q", c.JupyterRuntimeClassName)
+	}
+	if c.JupyterPort != 8888 {
+		t.Errorf("JupyterPort=%d, want 8888", c.JupyterPort)
+	}
+}

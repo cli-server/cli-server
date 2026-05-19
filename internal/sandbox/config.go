@@ -30,6 +30,9 @@ type Config struct {
 	ClaudeCodeImage            string
 	ClaudeCodeRuntimeClassName string
 	ClaudeCodePort             int    // default 7681 (ttyd)
+	JupyterImage               string
+	JupyterPort                int
+	JupyterRuntimeClassName    string
 	AgentServerInternalURL     string // agentserver API URL for sandbox MCP bridge (e.g. "http://agentserver.agentserver.svc:8080")
 	CredproxyPublicURL         string // URL sandboxes use to reach credentialproxy (e.g. "http://credentialproxy.agentserver.svc:8083")
 }
@@ -57,6 +60,9 @@ func DefaultConfig() Config {
 		ClaudeCodeImage:            os.Getenv("CLAUDECODE_IMAGE"),
 		ClaudeCodeRuntimeClassName: os.Getenv("CLAUDECODE_RUNTIME_CLASS"),
 		ClaudeCodePort:             7681,
+		JupyterImage:               os.Getenv("JUPYTER_IMAGE"),
+		JupyterPort:                8888,
+		JupyterRuntimeClassName:    os.Getenv("JUPYTER_RUNTIME_CLASS"),
 		AgentServerInternalURL:     os.Getenv("AGENTSERVER_INTERNAL_URL"),
 		CredproxyPublicURL:         os.Getenv("CREDPROXY_PUBLIC_URL"),
 	}
