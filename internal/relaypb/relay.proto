@@ -4,7 +4,6 @@ package codex.exec_server.relay.v1;
 
 option go_package = "github.com/agentserver/agentserver/internal/relaypb;relaypb";
 
-
 message RelayMessageFrame {
   uint32 version = 1;
   string stream_id = 2;
