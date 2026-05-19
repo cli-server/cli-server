@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/agentserver/agentserver/internal/codexappgateway/broker"
+	"github.com/agentserver/agentserver/internal/codexappgateway/supervisor"
 )
 
 // turnRunner abstracts the broker so the handler is unit-testable
@@ -112,4 +113,44 @@ func classifyTransport(err error) *transportError {
 func writeJSON(w http.ResponseWriter, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// poolRunner adapts *broker.Pool to the turnRunner interface used by
+// the handler. Production wiring uses this; tests use fakes.
+type poolRunner struct {
+	pool *broker.Pool
+}
+
+func newPoolRunner(p *broker.Pool) *poolRunner { return &poolRunner{pool: p} }
+
+func (r *poolRunner) StartThread(ctx context.Context, workspaceID string) (string, error) {
+	conn, err := r.pool.Get(ctx, workspaceID)
+	if err != nil {
+		return "", err
+	}
+	return conn.StartThread(ctx)
+}
+
+func (r *poolRunner) Turn(ctx context.Context, workspaceID, threadID string, params json.RawMessage, timeout time.Duration) (json.RawMessage, error) {
+	conn, err := r.pool.Get(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	return conn.Turn(ctx, threadID, params, timeout)
+}
+
+// makeSupervisorResolver returns a broker.WSURLResolver that uses the
+// existing supervisor + buildConfig wiring. Returns the ws URL of the
+// loopback codex subprocess for the workspace.
+func makeSupervisorResolver(sup *supervisor.Supervisor, build func(context.Context, string, string) (supervisor.SpawnConfig, error)) broker.WSURLResolver {
+	return func(ctx context.Context, workspaceID string) (string, error) {
+		key := supervisor.Key{WorkspaceID: workspaceID}
+		handle, err := sup.EnsureSubprocess(ctx, key, func(loopbackToken string) (supervisor.SpawnConfig, error) {
+			return build(ctx, workspaceID, loopbackToken)
+		})
+		if err != nil {
+			return "", err
+		}
+		return handle.WSURL, nil
+	}
 }
