@@ -419,6 +419,8 @@ func (b *Bridge) forwardMessage(ctx context.Context, binding BridgeBinding, msg 
 	switch mode {
 	case "stateless_cc":
 		return b.forwardToAgentserver(ctx, binding, msg)
+	case "codex":
+		return b.forwardToCodex(ctx, binding, msg)
 	default: // "nanoclaw" or empty (backward compatible)
 		return b.forwardToNanoClaw(ctx, binding, msg)
 	}
@@ -460,6 +462,46 @@ func (b *Bridge) forwardToAgentserver(ctx context.Context, binding BridgeBinding
 	if resp.StatusCode != http.StatusAccepted {
 		respBody, _ := io.ReadAll(resp.Body)
 		return false, fmt.Errorf("agentserver returned %d: %s", resp.StatusCode, respBody)
+	}
+	return true, nil
+}
+
+// forwardToCodex POSTs the inbound message to agentserver's
+// /api/internal/imbridge/codex/turn endpoint, which enqueues it into
+// its per-user FIFO and asynchronously calls codex-app-gateway.
+// Mirrors forwardToAgentserver's shape (HTTP-based, fire-and-forget
+// for the reply — that comes back via /api/internal/imbridge/send).
+func (b *Bridge) forwardToCodex(ctx context.Context, binding BridgeBinding, msg InboundMessage) (bool, error) {
+	body, err := json.Marshal(map[string]any{
+		"channel_id":         binding.ChannelID,
+		"workspace_id":       binding.WorkspaceID,
+		"wechat_user_id":     msg.FromUserID,
+		"wechat_sender_name": msg.SenderName,
+		"text":               msg.Text,
+		"quoted_text":        msg.QuotedText,
+		"quoted_sender":      msg.QuotedSender,
+	})
+	if err != nil {
+		return false, fmt.Errorf("marshal codex inbound: %w", err)
+	}
+	url := b.agentserverURL + "/api/internal/imbridge/codex/turn"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if secret := os.Getenv("INTERNAL_API_SECRET"); secret != "" {
+		req.Header.Set("X-Internal-Secret", secret)
+	}
+	hctx, cancel := context.WithTimeout(ctx, forwardTimeout)
+	defer cancel()
+	resp, err := http.DefaultClient.Do(req.WithContext(hctx))
+	if err != nil {
+		return false, fmt.Errorf("forward codex: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		return false, fmt.Errorf("codex inbound: status %d", resp.StatusCode)
 	}
 	return true, nil
 }

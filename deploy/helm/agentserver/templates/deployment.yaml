@@ -164,6 +164,19 @@ spec:
             - name: CODEX_EXEC_GATEWAY_URL
               value: "http://{{ .Release.Name }}-codex-exec-gateway.{{ .Release.Namespace }}.svc:{{ .Values.codexExecGateway.port }}"
             {{- end }}
+            {{- if .Values.codexAppGateway.enabled }}
+            # REST base URL for /api/turns (codex routing path, e.g. WeChat).
+            # Distinct from CODEX_EXEC_GATEWAY_URL above (which serves the
+            # jupyter SDK). The /notebook/ws WS path was removed in chart
+            # 0.61.0 along with the SDK transport switch.
+            - name: CODEX_APP_GATEWAY_REST_URL
+              value: {{ printf "http://%s-codex-app-gateway.%s.svc:%v" .Release.Name .Release.Namespace (int .Values.codexAppGateway.port) | quote }}
+            - name: CODEX_INBOUND_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-codex-gateway
+                  key: inbound-hmac-secret
+            {{- end }}
             {{- if .Values.sandbox.claudecode.image }}
             - name: AGENTSERVER_INTERNAL_URL
               value: {{ printf "http://%s.%s.svc:%v" .Release.Name .Release.Namespace (int .Values.service.port) | quote }}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agentserver/agentserver/internal/codexappgateway/auth"
+	"github.com/agentserver/agentserver/internal/codexappgateway/broker"
 	"github.com/agentserver/agentserver/internal/codexappgateway/codexhome"
 	"github.com/agentserver/agentserver/internal/codexappgateway/oplog"
 	"github.com/agentserver/agentserver/internal/codexappgateway/supervisor"
@@ -45,6 +46,11 @@ type Server struct {
 
 	// oplogClient is nil when OperationLogURL/Secret are empty.
 	oplogClient *oplog.Client
+	oplogList   *oplog.ListClient
+
+	// brokerPool caches per-workspace broker.Conn instances (max idle 5 min).
+	// Initialized in NewServer; nil in lightweight test Server literals.
+	brokerPool *broker.Pool
 }
 
 // workspaceTokenFetcher is the subset of *WorkspaceTokenClient buildConfig
@@ -93,6 +99,10 @@ func NewServer(cfg ServeConfig, codexBin, selfBin string, logger *slog.Logger) (
 		execClient:   execClient,
 	}
 	s.buildConfig = makeBuildConfig(cfg, execClient, wsTokenClient, selfBin, logger)
+	s.brokerPool = broker.NewPool(
+		makeSupervisorResolver(s.sup, s.buildConfig),
+		5*time.Minute,
+	)
 	if cfg.OperationLogURL != "" && cfg.OperationLogSecret != "" {
 		s.oplogClient = oplog.NewClient(cfg.OperationLogURL, cfg.OperationLogSecret, cfg.OperationLogChan)
 	}
@@ -207,11 +217,17 @@ func (s *Server) Run(ctx context.Context, listenAddr string) error {
 		if s.oplogClient != nil {
 			s.oplogClient.Close()
 		}
+		if s.brokerPool != nil {
+			s.brokerPool.Close()
+		}
 		return nil
 	case err := <-errCh:
 		s.sup.ShutdownAll(context.Background())
 		if s.oplogClient != nil {
 			s.oplogClient.Close()
+		}
+		if s.brokerPool != nil {
+			s.brokerPool.Close()
 		}
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
@@ -234,7 +250,34 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/", s.handleCodexAppWS)
 	r.Get("/codex-app/ws", s.handleCodexAppWS)
 	r.Get("/internal/connected", s.handleInternalConnected)
+	turnHandler := &turnAPIHandler{
+		runner: newPoolRunner(s.brokerPool),
+	}
+	r.With(s.requireInternalSecret).Post("/api/turns", turnHandler.ServeHTTP)
 	return r
+}
+
+// requireInternalSecret is chi middleware that validates the
+// X-Internal-Secret header against cfg.AgentserverInternalSecret.
+func (s *Server) requireInternalSecret(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.AgentserverInternalSecret == "" {
+			http.Error(w, "internal secret not configured", http.StatusInternalServerError)
+			return
+		}
+		if r.Header.Get("X-Internal-Secret") != s.cfg.AgentserverInternalSecret {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Close releases per-server resources. Must be called on shutdown.
+func (s *Server) Close() {
+	if s.brokerPool != nil {
+		s.brokerPool.Close()
+	}
 }
 
 func (s *Server) handleCodexAppWS(w http.ResponseWriter, r *http.Request) {

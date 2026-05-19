@@ -155,7 +155,14 @@ func RenderConfigTOML(cfg ConfigInput) (string, error) {
 			fmt.Fprintf(&b, ", CXG_EXEC_GATEWAY_INTERNAL_SECRET = %q",
 				m.ExecGatewayInternalSecret)
 		}
-		b.WriteString(" }\n\n")
+		b.WriteString(" }\n")
+		// Auto-approve all envmcp tool calls. Codex defaults to "auto" with
+		// approval_required=true for tools lacking readOnlyHint annotations,
+		// which would surface every read_file/exec_command as a client
+		// approval prompt. We route over WeChat / REST where interactive
+		// approval is impossible; the broker also tolerantly approves any
+		// approval frame that slips through (defense in depth).
+		b.WriteString("default_tools_approval_mode = \"approve\"\n\n")
 	}
 	return b.String(), nil
 }

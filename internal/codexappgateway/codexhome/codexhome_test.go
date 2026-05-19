@@ -187,6 +187,28 @@ func TestRenderConfigTOML_RejectsActiveProviderNotInMap(t *testing.T) {
 	}
 }
 
+func TestWriteConfigEmitsDefaultToolsApprovalMode(t *testing.T) {
+	input := ConfigInput{
+		ModelProvider: "modelserver",
+		Model:         "gpt-5.5",
+		AgentServer: AgentServerMCP{
+			CodexBin:              "/usr/local/bin/codex-app-gateway",
+			WorkspaceID:           "ws-test",
+			ExecGatewayURL:        "wss://exec-gw.example/bridge",
+			AppGatewayInternalURL: "http://127.0.0.1:8086",
+			WorkspaceToken:        "wstok",
+			LoopbackToken:         "lbtok",
+		},
+	}
+	out, err := RenderConfigTOML(input)
+	if err != nil {
+		t.Fatalf("RenderConfigTOML: %v", err)
+	}
+	if !strings.Contains(out, `default_tools_approval_mode = "approve"`) {
+		t.Errorf("missing default_tools_approval_mode in agentserver MCP block:\n%s", out)
+	}
+}
+
 func TestManager_WriteConfig_ProducesUsableTOML(t *testing.T) {
 	root := t.TempDir()
 	m := NewManager(root)

@@ -33,6 +33,7 @@ type AgentSession struct {
 	PermissionResponder *string
 	ResponderAttachedAt *time.Time
 	ActiveTurnID        *string
+	CodexThreadID       *string `json:"codex_thread_id,omitempty"`
 }
 
 // AgentSessionEvent is a single event in a session's event log.
@@ -75,16 +76,18 @@ func (db *DB) GetAgentSession(id string) (*AgentSession, error) {
 	s := &AgentSession{}
 	var tags pq.StringArray
 	var sandboxID, imChannelID *string
-	var creatorUserID, preferredModel, preferredExecutorID, permissionResponder, activeTurnID sql.NullString
+	var creatorUserID, preferredModel, preferredExecutorID, permissionResponder, activeTurnID, codexThreadID sql.NullString
 	var responderAttachedAt sql.NullTime
 	err := db.QueryRow(
 		`SELECT id, sandbox_id, workspace_id, title, status, epoch, tags, im_channel_id, created_at, updated_at, archived_at,
 		        channel_type, creator_user_id, preferred_model, permission_mode,
-		        preferred_executor_id, permission_responder, responder_attached_at, active_turn_id
+		        preferred_executor_id, permission_responder, responder_attached_at, active_turn_id,
+		        codex_thread_id
 		 FROM agent_sessions WHERE id = $1`, id,
 	).Scan(&s.ID, &sandboxID, &s.WorkspaceID, &s.Title, &s.Status, &s.Epoch, &tags, &imChannelID, &s.CreatedAt, &s.UpdatedAt, &s.ArchivedAt,
 		&s.ChannelType, &creatorUserID, &preferredModel, &s.PermissionMode,
-		&preferredExecutorID, &permissionResponder, &responderAttachedAt, &activeTurnID)
+		&preferredExecutorID, &permissionResponder, &responderAttachedAt, &activeTurnID,
+		&codexThreadID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -117,6 +120,10 @@ func (db *DB) GetAgentSession(id string) (*AgentSession, error) {
 	if activeTurnID.Valid {
 		v := activeTurnID.String
 		s.ActiveTurnID = &v
+	}
+	if codexThreadID.Valid {
+		v := codexThreadID.String
+		s.CodexThreadID = &v
 	}
 	return s, nil
 }
@@ -384,17 +391,19 @@ func (db *DB) GetSessionByExternalID(ctx context.Context, workspaceID, externalI
 	s := &AgentSession{}
 	var tags pq.StringArray
 	var sandboxID, imChannelID *string
-	var creatorUserID, preferredModel, preferredExecutorID, permissionResponder, activeTurnID sql.NullString
+	var creatorUserID, preferredModel, preferredExecutorID, permissionResponder, activeTurnID, codexThreadID sql.NullString
 	var responderAttachedAt sql.NullTime
 	err := db.QueryRowContext(ctx,
 		`SELECT id, sandbox_id, workspace_id, title, status, epoch, tags, im_channel_id, created_at, updated_at, archived_at,
 		        channel_type, creator_user_id, preferred_model, permission_mode,
-		        preferred_executor_id, permission_responder, responder_attached_at, active_turn_id
+		        preferred_executor_id, permission_responder, responder_attached_at, active_turn_id,
+		        codex_thread_id
 		 FROM agent_sessions WHERE workspace_id = $1 AND external_id = $2`,
 		workspaceID, externalID,
 	).Scan(&s.ID, &sandboxID, &s.WorkspaceID, &s.Title, &s.Status, &s.Epoch, &tags, &imChannelID, &s.CreatedAt, &s.UpdatedAt, &s.ArchivedAt,
 		&s.ChannelType, &creatorUserID, &preferredModel, &s.PermissionMode,
-		&preferredExecutorID, &permissionResponder, &responderAttachedAt, &activeTurnID)
+		&preferredExecutorID, &permissionResponder, &responderAttachedAt, &activeTurnID,
+		&codexThreadID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -427,6 +436,10 @@ func (db *DB) GetSessionByExternalID(ctx context.Context, workspaceID, externalI
 	if activeTurnID.Valid {
 		v := activeTurnID.String
 		s.ActiveTurnID = &v
+	}
+	if codexThreadID.Valid {
+		v := codexThreadID.String
+		s.CodexThreadID = &v
 	}
 	return s, nil
 }
@@ -661,6 +674,22 @@ func (db *DB) ListStaleResponders(ctx context.Context, cutoff time.Time) ([]stri
 		ids = append(ids, s)
 	}
 	return ids, rows.Err()
+}
+
+// SetSessionCodexThreadID updates (or clears, when threadID is nil) the
+// codex_thread_id for a session. Used by the codex routing handler to
+// persist the thread id after the first thread/start, and to clear it
+// on thread-not-found / contextWindowExceeded so the next user message
+// opens a fresh thread.
+func (db *DB) SetSessionCodexThreadID(ctx context.Context, sessionID string, threadID *string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE agent_sessions SET codex_thread_id = $1 WHERE id = $2`,
+		threadID, sessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("update codex_thread_id: %w", err)
+	}
+	return nil
 }
 
 // StaleActiveTurn pairs a session ID with a stuck active turn ID.

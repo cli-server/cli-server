@@ -309,6 +309,7 @@ var serveCmd = &cobra.Command{
 			sig := <-sigCh
 			log.Printf("Received %v, shutting down...", sig)
 			httpServer.Shutdown(context.Background())
+			srv.Close()
 			idleWatcher.Stop()
 			healthCancel()
 			log.Println("Cleaning up active sandboxes...")

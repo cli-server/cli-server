@@ -462,7 +462,7 @@ export async function listWorkspaceIMChannels(workspaceId: string): Promise<{ ch
 export async function updateWorkspaceIMChannel(
   workspaceId: string,
   channelId: string,
-  settings: { require_mention?: boolean; routing_mode?: 'nanoclaw' | 'stateless_cc' },
+  settings: { require_mention?: boolean; routing_mode?: 'nanoclaw' | 'stateless_cc' | 'codex' },
 ): Promise<void> {
   const res = await fetch(`/api/workspaces/${workspaceId}/im/channels/${channelId}`, {
     method: 'PATCH',
