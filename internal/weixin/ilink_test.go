@@ -93,3 +93,46 @@ func TestBuildILinkHeadersNoToken(t *testing.T) {
 		t.Errorf("App-Id must be set even without token, got %q", h.Get("iLink-App-Id"))
 	}
 }
+
+func TestParseILinkURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		// Allowed: weixin.qq.com family.
+		{"default api host", "https://ilinkai.weixin.qq.com", false},
+		{"default cdn host", "https://novac2c.cdn.weixin.qq.com/c2c", false},
+		{"weixin root exact", "https://weixin.qq.com", false},
+		{"weixin deep subdomain", "https://a.b.c.weixin.qq.com/x", false},
+		{"weixin host with port", "https://ilinkai.weixin.qq.com:443/path", false},
+		{"weixin host case-insensitive", "https://ILINKAI.WEIXIN.QQ.COM", false},
+		// Allowed: wechat.com family (international brand).
+		{"wechat root", "https://wechat.com", false},
+		{"wechat subdomain", "https://api.wechat.com/foo", false},
+		// Rejected: scheme.
+		{"http rejected", "http://ilinkai.weixin.qq.com", true},
+		{"file rejected", "file:///etc/passwd", true},
+		{"javascript rejected", "javascript:alert(1)", true},
+		// Rejected: host.
+		{"different domain", "https://evil.com", true},
+		{"weixin-look-alike suffix attack", "https://attacker.weixin.qq.com.evil.com", true},
+		{"wechat-look-alike suffix attack", "https://wechat.com.evil.com", true},
+		{"empty host", "https:///path", true},
+		{"localhost rejected", "https://localhost", true},
+		{"raw ip rejected", "https://127.0.0.1", true},
+		// Malformed.
+		{"unparseable", "://broken", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseILinkURL(tt.url)
+			if tt.wantErr && err == nil {
+				t.Errorf("expected error for %q, got nil", tt.url)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error for %q: %v", tt.url, err)
+			}
+		})
+	}
+}

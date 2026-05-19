@@ -48,6 +48,49 @@ const (
 	TypingStatusCancel = 2
 )
 
+// allowedILinkHostRoots enumerates the DNS roots every iLink API and CDN
+// host must match. Outbound URL construction is gated by parseILinkURL so
+// an attacker-controlled baseURL (from credentials), server-returned
+// redirect_host, fullURL, or upload_full_url cannot redirect requests to
+// arbitrary hosts (SSRF). Upstream uses concrete hosts under
+// ilinkai.weixin.qq.com / novac2c.cdn.weixin.qq.com plus IDC redirects
+// of the form *.weixin.qq.com (China brand) or *.wechat.com (international
+// brand), so a suffix check across both roots covers all legitimate
+// traffic.
+var allowedILinkHostRoots = []string{"weixin.qq.com", "wechat.com"}
+
+// isAllowedILinkHost reports whether host matches one of the allowed
+// roots exactly or is a subdomain of one. Comparison is case-insensitive.
+// Host should already be the bare hostname (no port, no scheme).
+func isAllowedILinkHost(host string) bool {
+	h := strings.ToLower(host)
+	for _, root := range allowedILinkHostRoots {
+		if h == root || strings.HasSuffix(h, "."+root) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseILinkURL parses rawURL and rejects anything that is not an https
+// URL targeting one of the allowed iLink host roots. All outbound HTTP
+// calls in this package must obtain their *url.URL via this helper so a
+// compromised credentials store or a malicious server response cannot
+// pivot the bot to arbitrary internal targets.
+func parseILinkURL(rawURL string) (*url.URL, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid url: %w", err)
+	}
+	if u.Scheme != "https" {
+		return nil, fmt.Errorf("disallowed url scheme %q (must be https)", u.Scheme)
+	}
+	if !isAllowedILinkHost(u.Hostname()) {
+		return nil, fmt.Errorf("disallowed url host %q (must be one of %v or a subdomain)", u.Hostname(), allowedILinkHostRoots)
+	}
+	return u, nil
+}
+
 // ErrSessionExpired is returned by outbound API helpers when the iLink
 // server reports session-expired (ret/errcode == -14). Callers should
 // treat the bot as needing re-login. Test with errors.Is.
@@ -285,7 +328,7 @@ func StartLogin(ctx context.Context, apiBaseURL string) (*Session, error) {
 	if apiBaseURL == "" {
 		apiBaseURL = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(apiBaseURL)
+	u, err := parseILinkURL(apiBaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid apiBaseURL: %w", err)
 	}
@@ -364,7 +407,7 @@ func GetUpdates(ctx context.Context, apiBaseURL, botToken, getUpdatesBuf string)
 	if apiBaseURL == "" {
 		apiBaseURL = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(apiBaseURL)
+	u, err := parseILinkURL(apiBaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid apiBaseURL: %w", err)
 	}
@@ -416,7 +459,7 @@ func SendTextMessage(ctx context.Context, apiBaseURL, botToken, toUserID, text, 
 	if apiBaseURL == "" {
 		apiBaseURL = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(apiBaseURL)
+	u, err := parseILinkURL(apiBaseURL)
 	if err != nil {
 		return fmt.Errorf("invalid apiBaseURL: %w", err)
 	}
@@ -492,7 +535,7 @@ func GetUploadURL(ctx context.Context, apiBaseURL, botToken string, params map[s
 	if apiBaseURL == "" {
 		apiBaseURL = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(apiBaseURL)
+	u, err := parseILinkURL(apiBaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid apiBaseURL: %w", err)
 	}
@@ -542,6 +585,9 @@ func GetUploadURL(ctx context.Context, apiBaseURL, botToken string, params map[s
 // UploadToCDN uploads encrypted file data to the iLink CDN.
 // Returns the download encrypt_query_param from the response header.
 // If uploadFullURL is non-empty, it is used directly as the POST target (takes precedence over uploadParam).
+// The final target URL is gated by parseILinkURL — both uploadFullURL
+// (server-provided) and cdnBaseURL must point at the weixin.qq.com host
+// family or the upload is refused.
 func UploadToCDN(ctx context.Context, cdnBaseURL, uploadParam, filekey string, ciphertext []byte, uploadFullURL string) (string, error) {
 	var cdnURL string
 	if trimmed := strings.TrimSpace(uploadFullURL); trimmed != "" {
@@ -549,6 +595,9 @@ func UploadToCDN(ctx context.Context, cdnBaseURL, uploadParam, filekey string, c
 	} else {
 		cdnURL = fmt.Sprintf("%s/upload?encrypted_query_param=%s&filekey=%s",
 			cdnBaseURL, url.QueryEscape(uploadParam), url.QueryEscape(filekey))
+	}
+	if _, err := parseILinkURL(cdnURL); err != nil {
+		return "", fmt.Errorf("cdn upload: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -583,7 +632,7 @@ func SendImageMessage(ctx context.Context, apiBaseURL, botToken, toUserID string
 	if apiBaseURL == "" {
 		apiBaseURL = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(apiBaseURL)
+	u, err := parseILinkURL(apiBaseURL)
 	if err != nil {
 		return fmt.Errorf("invalid apiBaseURL: %w", err)
 	}
@@ -733,6 +782,8 @@ func AESECBPaddedSize(plaintextSize int) int {
 
 // DownloadFromCDN downloads a file from the iLink CDN.
 // Prefers fullURL (server-provided) over client-side URL construction from encrypt_query_param.
+// The final URL is gated by parseILinkURL so a malicious server response
+// or stale CDN base cannot redirect downloads to arbitrary hosts.
 func DownloadFromCDN(ctx context.Context, cdnBaseURL, encryptQueryParam, fullURL string) ([]byte, error) {
 	var dlURL string
 	if fullURL != "" {
@@ -743,6 +794,9 @@ func DownloadFromCDN(ctx context.Context, cdnBaseURL, encryptQueryParam, fullURL
 		}
 		dlURL = fmt.Sprintf("%s/download?encrypted_query_param=%s",
 			cdnBaseURL, url.QueryEscape(encryptQueryParam))
+	}
+	if _, err := parseILinkURL(dlURL); err != nil {
+		return nil, fmt.Errorf("cdn download: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -890,7 +944,7 @@ func GetConfig(ctx context.Context, apiBaseURL, botToken, userID, contextToken s
 	if apiBaseURL == "" {
 		apiBaseURL = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(apiBaseURL)
+	u, err := parseILinkURL(apiBaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid apiBaseURL: %w", err)
 	}
@@ -939,7 +993,7 @@ func SendTyping(ctx context.Context, apiBaseURL, botToken, userID, typingTicket 
 	if apiBaseURL == "" {
 		apiBaseURL = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(apiBaseURL)
+	u, err := parseILinkURL(apiBaseURL)
 	if err != nil {
 		return fmt.Errorf("invalid apiBaseURL: %w", err)
 	}
@@ -993,7 +1047,7 @@ func notifyLifecycle(ctx context.Context, apiBaseURL, botToken, endpoint, label 
 	if apiBaseURL == "" {
 		apiBaseURL = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(apiBaseURL)
+	u, err := parseILinkURL(apiBaseURL)
 	if err != nil {
 		return fmt.Errorf("invalid apiBaseURL: %w", err)
 	}
@@ -1055,7 +1109,7 @@ func PollLoginStatus(ctx context.Context, apiBaseURL, qrcode string) (*StatusRes
 	if apiBaseURL == "" {
 		apiBaseURL = DefaultAPIBaseURL
 	}
-	u, err := url.Parse(apiBaseURL)
+	u, err := parseILinkURL(apiBaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid apiBaseURL: %w", err)
 	}
