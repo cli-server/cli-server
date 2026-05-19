@@ -106,6 +106,10 @@ sandbox:
     image: ""                # e.g. ghcr.io/agentserver/claudecode-agent:main
     runtimeClassName: ""
     subdomainPrefix: "claude" # subdomain: {prefix}-{sessionID}.{baseDomain}
+  jupyter:
+    image: ""                # e.g. ghcr.io/agentserver/agentserver-jupyter:main
+    runtimeClassName: ""
+    subdomainPrefix: "jupyter" # subdomain: {prefix}-{sandboxID}.{baseDomain}
   nanoclaw:
     image: ""                # e.g. ghcr.io/agentserver/nanoclaw-agent:v1.2.42
     runtimeClassName: ""

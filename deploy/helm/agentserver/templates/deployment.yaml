@@ -152,6 +152,14 @@ spec:
             - name: CLAUDECODE_RUNTIME_CLASS
               value: {{ .Values.sandbox.claudecode.runtimeClassName | quote }}
             {{- end }}
+            {{- if .Values.sandbox.jupyter.image }}
+            - name: JUPYTER_IMAGE
+              value: {{ .Values.sandbox.jupyter.image | quote }}
+            {{- end }}
+            {{- if .Values.sandbox.jupyter.runtimeClassName }}
+            - name: JUPYTER_RUNTIME_CLASS
+              value: {{ .Values.sandbox.jupyter.runtimeClassName | quote }}
+            {{- end }}
             {{- if .Values.sandbox.claudecode.image }}
             - name: AGENTSERVER_INTERNAL_URL
               value: {{ printf "http://%s.%s.svc:%v" .Release.Name .Release.Namespace (int .Values.service.port) | quote }}
@@ -205,6 +213,8 @@ spec:
               value: {{ .Values.sandbox.openclaw.subdomainPrefix | default "claw" | quote }}
             - name: CLAUDECODE_SUBDOMAIN_PREFIX
               value: {{ .Values.sandbox.claudecode.subdomainPrefix | default "claude" | quote }}
+            - name: JUPYTER_SUBDOMAIN_PREFIX
+              value: {{ .Values.sandbox.jupyter.subdomainPrefix | default "jupyter" | quote }}
             - name: LLMPROXY_URL
               value: {{ printf "http://%s-llmproxy.%s.svc:%v" .Release.Name .Release.Namespace (int .Values.llmproxy.port) | quote }}
             {{- if and .Values.platform.domain (or .Values.platform.auth.oidc.github.enabled .Values.platform.auth.oidc.generic.enabled) }}
