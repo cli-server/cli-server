@@ -35,6 +35,19 @@ type Config struct {
 	// RelayMaxPerWorkspace caps concurrent relays per workspace.
 	// Defaults to 16; protects gateway memory from runaway agents.
 	RelayMaxPerWorkspace int
+	// MaxFrameBytes caps each inbound/bridge ws frame. Default 16 MiB.
+	// Override via CXG_MAX_FRAME_BYTES. Frames exceeding this are
+	// rejected with close code 1009 (Message Too Big) by nhooyr.
+	MaxFrameBytes int64
+	// BridgeIdleTimeout is how long a bridge session can be silent
+	// (no in/out frames) before the gateway sends RelayReset and
+	// closes the bridge ws. Default 5m. Override via
+	// CXG_BRIDGE_IDLE_TIMEOUT.
+	BridgeIdleTimeout time.Duration
+	// MaxStreamsPerExecutor bounds concurrent /bridge sessions per
+	// executor. Default 32. Beyond this, /bridge returns 503.
+	// Override via CXG_MAX_STREAMS_PER_EXECUTOR.
+	MaxStreamsPerExecutor int
 	LogLevel             slog.Level
 }
 
@@ -61,6 +74,9 @@ func LoadConfigFromEnv() (Config, error) {
 		PublicHTTPSBaseURL:        os.Getenv("CXG_PUBLIC_HTTPS_BASE_URL"),
 		RelayDefaultTTL:           parseDurationOr("CXG_RELAY_DEFAULT_TTL", 5*time.Minute),
 		RelayMaxPerWorkspace:      parseIntOr("CXG_RELAY_MAX_PER_WORKSPACE", 16),
+		MaxFrameBytes:             parseInt64Or("CXG_MAX_FRAME_BYTES", 16*1024*1024),
+		BridgeIdleTimeout:         parseDurationOr("CXG_BRIDGE_IDLE_TIMEOUT", 5*time.Minute),
+		MaxStreamsPerExecutor:      parseIntOr("CXG_MAX_STREAMS_PER_EXECUTOR", 32),
 		LogLevel:                  slog.LevelInfo,
 	}
 	if cfg.DatabaseURL == "" {
@@ -107,6 +123,18 @@ func parseIntOr(key string, def int) int {
 		return def
 	}
 	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func parseInt64Or(key string, def int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		return def
 	}
