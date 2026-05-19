@@ -128,6 +128,9 @@ func (r *poolRunner) StartThread(ctx context.Context, workspaceID string) (strin
 	if err != nil {
 		return "", err
 	}
+	// Issue 3: bump lastUsedAt after the call so the reaper does not kill a
+	// connection that was active throughout a long StartThread round-trip.
+	defer r.pool.Touch(workspaceID)
 	return conn.StartThread(ctx)
 }
 
@@ -136,6 +139,10 @@ func (r *poolRunner) Turn(ctx context.Context, workspaceID, threadID string, par
 	if err != nil {
 		return nil, err
 	}
+	// Issue 3: bump lastUsedAt after Turn so a 4-minute Turn does not miss
+	// the 5-minute reap deadline (lastUsedAt was only set on Get, not on
+	// completion of the long-running operation).
+	defer r.pool.Touch(workspaceID)
 	return conn.Turn(ctx, threadID, params, timeout)
 }
 

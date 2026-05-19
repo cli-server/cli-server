@@ -40,8 +40,9 @@ func newCapturingImbridge(t *testing.T) (url string, sends *atomic.Value /* []*c
 // fakeSessionStore implements the sessionStore interface (defined in
 // codex_im_inbound.go) by routing through caller-supplied closures.
 type fakeSessionStore struct {
-	get func(ctx context.Context, workspaceID, externalID string) (sessionView, error)
-	set func(ctx context.Context, sessionID string, threadID *string) error
+	get    func(ctx context.Context, workspaceID, externalID string) (sessionView, error)
+	set    func(ctx context.Context, sessionID string, threadID *string) error
+	create func(ctx context.Context, workspaceID, externalID, title, imChannelID string) (sessionView, error)
 }
 
 func (f *fakeSessionStore) GetSessionByExternalID(ctx context.Context, workspaceID, externalID string) (sessionView, error) {
@@ -50,6 +51,15 @@ func (f *fakeSessionStore) GetSessionByExternalID(ctx context.Context, workspace
 
 func (f *fakeSessionStore) SetSessionCodexThreadID(ctx context.Context, sessionID string, threadID *string) error {
 	return f.set(ctx, sessionID, threadID)
+}
+
+func (f *fakeSessionStore) CreateSession(ctx context.Context, workspaceID, externalID, title, imChannelID string) (sessionView, error) {
+	if f.create != nil {
+		return f.create(ctx, workspaceID, externalID, title, imChannelID)
+	}
+	// Default: return a synthetic session so tests that don't care about
+	// session creation don't need to wire up a create closure.
+	return sessionView{ID: "sess-created", CodexThreadID: nil}, nil
 }
 
 // fakeCodexClient lets us inject CXG responses.
@@ -212,6 +222,71 @@ func TestCodexInboundTransportError(t *testing.T) {
 	waitFor(t, func() bool { return len(sends.Load().([]*capturedSend)) == 1 })
 	if !strings.Contains(sends.Load().([]*capturedSend)[0].text, "超时") {
 		t.Errorf("want timeout message")
+	}
+}
+
+// TestCodexInboundCreatesSessionOnFirstMessage verifies that when
+// GetSessionByExternalID returns an empty sessionView (session not found),
+// the handler calls CreateSession and then proceeds with the turn normally.
+func TestCodexInboundCreatesSessionOnFirstMessage(t *testing.T) {
+	sendURL, sends, stop := newCapturingImbridge(t)
+	defer stop()
+
+	var createCalled int32
+	h := newCodexInboundHandler(
+		&fakeCodexClient{
+			resp: &CodexTurnResponse{
+				ThreadID: "thr-new",
+				Turn:     json.RawMessage(`{"id":"trn-1","status":"completed","items":[{"type":"agentMessage","id":"m1","text":"session created"}],"itemsView":"full","error":null}`),
+			},
+		},
+		&fakeSessionStore{
+			get: func(_ context.Context, _, _ string) (sessionView, error) {
+				// Return empty to simulate "not found".
+				return sessionView{}, nil
+			},
+			set: func(_ context.Context, _ string, _ *string) error { return nil },
+			create: func(_ context.Context, workspaceID, externalID, title, imChannelID string) (sessionView, error) {
+				atomic.AddInt32(&createCalled, 1)
+				if externalID != "wxid_new" {
+					t.Errorf("create externalID=%q want wxid_new", externalID)
+				}
+				if workspaceID != "ws-1" {
+					t.Errorf("create workspaceID=%q want ws-1", workspaceID)
+				}
+				if imChannelID != "ch-1" {
+					t.Errorf("create imChannelID=%q want ch-1", imChannelID)
+				}
+				return sessionView{ID: "sess-auto", CodexThreadID: nil}, nil
+			},
+		},
+		sendURL,
+		"",
+	)
+	defer h.dispatcher.Stop()
+
+	r := newCodexInboundRequest(map[string]any{
+		"channel_id":     "ch-1",
+		"workspace_id":   "ws-1",
+		"wechat_user_id": "wxid_new",
+		"text":           "hello",
+	})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status=%d want 202", w.Code)
+	}
+	waitFor(t, func() bool { return len(sends.Load().([]*capturedSend)) == 1 })
+	if atomic.LoadInt32(&createCalled) != 1 {
+		t.Errorf("createCalled=%d want 1", createCalled)
+	}
+	got := sends.Load().([]*capturedSend)[0]
+	if got.text != "session created" {
+		t.Errorf("reply text=%q want 'session created'", got.text)
+	}
+	if got.toUser != "wxid_new" {
+		t.Errorf("reply toUser=%q want wxid_new", got.toUser)
 	}
 }
 

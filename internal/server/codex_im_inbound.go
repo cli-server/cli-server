@@ -10,7 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/agentserver/agentserver/internal/db"
 )
@@ -47,6 +48,7 @@ type codexCaller interface {
 type sessionStore interface {
 	GetSessionByExternalID(ctx context.Context, workspaceID, externalID string) (sessionView, error)
 	SetSessionCodexThreadID(ctx context.Context, sessionID string, threadID *string) error
+	CreateSession(ctx context.Context, workspaceID, externalID, title, imChannelID string) (sessionView, error)
 }
 
 // sessionView is the subset of agent_sessions fields the codex handler
@@ -82,12 +84,28 @@ func (h *codexInboundHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *codexInboundHandler) processTurn(ctx context.Context, req codexInboundRequest) {
-	externalID := req.WechatUserID + "@im.wechat"
+	// Issue 1: use WechatUserID directly — bridge already sets it from
+	// msg.FromUserID (bare wxid_xxx, same convention as stateless_cc's
+	// chat_jid). Appending "@im.wechat" caused every lookup to miss.
+	externalID := req.WechatUserID
 	sess, err := h.sessions.GetSessionByExternalID(ctx, req.WorkspaceID, externalID)
 	if err != nil {
-		log.Printf("codex_im: resolve session: %v", err)
-		h.sendError(ctx, req, "⚠️ 内部错误：找不到会话")
+		log.Printf("codex_im: resolve session channel=%s user=%s: %v", req.ChannelID, externalID, err)
+		h.sendError(ctx, req, "⚠️ 内部错误，请重试")
 		return
+	}
+	// Issue 2: create session on first contact (mirror stateless_cc pattern).
+	if sess.ID == "" {
+		title := "IM: " + req.WechatSender
+		if title == "IM: " {
+			title = "IM: " + req.WechatUserID
+		}
+		sess, err = h.sessions.CreateSession(ctx, req.WorkspaceID, externalID, title, req.ChannelID)
+		if err != nil {
+			log.Printf("codex_im: create session channel=%s user=%s: %v", req.ChannelID, externalID, err)
+			h.sendError(ctx, req, "⚠️ 内部错误，请重试")
+			return
+		}
 	}
 
 	params := buildCodexInput(req)
@@ -366,30 +384,16 @@ func (d *codexDispatcher) runWorker(key string, slot *dispatcherSlot) {
 		return
 	}
 	d.processFn(first)
-	idle := time.NewTimer(30 * time.Second)
-	defer idle.Stop()
-	for {
-		select {
-		case req, ok := <-slot.ch:
-			if !ok {
-				return
-			}
-			d.processFn(req)
-			if !idle.Stop() {
-				<-idle.C
-			}
-			idle.Reset(30 * time.Second)
-		case <-idle.C:
-			d.mu.Lock()
-			if len(slot.ch) == 0 {
-				delete(d.workers, key)
-				d.mu.Unlock()
-				return
-			}
-			d.mu.Unlock()
-			idle.Reset(30 * time.Second)
-		}
+	// Issue 4: no idle-timeout exit. Workers persist for the process
+	// lifetime; Stop() closes all channels and exits via range below.
+	// The idle-cleanup approach had a race: between Enqueue dropping the
+	// lock and the channel-send the worker could exit, leaving a message
+	// in a dead channel. Memory cost is O(active conversations) — bounded
+	// by pool idle-reap of upstream codex connections, so fine in practice.
+	for req := range slot.ch {
+		d.processFn(req)
 	}
+	_ = key // keep parameter for symmetry with future debug logging
 }
 
 func (d *codexDispatcher) Stop() {
@@ -424,11 +428,29 @@ func (s *dbSessionStore) GetSessionByExternalID(ctx context.Context, workspaceID
 		return sessionView{}, err
 	}
 	if sess == nil {
-		return sessionView{}, fmt.Errorf("session not found for externalID=%s workspaceID=%s", externalID, workspaceID)
+		// Not found — return empty sessionView so caller can create.
+		return sessionView{}, nil
 	}
 	return sessionView{ID: sess.ID, CodexThreadID: sess.CodexThreadID}, nil
 }
 
 func (s *dbSessionStore) SetSessionCodexThreadID(ctx context.Context, sessionID string, threadID *string) error {
 	return s.db.SetSessionCodexThreadID(ctx, sessionID, threadID)
+}
+
+func (s *dbSessionStore) CreateSession(ctx context.Context, workspaceID, externalID, title, imChannelID string) (sessionView, error) {
+	sessionID := "cse_" + uuid.NewString()
+	if err := s.db.CreateAgentSession(sessionID, nil, workspaceID, title, nil); err != nil {
+		return sessionView{}, fmt.Errorf("create session: %w", err)
+	}
+	if err := s.db.SetSessionExternalID(ctx, sessionID, externalID); err != nil {
+		return sessionView{}, fmt.Errorf("set external_id: %w", err)
+	}
+	if imChannelID != "" {
+		if err := s.db.SetSessionIMChannel(ctx, sessionID, imChannelID); err != nil {
+			// Non-fatal — log only (matches im_inbound.go pattern).
+			log.Printf("codex_im: failed to set im_channel_id for session %s: %v", sessionID, err)
+		}
+	}
+	return sessionView{ID: sessionID, CodexThreadID: nil}, nil
 }

@@ -91,6 +91,23 @@ func (e *poolEntry) connClosed() bool {
 	return false
 }
 
+// Touch bumps lastUsedAt for workspaceID, extending the idle-reap
+// deadline. Call after long-running operations (Turn, StartThread) so the
+// 5-minute reaper does not kill a connection that is still in use.
+func (p *Pool) Touch(workspaceID string) {
+	p.mu.Lock()
+	e, ok := p.entries[workspaceID]
+	p.mu.Unlock()
+	if !ok {
+		return
+	}
+	e.mu.Lock()
+	if e.conn != nil {
+		e.lastUsedAt = time.Now()
+	}
+	e.mu.Unlock()
+}
+
 // Close stops the reaper and closes all live connections.
 // It is safe to call Close more than once; subsequent calls are no-ops.
 func (p *Pool) Close() {
