@@ -163,6 +163,10 @@ spec:
             {{- if .Values.codexAppGateway.enabled }}
             - name: CODEX_APP_GATEWAY_URL
               value: {{ printf "ws://%s-codex-app-gateway.%s.svc:%v/notebook/ws" .Release.Name .Release.Namespace (int .Values.codexAppGateway.port) | quote }}
+            # REST base URL for /api/turns (codex routing path, e.g. WeChat).
+            # Distinct from the ws URL above which is consumed by the jupyter SDK.
+            - name: CODEX_APP_GATEWAY_REST_URL
+              value: {{ printf "http://%s-codex-app-gateway.%s.svc:%v" .Release.Name .Release.Namespace (int .Values.codexAppGateway.port) | quote }}
             - name: CODEX_INBOUND_HMAC_SECRET
               valueFrom:
                 secretKeyRef:

@@ -9,6 +9,39 @@ import (
 	"testing"
 )
 
+func TestResolveCodexGatewayRESTURL(t *testing.T) {
+	cases := []struct {
+		name     string
+		restEnv  string
+		urlEnv   string
+		want     string
+	}{
+		// Explicit REST var wins.
+		{"rest var set", "http://cxg.svc:8086", "ws://cxg.svc:8086/notebook/ws", "http://cxg.svc:8086"},
+		{"rest var trims trailing slash", "http://cxg.svc:8086/", "", "http://cxg.svc:8086"},
+		// Fallback derive from the legacy ws URL the chart emits.
+		{"ws fallback strips notebook path + swaps scheme", "", "ws://cxg.svc:8086/notebook/ws", "http://cxg.svc:8086"},
+		{"wss fallback", "", "wss://cxg.example.com/notebook/ws", "https://cxg.example.com"},
+		{"ws fallback no path", "", "ws://cxg.svc:8086", "http://cxg.svc:8086"},
+		// Already an http URL — pass through.
+		{"http passthrough", "", "http://cxg.svc:8086", "http://cxg.svc:8086"},
+		{"https passthrough", "", "https://cxg.example.com", "https://cxg.example.com"},
+		// Unusable / empty.
+		{"both empty", "", "", ""},
+		{"unknown scheme", "", "tcp://cxg:8086", ""},
+		{"whitespace only", "   ", "  ", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("CODEX_APP_GATEWAY_REST_URL", c.restEnv)
+			t.Setenv("CODEX_APP_GATEWAY_URL", c.urlEnv)
+			if got := resolveCodexGatewayRESTURL(); got != c.want {
+				t.Errorf("got %q want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestCodexClientPostsExpectedBody(t *testing.T) {
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

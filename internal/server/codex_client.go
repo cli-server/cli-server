@@ -7,8 +7,42 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
+
+// resolveCodexGatewayRESTURL returns the base URL of codex-app-gateway's
+// REST surface (the host that serves POST /api/turns). Resolution order:
+//
+//  1. CODEX_APP_GATEWAY_REST_URL — explicit, e.g. "http://cxg.svc:8086"
+//  2. CODEX_APP_GATEWAY_URL with the well-known "/notebook/ws" suffix
+//     stripped and the scheme rewritten ws→http / wss→https. This is the
+//     existing chart-emitted env var used by jupyter SDK pods; we accept
+//     it as a fallback so a deployment upgraded mid-stream keeps working.
+//  3. "" — caller treats as "feature disabled".
+//
+// Returns "" when neither var is set or the URL is unusable.
+func resolveCodexGatewayRESTURL() string {
+	if v := strings.TrimSpace(os.Getenv("CODEX_APP_GATEWAY_REST_URL")); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	v := strings.TrimSpace(os.Getenv("CODEX_APP_GATEWAY_URL"))
+	if v == "" {
+		return ""
+	}
+	v = strings.TrimSuffix(v, "/notebook/ws")
+	v = strings.TrimRight(v, "/")
+	switch {
+	case strings.HasPrefix(v, "ws://"):
+		return "http://" + strings.TrimPrefix(v, "ws://")
+	case strings.HasPrefix(v, "wss://"):
+		return "https://" + strings.TrimPrefix(v, "wss://")
+	case strings.HasPrefix(v, "http://"), strings.HasPrefix(v, "https://"):
+		return v
+	}
+	return ""
+}
 
 // CodexClient calls codex-app-gateway's POST /api/turns.
 type CodexClient struct {
