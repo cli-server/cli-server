@@ -172,3 +172,74 @@ func TestTurnCallerCtxCancelCleansPendingResp(t *testing.T) {
 		t.Errorf("pendingResp leaked %d entries", n)
 	}
 }
+
+// TestConnTurnAccumulatesItemsFromItemCompleted verifies that items
+// streamed via item/completed notifications during a turn end up
+// injected into the final Turn.items list when delivered to Turn().
+// Codex v2 sends turn/completed with TurnItemsView::NotLoaded (empty
+// items) and emits items separately during the stream; without
+// accumulation the REST caller sees no agentMessage.
+func TestConnTurnAccumulatesItemsFromItemCompleted(t *testing.T) {
+	url, stop := fakeCodexServer(t, func(t *testing.T, ctx context.Context, c *websocket.Conn) {
+		replayHandshake(t, ctx, c)
+		ts := readFrame(t, ctx, c)
+		writeJSON(t, ctx, c, map[string]any{
+			"jsonrpc": "2.0", "id": ts["id"],
+			"result": map[string]any{"turn": map[string]any{"id": "trn-a"}},
+		})
+		// Stream two item/completed events (reasoning + agentMessage),
+		// then turn/completed with EMPTY Turn.items (the v2-faithful shape).
+		writeJSON(t, ctx, c, map[string]any{
+			"jsonrpc": "2.0", "method": "item/completed",
+			"params": map[string]any{
+				"threadId": "thr-a", "turnId": "trn-a",
+				"item": map[string]any{"type": "reasoning", "id": "r1", "summary": []any{"thinking..."}, "content": []any{}},
+			},
+		})
+		writeJSON(t, ctx, c, map[string]any{
+			"jsonrpc": "2.0", "method": "item/completed",
+			"params": map[string]any{
+				"threadId": "thr-a", "turnId": "trn-a",
+				"item": map[string]any{"type": "agentMessage", "id": "m1", "text": "hello"},
+			},
+		})
+		writeJSON(t, ctx, c, map[string]any{
+			"jsonrpc": "2.0", "method": "turn/completed",
+			"params": map[string]any{
+				"threadId": "thr-a",
+				"turn": map[string]any{
+					"id": "trn-a", "status": "completed",
+					"items": []any{}, "itemsView": "notLoaded", "error": nil,
+				},
+			},
+		})
+	})
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := Dial(ctx, url)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer conn.Close()
+
+	raw, err := conn.Turn(ctx, "thr-a", json.RawMessage(`{"input":[{"type":"text","text":"hi"}]}`), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	items, ok := got["items"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("expected 2 injected items, got %v", got["items"])
+	}
+	last := items[len(items)-1].(map[string]any)
+	if last["type"] != "agentMessage" || last["text"] != "hello" {
+		t.Errorf("last item = %v, want agentMessage/hello", last)
+	}
+	// Suppress unused-import warning on slow CI re-runs.
+	_ = runtime.NumGoroutine()
+}

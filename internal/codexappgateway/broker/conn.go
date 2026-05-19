@@ -21,8 +21,9 @@ type Conn struct {
 	nextID  atomic.Int64
 
 	mu           sync.Mutex
-	pendingResp  map[int64]chan rpcResponse  // request id → 1-buffered chan
-	pendingTurns map[string]chan turnPayload // turn id → 1-buffered chan
+	pendingResp  map[int64]chan rpcResponse   // request id → 1-buffered chan
+	pendingTurns map[string]chan turnPayload  // turn id → 1-buffered chan
+	itemsByTurn  map[string][]json.RawMessage // turn id → accumulated item/completed payloads
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -47,6 +48,7 @@ func Dial(ctx context.Context, wsURL string) (*Conn, error) {
 		ws:           ws,
 		pendingResp:  make(map[int64]chan rpcResponse),
 		pendingTurns: make(map[string]chan turnPayload),
+		itemsByTurn:  make(map[string][]json.RawMessage),
 		closed:       make(chan struct{}),
 	}
 
@@ -127,6 +129,21 @@ func (c *Conn) dispatchFrame(data []byte) {
 		})
 		return
 	}
+	if f.Method == "item/completed" {
+		// Codex emits items incrementally via item/completed; turn/completed's
+		// Turn.items is empty (items_view: NotLoaded). Accumulate so we can
+		// inject the items into the final Turn payload at delivery time.
+		var p itemCompletedParams
+		if err := json.Unmarshal(f.Params, &p); err != nil {
+			return
+		}
+		if p.TurnID != "" && len(p.Item) > 0 {
+			c.mu.Lock()
+			c.itemsByTurn[p.TurnID] = append(c.itemsByTurn[p.TurnID], p.Item)
+			c.mu.Unlock()
+		}
+		return
+	}
 	if f.Method == "turn/completed" {
 		var p turnCompletedParams
 		if err := json.Unmarshal(f.Params, &p); err != nil {
@@ -151,11 +168,47 @@ func (c *Conn) deliverResponse(id int64, resp rpcResponse) {
 func (c *Conn) deliverTurn(turnID string, payload turnPayload) {
 	c.mu.Lock()
 	ch, ok := c.pendingTurns[turnID]
+	items := c.itemsByTurn[turnID]
 	delete(c.pendingTurns, turnID)
+	delete(c.itemsByTurn, turnID)
 	c.mu.Unlock()
-	if ok {
-		ch <- payload
+	if !ok {
+		return
 	}
+	// Inject the accumulated item/completed payloads into Turn.items.
+	// turn/completed's Turn.items is empty in codex's v2 protocol
+	// (TurnItemsView::NotLoaded); the items arrived as separate
+	// item/completed notifications. Without this merge, REST callers
+	// see an empty items list and can't pull the agentMessage text.
+	if len(items) > 0 {
+		if merged, err := mergeItemsIntoTurnRaw(payload.Raw, items); err == nil {
+			payload.Raw = merged
+		}
+	}
+	ch <- payload
+}
+
+// mergeItemsIntoTurnRaw replaces the "items" field of a codex Turn JSON
+// payload with the supplied items slice and returns the re-serialized
+// bytes. The original payload is parsed into an ordered map so unknown
+// fields and field order are preserved across codex protocol updates.
+func mergeItemsIntoTurnRaw(raw json.RawMessage, items []json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return raw, nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return raw, err
+	}
+	itemsRaw, err := json.Marshal(items)
+	if err != nil {
+		return raw, err
+	}
+	m["items"] = itemsRaw
+	// Caller's lastAgentMessageText scans by item type, so this is
+	// sufficient — itemsView still says "notLoaded" but we don't
+	// promise to update it.
+	return json.Marshal(m)
 }
 
 func (c *Conn) failAllPending(err error) {
@@ -167,6 +220,9 @@ func (c *Conn) failAllPending(err error) {
 	for tid, ch := range c.pendingTurns {
 		close(ch)
 		delete(c.pendingTurns, tid)
+	}
+	for tid := range c.itemsByTurn {
+		delete(c.itemsByTurn, tid)
 	}
 	c.mu.Unlock()
 	c.closeErr.CompareAndSwap(nil, &errHolder{err})
@@ -235,6 +291,7 @@ func (c *Conn) Turn(ctx context.Context, threadID string, callerParams json.RawM
 	case <-tctx.Done():
 		c.mu.Lock()
 		delete(c.pendingTurns, startResp.Turn.ID)
+		delete(c.itemsByTurn, startResp.Turn.ID)
 		c.mu.Unlock()
 		// Best-effort interrupt so codex doesn't keep working.
 		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

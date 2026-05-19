@@ -85,6 +85,18 @@ type turnCompletedParams struct {
 	Turn     turnPayload `json:"turn"`
 }
 
+// itemCompletedParams is the params shape of an `item/completed`
+// server notification (codex v2 ItemCompletedNotification). Items are
+// emitted incrementally during a turn; the broker accumulates them by
+// turnId and injects the full list into the final Turn payload at
+// delivery time, since turn/completed's own Turn.items is empty
+// (TurnItemsView::NotLoaded in v2 notifications).
+type itemCompletedParams struct {
+	Item     json.RawMessage `json:"item"`
+	ThreadID string          `json:"threadId"`
+	TurnID   string          `json:"turnId"`
+}
+
 // turnPayload exposes only the routing key. The full object is in Raw
 // for verbatim REST passthrough.
 type turnPayload struct {
