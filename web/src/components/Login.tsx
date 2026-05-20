@@ -129,15 +129,23 @@ export function Login({ onSuccess }: LoginProps) {
               </div>
             )}
             <div className={passwordAuth ? "mt-4 space-y-2" : "space-y-2"}>
-              {oidcProviders.map((provider) => (
-                <a
-                  key={provider}
-                  href={`/api/auth/oidc/${provider}/login`}
-                  className="flex w-full items-center justify-center rounded-md border border-[var(--input)] bg-[var(--background)] px-4 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]"
-                >
-                  {providerLabels[provider] || `Sign in with ${provider}`}
-                </a>
-              ))}
+              {oidcProviders.map((provider) => {
+                // Forward ?next= through the OIDC round-trip so HandleCallback
+                // can bounce back to (e.g.) the codex-auth verify page.
+                const next = new URLSearchParams(window.location.search).get('next')
+                const href = next
+                  ? `/api/auth/oidc/${provider}/login?next=${encodeURIComponent(next)}`
+                  : `/api/auth/oidc/${provider}/login`
+                return (
+                  <a
+                    key={provider}
+                    href={href}
+                    className="flex w-full items-center justify-center rounded-md border border-[var(--input)] bg-[var(--background)] px-4 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]"
+                  >
+                    {providerLabels[provider] || `Sign in with ${provider}`}
+                  </a>
+                )
+              })}
             </div>
           </div>
         )}

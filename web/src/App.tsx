@@ -287,6 +287,21 @@ export default function App() {
     )
   }
 
+  // Already authenticated and landed here via ?next= (typically codex-auth's
+  // device/PKCE redirect). Bounce to next before rendering the dashboard, or
+  // the user sees the dashboard instead of the codex-auth verify form.
+  if (authed && location.pathname === '/') {
+    const next = new URLSearchParams(location.search).get('next')
+    if (next) {
+      window.location.href = next
+      return (
+        <div className="flex min-h-screen items-center justify-center">
+          <span className="text-[var(--muted-foreground)]">Redirecting...</span>
+        </div>
+      )
+    }
+  }
+
   if (!authed) {
     // If landing on protected OAuth pages without auth, save params
     // so they survive OIDC redirects.
