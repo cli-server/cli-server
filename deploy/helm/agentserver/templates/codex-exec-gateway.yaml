@@ -18,7 +18,10 @@ metadata:
 spec:
   replicas: {{ .Values.codexExecGateway.replicaCount }}
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: {{ .Release.Name }}-codex-exec-gateway
@@ -28,6 +31,7 @@ spec:
         app: {{ .Release.Name }}-codex-exec-gateway
     spec:
       serviceAccountName: {{ .Release.Name }}
+      terminationGracePeriodSeconds: 30
       initContainers:
         {{- if .Values.postgresql.enabled }}
         - name: wait-for-postgresql
@@ -125,6 +129,10 @@ spec:
               port: {{ .Values.codexExecGateway.port }}
             initialDelaySeconds: 3
             periodSeconds: 5
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]
           {{- with .Values.codexExecGateway.resources }}
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}

@@ -18,7 +18,10 @@ metadata:
 spec:
   replicas: {{ .Values.executorRegistry.replicaCount }}
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: {{ .Release.Name }}-executor-registry
@@ -28,6 +31,7 @@ spec:
         app: {{ .Release.Name }}-executor-registry
     spec:
       serviceAccountName: {{ .Release.Name }}
+      terminationGracePeriodSeconds: 30
       initContainers:
         {{- if .Values.postgresql.enabled }}
         - name: wait-for-postgresql
@@ -88,6 +92,10 @@ spec:
               port: {{ .Values.executorRegistry.port }}
             initialDelaySeconds: 3
             periodSeconds: 5
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]
           {{- with .Values.executorRegistry.resources }}
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}

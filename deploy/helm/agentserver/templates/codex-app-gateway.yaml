@@ -29,7 +29,10 @@ metadata:
 spec:
   replicas: {{ .Values.codexAppGateway.replicaCount }}
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: {{ .Release.Name }}-codex-app-gateway
@@ -39,6 +42,7 @@ spec:
         app: {{ .Release.Name }}-codex-app-gateway
     spec:
       serviceAccountName: {{ .Release.Name }}
+      terminationGracePeriodSeconds: 30
       containers:
         - name: codex-app-gateway
           image: "{{ .Values.codexAppGateway.image.repository }}:{{ .Values.codexAppGateway.image.tag }}"
@@ -147,6 +151,10 @@ spec:
               port: {{ .Values.codexAppGateway.port }}
             initialDelaySeconds: 3
             periodSeconds: 5
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]
           {{- with .Values.codexAppGateway.resources }}
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}

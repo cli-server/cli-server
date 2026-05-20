@@ -27,7 +27,10 @@ metadata:
 spec:
   replicas: {{ .Values.ccbroker.replicaCount }}
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: {{ .Release.Name }}-ccbroker
@@ -37,6 +40,7 @@ spec:
         app: {{ .Release.Name }}-ccbroker
     spec:
       serviceAccountName: {{ .Release.Name }}
+      terminationGracePeriodSeconds: 30
       initContainers:
         {{- if .Values.postgresql.enabled }}
         - name: wait-for-postgresql
@@ -136,6 +140,10 @@ spec:
               port: {{ .Values.ccbroker.port }}
             initialDelaySeconds: 3
             periodSeconds: 5
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]
           {{- with .Values.ccbroker.resources }}
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}
