@@ -34,6 +34,8 @@ spec:
       app.kubernetes.io/component: hydra
   template:
     metadata:
+      annotations:
+        agentserver.x-k8s.io/chart-version: {{ .Chart.AppVersion | quote }}
       labels:
         app.kubernetes.io/component: hydra
     spec:

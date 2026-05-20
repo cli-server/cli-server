@@ -16,6 +16,8 @@ spec:
       app: {{ .Release.Name }}-imbridge
   template:
     metadata:
+      annotations:
+        agentserver.x-k8s.io/chart-version: {{ .Chart.AppVersion | quote }}
       labels:
         app: {{ .Release.Name }}-imbridge
     spec:

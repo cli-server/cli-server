@@ -27,6 +27,8 @@ spec:
       app: {{ .Release.Name }}-codex-exec-gateway
   template:
     metadata:
+      annotations:
+        agentserver.x-k8s.io/chart-version: {{ .Chart.AppVersion | quote }}
       labels:
         app: {{ .Release.Name }}-codex-exec-gateway
     spec:

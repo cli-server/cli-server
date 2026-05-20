@@ -27,6 +27,8 @@ spec:
       app: {{ .Release.Name }}-executor-registry
   template:
     metadata:
+      annotations:
+        agentserver.x-k8s.io/chart-version: {{ .Chart.AppVersion | quote }}
       labels:
         app: {{ .Release.Name }}-executor-registry
     spec:
