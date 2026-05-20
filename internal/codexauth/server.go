@@ -45,6 +45,3 @@ func (s *Server) Mount(r chi.Router) {
 func (s *Server) handleJWKS(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "jwks: not implemented", http.StatusNotImplemented)
 }
-func (s *Server) handleTaskRegister(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "task register: not implemented", http.StatusNotImplemented)
-}
