@@ -646,7 +646,26 @@ func (s *Server) Router() http.Handler {
 		})
 	}
 
-	return r
+	// Host-aware path rewrite for the codex-auth subdomain. agentserver's
+	// chi router mounts the codexauth subrouter at /codex-auth/* (we can't
+	// safely mount it at root because /v1/agent/{rid}/task/register would
+	// collide with the existing /v1/agent chi.Route subtree). istio 1.30's
+	// Gateway-API URLRewrite with PathPrefix /  is a no-op in practice
+	// (verified end-to-end on prod), so we do the rewrite here instead.
+	// When Host == CODEX_AUTH_HOST, prepend /codex-auth to the request
+	// path before chi sees it. Idempotent — if the client already includes
+	// the prefix (e.g. internal cluster traffic), we leave it alone.
+	codexAuthHost := os.Getenv("CODEX_AUTH_HOST")
+	if codexAuthHost == "" {
+		return r
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Host == codexAuthHost && !strings.HasPrefix(req.URL.Path, "/codex-auth/") && req.URL.Path != "/codex-auth" {
+			req.URL.Path = "/codex-auth" + req.URL.Path
+			req.URL.RawPath = ""
+		}
+		r.ServeHTTP(w, req)
+	})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {

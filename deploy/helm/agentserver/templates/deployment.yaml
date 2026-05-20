@@ -239,6 +239,14 @@ spec:
             {{- if not $codexAuthHost }}{{- $codexAuthHost = printf "codex-auth.%s" .Values.platform.domain }}{{- end }}
             - name: CODEX_AUTH_ISSUER_URL
               value: {{ printf "https://%s" $codexAuthHost | quote }}
+            # CODEX_AUTH_HOST is the public Host header used on the
+            # codex-auth subdomain. agentserver does an in-process
+            # path rewrite (/foo → /codex-auth/foo) when it sees this
+            # exact Host, because istio 1.30's Gateway-API URLRewrite
+            # with PathPrefix `/` is a no-op (does not actually rewrite
+            # paths). Doing the rewrite in Go avoids the istio bug.
+            - name: CODEX_AUTH_HOST
+              value: {{ $codexAuthHost | quote }}
             # Cookie Domain. When codexAuth is on, the session cookie
             # set by /api/auth/login on <platform.domain> must also be
             # readable on codex-auth.<platform.domain>, otherwise the
