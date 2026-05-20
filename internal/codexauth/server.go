@@ -48,9 +48,3 @@ func (s *Server) handleJWKS(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTaskRegister(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "task register: not implemented", http.StatusNotImplemented)
 }
-func (s *Server) handleDeviceVerifyPage(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "device verify page: not implemented", http.StatusNotImplemented)
-}
-func (s *Server) handleDeviceVerifySubmit(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "device verify submit: not implemented", http.StatusNotImplemented)
-}

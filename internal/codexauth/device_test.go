@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -108,4 +109,61 @@ func TestDeviceToken_ApprovedReturnsAuthCode(t *testing.T) {
 		t.Errorf("expected 1 codex_pkce_requests row, got %d", n)
 	}
 	_ = strings.TrimSpace // keep "strings" import quiet if unused elsewhere
+}
+
+func TestDeviceVerify_UnauthRedirectsToLogin(t *testing.T) {
+	srv := newAuthTestServer(t, "")
+	r := chi.NewRouter()
+	srv.Mount(r)
+	req := httptest.NewRequest(http.MethodGet, "/codex/device", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rr.Code)
+	}
+}
+
+func TestDeviceVerify_AuthedRendersForm(t *testing.T) {
+	srv := newAuthTestServer(t, "user-abc")
+	r := chi.NewRouter()
+	srv.Mount(r)
+	req := httptest.NewRequest(http.MethodGet, "/codex/device", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `name="user_code"`) {
+		t.Errorf("page missing user_code input")
+	}
+	if !strings.Contains(body, `name="action"`) {
+		t.Errorf("page missing action buttons")
+	}
+}
+
+func TestDeviceVerify_SubmitApproveFlipsStatus(t *testing.T) {
+	srv := newAuthTestServer(t, "user-approver")
+	ctx := context.Background()
+	srv.Store.InsertDeviceCode(ctx, DeviceCode{
+		DeviceAuthID: "dev-form-1", UserCode: "FORM-CODE",
+		CodeChallenge: "c", CodeVerifier: "v", AuthorizationCode: "a",
+		Status: "pending", ExpiresAt: time.Now().Add(15 * time.Minute),
+	})
+	form := url.Values{}
+	form.Set("user_code", "FORM-CODE")
+	form.Set("action", "approve")
+	req := httptest.NewRequest(http.MethodPost, "/codex/device", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	r := chi.NewRouter()
+	srv.Mount(r)
+	r.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	row, _ := srv.Store.GetDeviceCodeByUserCode(ctx, "FORM-CODE")
+	if row == nil || row.Status != "approved" || row.UserID != "user-approver" {
+		t.Errorf("row = %+v", row)
+	}
 }

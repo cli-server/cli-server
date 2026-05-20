@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -100,6 +102,87 @@ func (s *Server) handleDeviceToken(w http.ResponseWriter, r *http.Request) {
 		"code_challenge":     dc.CodeChallenge,
 		"code_verifier":      dc.CodeVerifier,
 	})
+}
+
+const verifyFormHTML = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Codex device login</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 480px; margin: 4em auto; padding: 0 1em; }
+  input[name=user_code] { font-family: monospace; font-size: 1.4em; letter-spacing: 0.1em;
+                          text-transform: uppercase; padding: 0.5em; width: 100%%; }
+  button { padding: 0.6em 1.2em; margin-right: 1em; font-size: 1em; }
+  .deny { background: #fee; }
+</style></head><body>
+<h1>Codex device login</h1>
+<p>Signed in as <code>%s</code>.</p>
+<form method="POST" action="/codex/device">
+  <p><label>Enter the code shown by <code>codex login --device-auth</code>:</label></p>
+  <p><input name="user_code" autocomplete="off" autofocus required pattern="[A-Z0-9]{4}-[A-Z0-9]{4}"></p>
+  <p><button name="action" value="approve">Approve</button>
+     <button name="action" value="deny" class="deny">Deny</button></p>
+</form>
+</body></html>`
+
+const verifyResultHTML = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Codex device login</title>
+<style>body{font-family:-apple-system,sans-serif;max-width:480px;margin:4em auto;padding:0 1em;}</style>
+</head><body><h1>%s</h1><p>You may now return to your terminal.</p></body></html>`
+
+func (s *Server) handleDeviceVerifyPage(w http.ResponseWriter, r *http.Request) {
+	if s.SessionResolve == nil {
+		http.Error(w, "session resolver not configured", http.StatusInternalServerError)
+		return
+	}
+	uid := s.SessionResolve(r)
+	if uid == "" {
+		next := url.QueryEscape(r.URL.RequestURI())
+		http.Redirect(w, r, s.LoginRedirectURL+"?next="+next, http.StatusFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, verifyFormHTML, htmlEscape(s.lookupEmail(r.Context(), uid)))
+}
+
+func (s *Server) handleDeviceVerifySubmit(w http.ResponseWriter, r *http.Request) {
+	if s.SessionResolve == nil {
+		http.Error(w, "session resolver not configured", http.StatusInternalServerError)
+		return
+	}
+	uid := s.SessionResolve(r)
+	if uid == "" {
+		http.Error(w, "session required", http.StatusUnauthorized)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "parse form", http.StatusBadRequest)
+		return
+	}
+	userCode := strings.ToUpper(strings.TrimSpace(r.PostForm.Get("user_code")))
+	action := r.PostForm.Get("action")
+
+	switch action {
+	case "approve":
+		if err := s.Store.ApproveDeviceCode(r.Context(), userCode, uid); err != nil {
+			http.Error(w, "code not found or already used: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, verifyResultHTML, "Approved ✓")
+	case "deny":
+		_, _ = s.Store.db.ExecContext(r.Context(),
+			`UPDATE codex_device_codes SET status = 'denied'
+			 WHERE user_code = $1 AND status = 'pending'`, userCode)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, verifyResultHTML, "Denied ✗")
+	default:
+		http.Error(w, "action must be approve|deny", http.StatusBadRequest)
+	}
+}
+
+func htmlEscape(s string) string {
+	// Minimal — only the email displayed in the form.
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
+	return r.Replace(s)
 }
 
 func mustRandomUserCode() string {
