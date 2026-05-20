@@ -39,12 +39,18 @@ function WorkspaceDetailRoute({
   onRename,
   initialTab,
   sandboxOverride,
+  sandboxes,
+  setSandboxes,
+  refreshSandboxes,
 }: {
   workspaces: Workspace[]
   workspacesLoaded: boolean
   onRename?: (id: string, name: string) => void
   initialTab?: WorkspaceTab
   sandboxOverride?: React.ReactNode
+  sandboxes: Sandbox[]
+  setSandboxes: React.Dispatch<React.SetStateAction<Sandbox[]>>
+  refreshSandboxes: () => void
 }) {
   const { workspaceId, tab: tabSlug } = useParams<{ workspaceId: string; tab?: string }>()
   if (!workspacesLoaded) {
@@ -67,6 +73,9 @@ function WorkspaceDetailRoute({
       onRename={onRename}
       initialTab={resolvedInitial}
       sandboxOverride={sandboxOverride}
+      sandboxes={sandboxes}
+      setSandboxes={setSandboxes}
+      refreshSandboxes={refreshSandboxes}
     />
   )
 }
@@ -312,6 +321,9 @@ export default function App() {
             workspacesLoaded={workspacesLoaded}
             onRename={handleRenameWorkspace}
             initialTab="overview"
+            sandboxes={sandboxes}
+            setSandboxes={setSandboxes}
+            refreshSandboxes={refreshSandboxes}
           />
         } />
         <Route
@@ -322,6 +334,9 @@ export default function App() {
               workspacesLoaded={workspacesLoaded}
               onRename={handleRenameWorkspace}
               initialTab="sandbox"
+              sandboxes={sandboxes}
+              setSandboxes={setSandboxes}
+              refreshSandboxes={refreshSandboxes}
               sandboxOverride={
                 <SandboxDetailRoute
                   sandboxes={sandboxes}
@@ -346,6 +361,9 @@ export default function App() {
               workspacesLoaded={workspacesLoaded}
               onRename={handleRenameWorkspace}
               initialTab="overview"
+              sandboxes={sandboxes}
+              setSandboxes={setSandboxes}
+              refreshSandboxes={refreshSandboxes}
             />
           }
         />

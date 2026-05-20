@@ -85,6 +85,13 @@ interface WorkspaceDetailProps {
   onRename?: (id: string, name: string) => void
   initialTab?: Tab
   sandboxOverride?: React.ReactNode
+  // Optional: when provided (by App.tsx), sandbox state is shared with the
+  // top-level SandboxDetailRoute so a freshly-created sandbox is visible
+  // there immediately. ManageWorkspaces (which has no nested detail route)
+  // omits these and SandboxPanel falls back to its own local state.
+  sandboxes?: Sandbox[]
+  setSandboxes?: React.Dispatch<React.SetStateAction<Sandbox[]>>
+  refreshSandboxes?: () => void
 }
 
 // Mapping from Tab key to URL slug. Tabs share their key as slug unless
@@ -113,7 +120,7 @@ export function tabFromSlug(slug: string | undefined): Tab | undefined {
   return SLUG_TO_TAB[slug]
 }
 
-export function WorkspaceDetail({ workspace, onRename, initialTab, sandboxOverride }: WorkspaceDetailProps) {
+export function WorkspaceDetail({ workspace, onRename, initialTab, sandboxOverride, sandboxes, setSandboxes, refreshSandboxes }: WorkspaceDetailProps) {
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -239,7 +246,14 @@ export function WorkspaceDetail({ workspace, onRename, initialTab, sandboxOverri
             <RemoteExecutorsPanel workspaceId={workspace.id} />
           )}
           {tab === 'sandbox' && (
-            sandboxOverride ?? <SandboxPanel workspaceId={workspace.id} />
+            sandboxOverride ?? (
+              <SandboxPanel
+                workspaceId={workspace.id}
+                externalSandboxes={sandboxes}
+                externalSetSandboxes={setSandboxes}
+                externalRefresh={refreshSandboxes}
+              />
+            )
           )}
           {tab === 'llm' && (
             <LLMTab workspaceId={workspace.id} />
@@ -368,13 +382,33 @@ function BrowsersPanel({ workspaceId }: { workspaceId: string }) {
   )
 }
 
-function SandboxPanel({ workspaceId }: { workspaceId: string }) {
-  const [sandboxes, setSandboxes] = useState<Sandbox[]>([])
+function SandboxPanel({
+  workspaceId,
+  externalSandboxes,
+  externalSetSandboxes,
+  externalRefresh,
+}: {
+  workspaceId: string
+  externalSandboxes?: Sandbox[]
+  externalSetSandboxes?: React.Dispatch<React.SetStateAction<Sandbox[]>>
+  externalRefresh?: () => void
+}) {
   const [creating, setCreating] = useState(false)
-  const refresh = useCallback(() => {
-    listSandboxes(workspaceId).then(setSandboxes).catch(() => {})
+  // Fallback local state for callers (e.g. ManageWorkspaces) that don't
+  // share sandbox state at a higher level. When external state is supplied
+  // we use that instead so other routes see updates immediately.
+  const [localSandboxes, setLocalSandboxes] = useState<Sandbox[]>([])
+  const localRefresh = useCallback(() => {
+    listSandboxes(workspaceId).then(setLocalSandboxes).catch(() => {})
   }, [workspaceId])
-  useEffect(() => { refresh() }, [refresh])
+  useEffect(() => {
+    if (!externalSandboxes) localRefresh()
+  }, [externalSandboxes, localRefresh])
+
+  const sandboxes = externalSandboxes ?? localSandboxes
+  const setSandboxes = externalSetSandboxes ?? setLocalSandboxes
+  const refresh = externalRefresh ?? localRefresh
+
   return (
     <SandboxList
       selectedWorkspaceId={workspaceId}
