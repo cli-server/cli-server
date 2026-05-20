@@ -51,11 +51,15 @@ type ExecInitializeResult struct {
 type ProcessStartParams struct {
 	ProcessID string            `json:"processId"`
 	Argv      []string          `json:"argv"`
-	Cwd       string            `json:"cwd"`
-	Env       map[string]string `json:"env"`
+	// Cwd: when empty, omit from the wire so exec-server inherits its
+	// own working directory. Sending "" was treated by Windows
+	// exec-server as a literal (invalid) path → os error 267
+	// "目录名称无效".
+	Cwd       string            `json:"cwd,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
 	TTY       bool              `json:"tty"`
 	PipeStdin bool              `json:"pipeStdin"`
-	Arg0      *string           `json:"arg0"`
+	Arg0      *string           `json:"arg0,omitempty"`
 }
 
 type ProcessStartResult struct {
