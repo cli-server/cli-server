@@ -1,6 +1,6 @@
 # codex-app-gateway + codex-exec-gateway — Full Upstream Alignment
 
-**Status:** draft
+**Status:** PR 1 + PR 2 in flight; **PR 3 deferred** — see § "PR 3 deferral note" near the bottom of this file
 **Date:** 2026-05-20
 **Owner:** agentserver / codex integration
 **Pin target:** upstream `openai/codex` tag **`rust-v0.131.0-alpha.22`** (latest stable as of 2026-05-20)
@@ -216,3 +216,28 @@ The initial CI run after PR 1 lands should pass without any extra change, becaus
 - Vendoring Go bindings for upstream Rust types (unnecessary with transparent passthrough).
 - `opencode-app-gateway` alignment (separate gateway, separate spec).
 - Capability downgrade for older codex binary versions (implement only if a real deployment needs it).
+
+## PR 3 deferral note (2026-05-20)
+
+Original migration plan had three PRs. PR 1 (codex-pin + exec-gw hardening) and PR 2 (transparent ws ApprovalFilter + drop bogus `protocolVersion` field) landed all five **functional** gaps from the audit baseline:
+
+| Gap | Closed by |
+|---|---|
+| 1. No upstream version pinning | PR 1 (`codex-pin.json` + CI lint + `make codex-pin-bump`) |
+| 2. exec-gw unbounded ws reads | PR 1 (`MaxFrameBytes` default 16 MiB) |
+| 3. exec-gw no idle reaper / stream cap | PR 1 (`BridgeIdleTimeout`, `MaxStreamsPerExecutor`) |
+| 4. Transparent ws path didn't auto-reply to approvals | PR 2 (`approvalfilter` package + `OnServerFrame` interceptor in `handleCodexAppWS`) |
+| 5a. Broker sent bogus `protocolVersion: "2025-06-18"` | PR 2 (field removed) |
+| 5b. Broker has only 2 RPC methods (thread/start + turn/start) | **Intentional**, see below |
+
+PR 3 was originally scoped to do a structural refactor: pivot the REST `/turn` handler to drive the shared transparent-proxy core via an in-process pipe-pair, so the broker's bespoke JSON-RPC client could be deleted. After PR 2 landed `approvalfilter` as a shared package, the actual code duplication this would eliminate is minimal:
+
+- Approval auto-reply logic: **already shared** via `approvalfilter`
+- Supervisor lifecycle: **already shared** via `supervisor.EnsureSubprocess`
+- The broker's `Conn` / `Pool` / `dispatchFrame` / `Turn` / `StartThread`: these implement a JSON-RPC **client** (sends requests, tracks IDs, waits for responses). The transparent ws path is a JSON-RPC **frame relay** (bidirectional, passes everything through). These are structurally different problems, not duplication.
+
+**Broker's narrow method set (gap 5b) is deliberate, not an oversight.** The REST `/turn` endpoint exists to wrap "send a turn, get the result" in one HTTP call. Callers that need full thread lifecycle (`thread/resume`, `thread/fork`, `thread/list`, `turn/steer`, etc.) should use the transparent `/codex-app/ws` endpoint, which exposes the entire codex v2 protocol with zero gateway code per new method. Expanding REST to mirror all 25+ JSON-RPC methods would re-introduce the maintenance burden that PR 1 + PR 2 were designed to eliminate.
+
+**Decision:** PR 3 as originally scoped is **not done**. The remaining `broker/conn.go` ~420 LOC of JSON-RPC-client code is the right abstraction for the REST adapter's purpose. Refactoring it for "consolidation" would add risk without commensurate benefit.
+
+If future work needs to expose additional thread/turn lifecycle operations to non-ws callers (e.g., HTTP-only clients that can't speak WebSocket), revisit this decision then — the natural extension is to add specific REST handlers for the needed methods, not a generic JSON-RPC-over-HTTP shim.
