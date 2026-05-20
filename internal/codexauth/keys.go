@@ -1,6 +1,7 @@
 package codexauth
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
@@ -60,4 +61,39 @@ func GenerateEd25519Key() (privatePKCS8 []byte, public []byte, err error) {
 		return nil, nil, fmt.Errorf("MarshalPKCS8PrivateKey: %w", err)
 	}
 	return pkcs8, pub, nil
+}
+
+// EnsureActiveKey returns the active JWKS key, generating a fresh one
+// and inserting it into the store if none exists. Idempotent — safe to
+// call at every server startup.
+func EnsureActiveKey(ctx context.Context, s *Store) (*JwksKey, error) {
+	got, err := s.GetActiveJwksKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if got != nil {
+		return got, nil
+	}
+	kid, kp, err := GenerateRSAKey()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.InsertJwksKey(ctx, kid, kp, true); err != nil {
+		return nil, err
+	}
+	return s.GetActiveJwksKey(ctx)
+}
+
+// LoadRSAPrivate parses a PKCS#8 DER blob (as stored in
+// codex_jwks_keys.private_pkcs8) back into an *rsa.PrivateKey for signing.
+func LoadRSAPrivate(pkcs8 []byte) (*rsa.PrivateKey, error) {
+	k, err := x509.ParsePKCS8PrivateKey(pkcs8)
+	if err != nil {
+		return nil, fmt.Errorf("parse pkcs8: %w", err)
+	}
+	priv, ok := k.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("not an RSA key: %T", k)
+	}
+	return priv, nil
 }

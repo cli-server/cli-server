@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/agentserver/agentserver/internal/auth"
 	"github.com/agentserver/agentserver/internal/bridge"
+	"github.com/agentserver/agentserver/internal/codexauth"
 	"github.com/agentserver/agentserver/internal/db"
 	"github.com/agentserver/agentserver/internal/namespace"
 	"github.com/agentserver/agentserver/internal/process"
@@ -86,6 +87,10 @@ type Server struct {
 	// Codex exec gateway
 	ExecutorsClient            *ExecutorsClient
 	CodexExecGatewayPublicHost string // e.g. "codex-exec.example.com" — used to compose connect commands
+
+	// CodexAuth is the self-hosted codex 0.132+ auth shim (PKCE / device
+	// flow / JWKS / Agent Identity). Mounted under /codex-auth/* when set.
+	CodexAuth *codexauth.Server
 
 	// OperationsRetention is the TTL for rows in the operations table.
 	// 0 disables the background retention loop. Configurable via
@@ -308,6 +313,15 @@ func (s *Server) Router() http.Handler {
 
 	// Agent registration (auth via OAuth Bearer token).
 	r.Post("/api/agent/register", s.handleAgentRegister)
+
+	// Self-hosted codex 0.132+ auth shim under /codex-auth/*.
+	// All sub-routes are public — each handler resolves session itself
+	// via the SessionResolve callback wired in cmd/serve.go.
+	if s.CodexAuth != nil {
+		r.Route("/codex-auth", func(r chi.Router) {
+			s.CodexAuth.Mount(r)
+		})
+	}
 
 	// Hydra login/consent provider endpoints (no auth required — Hydra redirects here).
 	if s.HydraClient != nil {

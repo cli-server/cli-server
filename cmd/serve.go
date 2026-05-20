@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 
 	"github.com/agentserver/agentserver/internal/auth"
+	"github.com/agentserver/agentserver/internal/codexauth"
 	"github.com/agentserver/agentserver/internal/crypto"
 	_ "github.com/agentserver/agentserver/internal/credentialproxy/k8s" // register k8s credential provider
 	"github.com/agentserver/agentserver/internal/bridge"
@@ -233,6 +234,33 @@ var serveCmd = &cobra.Command{
 			srv.ExecutorsClient = server.NewExecutorsClient(u, os.Getenv("INTERNAL_API_SECRET"))
 		}
 		srv.CodexExecGatewayPublicHost = os.Getenv("CODEX_EXEC_GATEWAY_PUBLIC_HOST")
+
+		// Self-hosted codex 0.132+ auth shim. When CODEX_AUTH_ISSUER_URL is
+		// set, agentserver exposes PKCE / device flow / JWKS / Agent Identity
+		// endpoints under /codex-auth/* so `codex login --issuer
+		// <CODEX_AUTH_ISSUER_URL>` works against this deployment.
+		if issuer := os.Getenv("CODEX_AUTH_ISSUER_URL"); issuer != "" {
+			caStore := codexauth.NewStore(database)
+			activeKey, err := codexauth.EnsureActiveKey(context.Background(), caStore)
+			if err != nil {
+				log.Fatalf("codexauth EnsureActiveKey: %v", err)
+			}
+			priv, err := codexauth.LoadRSAPrivate(activeKey.PrivatePKCS8)
+			if err != nil {
+				log.Fatalf("codexauth LoadRSAPrivate: %v", err)
+			}
+			srv.CodexAuth = &codexauth.Server{
+				Store:      caStore,
+				IssuerURL:  issuer,
+				SigningKey: priv,
+				SigningKid: activeKey.Kid,
+				SessionResolve: func(r *http.Request) string {
+					return auth.UserIDFromContext(r.Context())
+				},
+				LoginRedirectURL: "/login",
+			}
+			log.Printf("codexauth: enabled (issuer=%s, kid=%s)", issuer, activeKey.Kid)
+		}
 
 		// Operations retention TTL — 90 days default, 0 disables. Env var
 		// AGENTSERVER_OPERATIONS_RETENTION_DAYS overrides.

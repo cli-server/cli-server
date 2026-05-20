@@ -227,6 +227,10 @@ spec:
             - name: CODEX_EXEC_GATEWAY_PUBLIC_HOST
               value: {{ .Values.codexExecGateway.publicHost | quote }}
             {{- end }}
+            {{- if .Values.codexAuth.enabled }}
+            - name: CODEX_AUTH_ISSUER_URL
+              value: {{ printf "https://%s/codex-auth" .Values.platform.domain | quote }}
+            {{- end }}
             - name: OPENCODE_SUBDOMAIN_PREFIX
               value: {{ .Values.sandbox.opencode.subdomainPrefix | default "code" | quote }}
             - name: OPENCLAW_SUBDOMAIN_PREFIX

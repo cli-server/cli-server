@@ -126,6 +126,13 @@ agentSandbox:
   install: true
   controllerImage: registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.1.1
 
+codexAuth:
+  # Self-hosted codex 0.132+ auth shim. When enabled, agentserver
+  # serves PKCE / device flow / JWKS / agent-identity endpoints under
+  # /codex-auth/* so `codex login --issuer https://<platform.domain>/codex-auth`
+  # works against this deployment.
+  enabled: false
+
 hydra:
   # Ory Hydra OAuth2 server for agent Device Flow registration.
   # When enabled, deploys Hydra alongside agentserver and configures
