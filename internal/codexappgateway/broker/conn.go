@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"nhooyr.io/websocket"
+
+	"github.com/agentserver/agentserver/internal/codexappgateway/approvalfilter"
 )
 
 // Conn is one loopback ws to a codex app-server subprocess. Safe for
@@ -55,7 +57,7 @@ func Dial(ctx context.Context, wsURL string) (*Conn, error) {
 
 	// Send initialize synchronously (no reader yet, so we read inline).
 	id := c.nextID.Add(1)
-	if err := c.writeJSON(ctx, rpcRequest{JSONRPC: "2.0", ID: &id, Method: "initialize", Params: json.RawMessage(`{"clientInfo":{"name":"agentserver-codex-broker","version":"0.1.0"},"protocolVersion":"2025-06-18","capabilities":{}}`)}); err != nil {
+	if err := c.writeJSON(ctx, rpcRequest{JSONRPC: "2.0", ID: &id, Method: "initialize", Params: json.RawMessage(`{"clientInfo":{"name":"agentserver-codex-broker","version":"0.1.0"},"capabilities":{}}`)}); err != nil {
 		ws.Close(websocket.StatusInternalError, "")
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
@@ -124,9 +126,9 @@ func (c *Conn) dispatchFrame(data []byte) {
 		return
 	}
 	// Notification or server request.
-	if f.ID != nil && isApprovalRequest(f.Method) {
+	if f.ID != nil && approvalfilter.IsApproval(f.Method) {
 		_ = c.writeJSON(context.Background(), rpcResponse{
-			JSONRPC: "2.0", ID: f.ID, Result: approvalReply(f.Method),
+			JSONRPC: "2.0", ID: f.ID, Result: approvalfilter.Reply(f.Method),
 		})
 		return
 	}

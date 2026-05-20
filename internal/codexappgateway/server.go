@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentserver/agentserver/internal/codexappgateway/approvalfilter"
 	"github.com/agentserver/agentserver/internal/codexappgateway/auth"
 	"github.com/agentserver/agentserver/internal/codexappgateway/broker"
 	"github.com/agentserver/agentserver/internal/codexappgateway/codexhome"
@@ -327,7 +328,23 @@ func (s *Server) handleCodexAppWS(w http.ResponseWriter, r *http.Request) {
 	defer childWS.Close(websocket.StatusNormalClosure, "gateway closing")
 
 	s.sup.Touch(key)
-	if err := wsbridge.RunProxy(ctx, userWS, childWS, func() { s.sup.Touch(key) }); err != nil {
+	intc := wsbridge.Interceptor{
+		OnServerFrame: func(frame []byte) []byte {
+			if resp, ok := approvalfilter.TryReply(frame); ok {
+				// Auto-accept: write the synthesized response back to upstream
+				// and drop the request so the caller never sees it. Codex
+				// expects server-to-client requests to be answered on the same
+				// ws connection.
+				if werr := childWS.Write(ctx, websocket.MessageText, resp); werr != nil {
+					s.logger.Warn("approval-filter: write reply", "err", werr, "key", key)
+				}
+				return wsbridge.DropFrame
+			}
+			return nil
+		},
+	}
+
+	if err := wsbridge.RunProxyWithInterceptor(ctx, userWS, childWS, intc, func() { s.sup.Touch(key) }); err != nil {
 		s.logger.Info("proxy ended", "err", err, "key", key)
 	}
 }

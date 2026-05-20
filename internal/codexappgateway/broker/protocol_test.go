@@ -3,6 +3,8 @@ package broker
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/agentserver/agentserver/internal/codexappgateway/approvalfilter"
 )
 
 func TestRPCRequestMarshalsNotification(t *testing.T) {
@@ -75,7 +77,7 @@ func TestIsApprovalRequest(t *testing.T) {
 		"item/completed":                        false,
 	}
 	for m, want := range cases {
-		if got := isApprovalRequest(m); got != want {
+		if got := approvalfilter.IsApproval(m); got != want {
 			t.Errorf("%s: got %v want %v", m, got, want)
 		}
 	}
@@ -86,16 +88,16 @@ func TestApprovalReplyShapes(t *testing.T) {
 		method string
 		want   string
 	}{
-		{methodItemCmdApproval, `{"decision":"accept"}`},
-		{methodItemFileApproval, `{"decision":"accept"}`},
-		{methodItemPermsApproval, `{"permissions":{}}`},
-		{methodItemUserInput, `{"answers":{}}`},
-		{methodMcpElicitation, `{"action":"accept","content":null,"_meta":null}`},
+		{"item/commandExecution/requestApproval", `{"decision":"accept"}`},
+		{"item/fileChange/requestApproval", `{"decision":"accept"}`},
+		{"item/permissions/requestApproval", `{"permissions":{}}`},
+		{"item/tool/requestUserInput", `{"answers":{}}`},
+		{"mcpServer/elicitation/request", `{"action":"accept","content":null,"_meta":null}`},
 		{"unknown/method", `{}`},
 	}
 	for _, c := range cases {
 		t.Run(c.method, func(t *testing.T) {
-			got := string(approvalReply(c.method))
+			got := string(approvalfilter.Reply(c.method))
 			if got != c.want {
 				t.Errorf("got %s, want %s", got, c.want)
 			}
