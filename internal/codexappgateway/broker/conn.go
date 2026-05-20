@@ -259,6 +259,8 @@ func (c *Conn) Turn(ctx context.Context, threadID string, callerParams json.RawM
 	c.pendingResp[id] = respCh
 	c.mu.Unlock()
 
+	startedAt := time.Now()
+	log.Printf("broker.Turn: turn/start sent thread=%s rpcID=%d paramsBytes=%d", threadID, id, len(mergedParams))
 	if err := c.writeJSON(ctx, rpcRequest{JSONRPC: "2.0", ID: &id, Method: "turn/start", Params: mergedParams}); err != nil {
 		c.mu.Lock()
 		delete(c.pendingResp, id)
@@ -290,6 +292,7 @@ func (c *Conn) Turn(ctx context.Context, threadID string, callerParams json.RawM
 	if startResp.Turn.ID == "" {
 		return nil, fmt.Errorf("turn/start result missing turn.id")
 	}
+	log.Printf("broker.Turn: turn/start ack thread=%s turn=%s ackMs=%d", threadID, startResp.Turn.ID, time.Since(startedAt).Milliseconds())
 
 	turnCh := make(chan turnPayload, 1)
 	c.mu.Lock()
@@ -298,17 +301,46 @@ func (c *Conn) Turn(ctx context.Context, threadID string, callerParams json.RawM
 
 	tctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	// Heartbeat so we can see whether codex is still producing items during
+	// a long-running turn. items=0 across multiple heartbeats means codex
+	// is fully silent (likely LLM stream hang or internal deadlock); items
+	// climbing means it's just a long turn.
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	defer hbCancel()
+	go func() {
+		tick := time.NewTicker(30 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-tick.C:
+				c.mu.Lock()
+				items := len(c.itemsByTurn[startResp.Turn.ID])
+				c.mu.Unlock()
+				log.Printf("broker.Turn: still waiting thread=%s turn=%s elapsedMs=%d items=%d", threadID, startResp.Turn.ID, time.Since(startedAt).Milliseconds(), items)
+			}
+		}
+	}()
+
 	select {
 	case payload, open := <-turnCh:
 		if !open {
 			return nil, c.closeErrOr(errors.New("connection closed before turn/completed"))
 		}
+		c.mu.Lock()
+		items := len(c.itemsByTurn[startResp.Turn.ID])
+		c.mu.Unlock()
+		log.Printf("broker.Turn: turn/completed thread=%s turn=%s totalMs=%d items=%d", threadID, startResp.Turn.ID, time.Since(startedAt).Milliseconds(), items)
 		return payload.Raw, nil
 	case <-tctx.Done():
 		c.mu.Lock()
+		items := len(c.itemsByTurn[startResp.Turn.ID])
 		delete(c.pendingTurns, startResp.Turn.ID)
 		delete(c.itemsByTurn, startResp.Turn.ID)
 		c.mu.Unlock()
+		log.Printf("broker.Turn: TIMEOUT thread=%s turn=%s elapsedMs=%d items=%d — codex never sent turn/completed", threadID, startResp.Turn.ID, time.Since(startedAt).Milliseconds(), items)
 		// Best-effort interrupt so codex doesn't keep working.
 		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		ipB, _ := json.Marshal(turnInterruptParams{ThreadID: threadID, TurnID: startResp.Turn.ID})
