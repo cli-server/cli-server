@@ -89,14 +89,19 @@ export default function RemoteExecutorsPanel({ workspaceId }: Props) {
       <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
         <div className="flex items-center gap-2">
           <Server size={14} className="text-emerald-400" />
-          <span className="text-sm font-medium text-[var(--foreground)]">Remote Executors</span>
+          <span className="text-sm font-medium text-[var(--foreground)]">Connectors</span>
+          {!loading && rows.length > 0 && (
+            <span className="rounded-full bg-[var(--secondary)] px-2 py-0.5 text-[10px] text-[var(--muted-foreground)]">
+              {rows.length}
+            </span>
+          )}
         </div>
         <button
           onClick={() => setShowRegister(true)}
           className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] transition-colors"
         >
           <Plus size={12} />
-          Register executor
+          Register connector
         </button>
       </div>
 
@@ -115,39 +120,61 @@ export default function RemoteExecutorsPanel({ workspaceId }: Props) {
         {loading ? (
           <div className="text-xs text-[var(--muted-foreground)]">Loading…</div>
         ) : rows.length === 0 ? (
-          <div className="text-xs italic text-[var(--muted-foreground)]">No executors yet.</div>
+          <div className="rounded-md border border-dashed border-[var(--border)] py-8 text-center text-xs italic text-[var(--muted-foreground)]">
+            No connectors yet — register one to expose a machine to this workspace.
+          </div>
         ) : (
-          <div className="flex flex-col gap-2">
-            {rows.map(r => (
-              <div
-                key={r.exe_id}
-                className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <Circle
-                    size={8}
-                    className={isOnline(r) ? 'fill-emerald-500 text-emerald-500' : 'fill-gray-400 text-gray-400'}
-                  />
-                  <span className="truncate text-xs font-medium text-[var(--foreground)]">{r.name}</span>
-                  {r.description && (
-                    <span className="truncate text-[11px] text-[var(--muted-foreground)]">{r.description}</span>
-                  )}
-                  <span className="text-[11px] text-[var(--muted-foreground)]">
-                    {r.last_seen_at
-                      ? `Last seen ${new Date(r.last_seen_at).toLocaleString()}`
-                      : 'Never connected'}
-                  </span>
-                </div>
-                <button
-                  onClick={() => setUnbindTarget(r)}
-                  className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--destructive)]"
-                  aria-label="Unbind executor"
-                  title="Unbind from workspace"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
+          <div className="overflow-hidden rounded-md border border-[var(--border)]">
+            <table className="w-full table-fixed border-collapse text-xs">
+              <thead className="bg-[var(--secondary)] text-[var(--muted-foreground)]">
+                <tr>
+                  <th className="w-16 px-3 py-2 text-left font-medium">Status</th>
+                  <th className="px-3 py-2 text-left font-medium">Name</th>
+                  <th className="px-3 py-2 text-left font-medium">Description</th>
+                  <th className="w-44 px-3 py-2 text-left font-medium">Last seen</th>
+                  <th className="w-16 px-3 py-2 text-right font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr
+                    key={r.exe_id}
+                    className={`border-t border-[var(--border)] ${i % 2 === 1 ? 'bg-[var(--background)]/40' : ''}`}
+                  >
+                    <td className="px-3 py-2">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Circle
+                          size={8}
+                          className={isOnline(r) ? 'fill-emerald-500 text-emerald-500' : 'fill-gray-400 text-gray-400'}
+                        />
+                        <span className="text-[11px] text-[var(--muted-foreground)]">
+                          {isOnline(r) ? 'Online' : 'Offline'}
+                        </span>
+                      </span>
+                    </td>
+                    <td className="truncate px-3 py-2 font-medium text-[var(--foreground)]">{r.name}</td>
+                    <td className="truncate px-3 py-2 text-[var(--muted-foreground)]">
+                      {r.description || <span className="italic opacity-60">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-[11px] text-[var(--muted-foreground)]">
+                      {r.last_seen_at
+                        ? new Date(r.last_seen_at).toLocaleString()
+                        : <span className="italic opacity-60">never</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        onClick={() => setUnbindTarget(r)}
+                        className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--destructive)]"
+                        aria-label="Unbind connector"
+                        title="Unbind from workspace"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -159,7 +186,7 @@ export default function RemoteExecutorsPanel({ workspaceId }: Props) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-[var(--foreground)]">Register executor</h2>
+              <h2 className="text-lg font-semibold text-[var(--foreground)]">Register connector</h2>
               <button onClick={() => setShowRegister(false)} className="rounded p-1 hover:bg-[var(--secondary)]">
                 <X size={16} />
               </button>
@@ -206,7 +233,7 @@ export default function RemoteExecutorsPanel({ workspaceId }: Props) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-full max-w-2xl rounded-lg border border-[var(--border)] bg-[var(--card)] p-6 shadow-xl">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-[var(--foreground)]">Executor registered</h2>
+              <h2 className="text-lg font-semibold text-[var(--foreground)]">Connector registered</h2>
               <button onClick={() => setGenerated(null)} className="rounded p-1 hover:bg-[var(--secondary)]">
                 <X size={16} />
               </button>
@@ -249,8 +276,8 @@ export default function RemoteExecutorsPanel({ workspaceId }: Props) {
 
       {unbindTarget && (
         <ConfirmModal
-          title="Unbind executor"
-          message={`Remove "${unbindTarget.name}" from this workspace? The executor will stay registered but codex sessions here won't be able to invoke it.`}
+          title="Unbind connector"
+          message={`Remove "${unbindTarget.name}" from this workspace? The connector will stay registered but codex sessions here won't be able to invoke it.`}
           confirmLabel="Unbind"
           destructive
           onConfirm={() => onUnbind(unbindTarget.exe_id)}

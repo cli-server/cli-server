@@ -79,6 +79,11 @@ export default function CodexTokensPanel({ workspaceId }: Props) {
         <div className="flex items-center gap-2">
           <Key size={14} className="text-blue-400" />
           <span className="text-sm font-medium text-[var(--foreground)]">Codex Remote Access</span>
+          {!loading && tokens.length > 0 && (
+            <span className="rounded-full bg-[var(--secondary)] px-2 py-0.5 text-[10px] text-[var(--muted-foreground)]">
+              {tokens.length}
+            </span>
+          )}
         </div>
         <button
           onClick={() => setShowMint(true)}
@@ -106,38 +111,53 @@ export default function CodexTokensPanel({ workspaceId }: Props) {
         {loading ? (
           <div className="text-xs text-[var(--muted-foreground)]">Loading…</div>
         ) : tokens.length === 0 ? (
-          <div className="text-xs italic text-[var(--muted-foreground)]">No tokens yet.</div>
+          <div className="rounded-md border border-dashed border-[var(--border)] py-8 text-center text-xs italic text-[var(--muted-foreground)]">
+            No tokens yet — generate one to enable a remote codex CLI.
+          </div>
         ) : (
-          <div className="flex flex-col gap-2">
-            {tokens.map(t => (
-              <div
-                key={t.id}
-                className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="truncate text-xs font-medium text-[var(--foreground)]">{t.name}</span>
-                  <span className="text-[11px] text-[var(--muted-foreground)]">
-                    Created {new Date(t.created_at).toLocaleDateString()}
-                  </span>
-                  <span className="text-[11px] text-[var(--muted-foreground)]">
-                    Expires {new Date(t.expires_at).toLocaleDateString()}
-                  </span>
-                  <span className="text-[11px] text-[var(--muted-foreground)]">
-                    Last used {t.last_used_at
-                      ? new Date(t.last_used_at).toLocaleString()
-                      : 'never'}
-                  </span>
-                </div>
-                <button
-                  onClick={() => setRevokeTarget(t)}
-                  className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--destructive)]"
-                  aria-label="Revoke token"
-                  title="Revoke token"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
+          <div className="overflow-hidden rounded-md border border-[var(--border)]">
+            <table className="w-full table-fixed border-collapse text-xs">
+              <thead className="bg-[var(--secondary)] text-[var(--muted-foreground)]">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Name</th>
+                  <th className="w-32 px-3 py-2 text-left font-medium">Created</th>
+                  <th className="w-32 px-3 py-2 text-left font-medium">Expires</th>
+                  <th className="w-44 px-3 py-2 text-left font-medium">Last used</th>
+                  <th className="w-16 px-3 py-2 text-right font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tokens.map((t, i) => (
+                  <tr
+                    key={t.id}
+                    className={`border-t border-[var(--border)] ${i % 2 === 1 ? 'bg-[var(--background)]/40' : ''}`}
+                  >
+                    <td className="truncate px-3 py-2 font-medium text-[var(--foreground)]">{t.name}</td>
+                    <td className="px-3 py-2 text-[11px] text-[var(--muted-foreground)]">
+                      {new Date(t.created_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-3 py-2 text-[11px] text-[var(--muted-foreground)]">
+                      {new Date(t.expires_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-3 py-2 text-[11px] text-[var(--muted-foreground)]">
+                      {t.last_used_at
+                        ? new Date(t.last_used_at).toLocaleString()
+                        : <span className="italic opacity-60">never</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        onClick={() => setRevokeTarget(t)}
+                        className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--destructive)]"
+                        aria-label="Revoke token"
+                        title="Revoke token"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

@@ -23,7 +23,7 @@ import { TopBar } from './components/TopBar'
 import { SandboxDetail } from './components/SandboxDetail'
 import { ManageWorkspaces } from './components/ManageWorkspaces'
 import { AdminPanel } from './components/AdminPanel'
-import { WorkspaceDetail, type Tab as WorkspaceTab } from './components/WorkspaceDetail'
+import { WorkspaceDetail, tabFromSlug, type Tab as WorkspaceTab } from './components/WorkspaceDetail'
 
 export interface UserInfo {
   id: string
@@ -46,7 +46,7 @@ function WorkspaceDetailRoute({
   initialTab?: WorkspaceTab
   sandboxOverride?: React.ReactNode
 }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>()
+  const { workspaceId, tab: tabSlug } = useParams<{ workspaceId: string; tab?: string }>()
   if (!workspacesLoaded) {
     // List still loading — don't redirect to "/" on a direct/reload
     // visit to /w/<id>; otherwise the user gets bounced to the first
@@ -57,11 +57,15 @@ function WorkspaceDetailRoute({
   if (!workspace) {
     return <Navigate to="/" replace />
   }
+  // Path segment (e.g. /w/:wsId/im) takes precedence over the
+  // initialTab prop. Unknown slugs fall back to initialTab.
+  const tabFromUrl = tabFromSlug(tabSlug)
+  const resolvedInitial = tabFromUrl ?? initialTab
   return (
     <WorkspaceDetail
       workspace={workspace}
       onRename={onRename}
-      initialTab={initialTab}
+      initialTab={resolvedInitial}
       sandboxOverride={sandboxOverride}
     />
   )
@@ -327,6 +331,21 @@ export default function App() {
                   onRename={handleRenameSandbox}
                 />
               }
+            />
+          }
+        />
+        {/* Per-tab routes: /w/:wsId/im, /w/:wsId/settings, etc. The
+            slug maps back to the Tab key via tabFromSlug in
+            WorkspaceDetailRoute. Order matters — this is below the
+            more specific /sandboxes/:sandboxId route. */}
+        <Route
+          path="/w/:workspaceId/:tab"
+          element={
+            <WorkspaceDetailRoute
+              workspaces={workspaces}
+              workspacesLoaded={workspacesLoaded}
+              onRename={handleRenameWorkspace}
+              initialTab="sandbox"
             />
           }
         />

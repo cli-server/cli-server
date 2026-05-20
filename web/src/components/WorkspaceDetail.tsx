@@ -69,8 +69,8 @@ import { SandboxList } from './SandboxList'
 
 export type Tab =
   | 'overview'
-  | 'explorers'
-  | 'executor'
+  | 'browsers'
+  | 'connectors'
   | 'sandbox'
   | 'llm'
   | 'im'
@@ -87,15 +87,53 @@ interface WorkspaceDetailProps {
   sandboxOverride?: React.ReactNode
 }
 
+// Mapping from Tab key to URL slug. Tabs share their key as slug unless
+// the slug needs pluralization for path consistency (e.g. sandbox →
+// sandboxes to coexist with /sandboxes/:sandboxId).
+const TAB_TO_SLUG: Record<Tab, string> = {
+  overview: 'overview',
+  browsers: 'browsers',
+  connectors: 'connectors',
+  sandbox: 'sandboxes',
+  llm: 'llm',
+  im: 'im',
+  traces: 'traces',
+  operations: 'operations',
+  credentials: 'credentials',
+  members: 'members',
+  settings: 'settings',
+}
+
+const SLUG_TO_TAB: Record<string, Tab> = Object.fromEntries(
+  Object.entries(TAB_TO_SLUG).map(([k, v]) => [v, k as Tab]),
+) as Record<string, Tab>
+
+export function tabFromSlug(slug: string | undefined): Tab | undefined {
+  if (!slug) return undefined
+  return SLUG_TO_TAB[slug]
+}
+
 export function WorkspaceDetail({ workspace, onRename, initialTab, sandboxOverride }: WorkspaceDetailProps) {
-  const [tab, setTab] = useState<Tab>(initialTab ?? 'sandbox')
   const navigate = useNavigate()
   const location = useLocation()
+
+  // Tab comes from the URL path (e.g. /w/:wsId/im). The route maps the
+  // path segment to an `initialTab` prop in App.tsx; that's the source of
+  // truth here. Local state mirrors it so we re-render on prop changes.
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'sandbox')
+  useEffect(() => {
+    setTab(initialTab ?? 'sandbox')
+  }, [initialTab])
+
   const selectTab = (next: Tab) => {
     setTab(next)
-    // If we're on a sub-route like /sandboxes/:id, return to the workspace root so the URL matches the visible tab.
-    if (location.pathname !== `/w/${workspace.id}`) {
-      navigate(`/w/${workspace.id}`)
+    const slug = TAB_TO_SLUG[next]
+    const target =
+      next === 'sandbox'
+        ? `/w/${workspace.id}` // canonical URL for the default tab has no segment
+        : `/w/${workspace.id}/${slug}`
+    if (location.pathname !== target) {
+      navigate(target)
     }
   }
   const [members, setMembers] = useState<WorkspaceMember[]>([])
@@ -107,7 +145,8 @@ export function WorkspaceDetail({ workspace, onRename, initialTab, sandboxOverri
   const [tracesPage, setTracesPage] = useState(0)
 
   useEffect(() => {
-    setTab(initialTab ?? 'sandbox')
+    // Tab sync now lives in the dedicated useEffect above; this effect
+    // only handles per-workspace data reset.
     setMembers([])
     setSbxQuota(null)
     setDefaults(null)
@@ -141,8 +180,8 @@ export function WorkspaceDetail({ workspace, onRename, initialTab, sandboxOverri
 
   const sidebarItems: { key: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { key: 'overview', label: 'Overview', icon: <LayoutDashboard size={16} /> },
-    { key: 'explorers', label: 'Explorers', icon: <Globe size={16} /> },
-    { key: 'executor', label: 'Executors', icon: <Server size={16} /> },
+    { key: 'browsers', label: 'Browsers', icon: <Globe size={16} /> },
+    { key: 'connectors', label: 'Connectors', icon: <Server size={16} /> },
     { key: 'sandbox', label: 'Sandboxes', icon: <Box size={16} /> },
     { key: 'llm', label: 'LLM', icon: <Brain size={16} /> },
     { key: 'im', label: 'IM', icon: <Bot size={16} /> },
@@ -193,10 +232,10 @@ export function WorkspaceDetail({ workspace, onRename, initialTab, sandboxOverri
               onRename={onRename}
             />
           )}
-          {tab === 'explorers' && (
-            <ExplorersPanel workspaceId={workspace.id} />
+          {tab === 'browsers' && (
+            <BrowsersPanel workspaceId={workspace.id} />
           )}
-          {tab === 'executor' && (
+          {tab === 'connectors' && (
             <RemoteExecutorsPanel workspaceId={workspace.id} />
           )}
           {tab === 'sandbox' && (
@@ -321,7 +360,7 @@ function OverviewTab({ workspace, sbxQuota, defaults, llmQuota, onRename }: {
   )
 }
 
-function ExplorersPanel({ workspaceId }: { workspaceId: string }) {
+function BrowsersPanel({ workspaceId }: { workspaceId: string }) {
   return (
     <div className="flex flex-col gap-6">
       <CodexTokensPanel workspaceId={workspaceId} />

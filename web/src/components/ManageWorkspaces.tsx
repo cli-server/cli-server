@@ -14,8 +14,8 @@ export function ManageWorkspaces({ workspaces, selectedWorkspaceId, onSelectWork
   const [searchParams] = useSearchParams()
   const tabParam = searchParams.get('tab')
   const validTabs = new Set<string>([
-    'overview', 'browser', 'executor', 'sandbox',
-    'llm', 'im', 'traces', 'credentials', 'members', 'settings',
+    'overview', 'browsers', 'connectors', 'sandbox',
+    'llm', 'im', 'traces', 'operations', 'credentials', 'members', 'settings',
   ])
   const initialTab = (tabParam && validTabs.has(tabParam)) ? tabParam as Tab : undefined
 
