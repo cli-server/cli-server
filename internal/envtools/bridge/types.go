@@ -55,11 +55,26 @@ type ProcessStartParams struct {
 	// own working directory. Sending "" was treated by Windows
 	// exec-server as a literal (invalid) path → os error 267
 	// "目录名称无效".
-	Cwd       string            `json:"cwd,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
+	Cwd string `json:"cwd,omitempty"`
+	// Env is REQUIRED on the wire (exec-server's ExecParams.env is
+	// HashMap<String,String>, not Option<...>). Nil/omitted → serde
+	// "missing field `env`". MarshalJSON below normalizes nil → {}.
+	Env       map[string]string `json:"env"`
 	TTY       bool              `json:"tty"`
 	PipeStdin bool              `json:"pipeStdin"`
 	Arg0      *string           `json:"arg0,omitempty"`
+}
+
+// MarshalJSON ensures Env is always emitted as an object, even when nil.
+// A nil map serializes to `null` by default, which exec-server's serde
+// rejects with "missing field `env`".
+func (p ProcessStartParams) MarshalJSON() ([]byte, error) {
+	type alias ProcessStartParams
+	a := alias(p)
+	if a.Env == nil {
+		a.Env = map[string]string{}
+	}
+	return json.Marshal(a)
 }
 
 type ProcessStartResult struct {

@@ -278,3 +278,30 @@ func TestBridgeClient_Close_Idempotent(t *testing.T) {
 	bc.Close()
 	bc.Close() // must not panic, must not block
 }
+
+// TestProcessStartParamsMarshalEnv pins the wire shape: even when the
+// Go-side Env is nil, the marshaled JSON must contain `"env":{}` —
+// exec-server's serde rejects `null` / omitted env with
+// "missing field `env`".
+func TestProcessStartParamsMarshalEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"nil", nil, `"env":{}`},
+		{"empty", map[string]string{}, `"env":{}`},
+		{"populated", map[string]string{"K": "v"}, `"env":{"K":"v"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := json.Marshal(ProcessStartParams{ProcessID: "p", Argv: []string{"sh"}, Env: tc.env})
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !strings.Contains(string(b), tc.want) {
+				t.Errorf("missing %q in %s", tc.want, b)
+			}
+		})
+	}
+}
