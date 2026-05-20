@@ -217,6 +217,18 @@ export default function App() {
     }
   }, [selectedWorkspaceId, refreshSandboxes])
 
+  // Poll while any sandbox is in a transitional state (creating, pausing,
+  // resuming). Lives at app level so it ticks regardless of which page is
+  // mounted — list, detail, or any other workspace tab.
+  useEffect(() => {
+    const hasTransitional = sandboxes.some(
+      (s) => s.status === 'creating' || s.status === 'pausing' || s.status === 'resuming',
+    )
+    if (!hasTransitional) return
+    const id = window.setInterval(refreshSandboxes, 2000)
+    return () => window.clearInterval(id)
+  }, [sandboxes, refreshSandboxes])
+
   const handleSelectWorkspace = useCallback((id: string) => {
     setSelectedWorkspaceId(id || null)
     navigate(id ? `/w/${id}` : '/')
