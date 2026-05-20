@@ -86,6 +86,11 @@ func (v *RemoteVerifier) Verify(ctx context.Context, token string) (Identity, er
 // OpenSession verifies the token AND inserts a browser-session row in
 // codex_browser_sessions, returning the session id so the caller can close
 // it on ws disconnect. Implements auth.SessionTracker.
+//
+// If agentserver doesn't expose session-open (404 on rolling deploys where
+// CXG ships before agentserver, or against test stubs), falls back to
+// plain Verify so codex --remote keeps working — sessions just aren't
+// tracked in codex_browser_sessions until agentserver catches up.
 func (v *RemoteVerifier) OpenSession(ctx context.Context, token, clientIP, clientUA, codexVersion, osStr string) (Identity, string, error) {
 	body, err := json.Marshal(map[string]string{
 		"token":         token,
@@ -110,6 +115,13 @@ func (v *RemoteVerifier) OpenSession(ctx context.Context, token, clientIP, clien
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
 		return Identity{}, "", ErrUnauthorized
+	}
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		id, vErr := v.Verify(ctx, token)
+		if vErr != nil {
+			return Identity{}, "", vErr
+		}
+		return id, "", nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
