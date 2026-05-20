@@ -311,7 +311,7 @@ export default function App() {
             workspaces={workspaces}
             workspacesLoaded={workspacesLoaded}
             onRename={handleRenameWorkspace}
-            initialTab="sandbox"
+            initialTab="overview"
           />
         } />
         <Route
@@ -345,7 +345,7 @@ export default function App() {
               workspaces={workspaces}
               workspacesLoaded={workspacesLoaded}
               onRename={handleRenameWorkspace}
-              initialTab="sandbox"
+              initialTab="overview"
             />
           }
         />

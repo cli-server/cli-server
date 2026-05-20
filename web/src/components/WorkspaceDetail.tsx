@@ -120,16 +120,16 @@ export function WorkspaceDetail({ workspace, onRename, initialTab, sandboxOverri
   // Tab comes from the URL path (e.g. /w/:wsId/im). The route maps the
   // path segment to an `initialTab` prop in App.tsx; that's the source of
   // truth here. Local state mirrors it so we re-render on prop changes.
-  const [tab, setTab] = useState<Tab>(initialTab ?? 'sandbox')
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'overview')
   useEffect(() => {
-    setTab(initialTab ?? 'sandbox')
+    setTab(initialTab ?? 'overview')
   }, [initialTab])
 
   const selectTab = (next: Tab) => {
     setTab(next)
     const slug = TAB_TO_SLUG[next]
     const target =
-      next === 'sandbox'
+      next === 'overview'
         ? `/w/${workspace.id}` // canonical URL for the default tab has no segment
         : `/w/${workspace.id}/${slug}`
     if (location.pathname !== target) {
