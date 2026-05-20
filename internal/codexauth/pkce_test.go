@@ -181,6 +181,66 @@ func TestToken_AuthorizationCode_BadVerifierRejected(t *testing.T) {
 	}
 }
 
+func TestToken_Refresh_RotatesTokens(t *testing.T) {
+	srv := newAuthTestServer(t, "")
+	ctx := context.Background()
+	uid := mustCreateTestUser(t, srv.Store.db)
+
+	// Issue an initial refresh token directly.
+	srv.Store.InsertRefreshToken(ctx, HashToken("old-refresh"), mustNewUUIDString(), uid,
+		time.Now().Add(7*24*time.Hour))
+
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("refresh_token", "old-refresh")
+	form.Set("client_id", "app_EMoamEEZ73f0CkXaXp7hrann")
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	r := chi.NewRouter()
+	srv.Mount(r)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	json.NewDecoder(rr.Body).Decode(&resp)
+	if resp.AccessToken == "" || resp.RefreshToken == "" || resp.RefreshToken == "old-refresh" {
+		t.Errorf("bad rotated tokens: %+v", resp)
+	}
+}
+
+func TestToken_Refresh_ExpiredReturnsTerminalError(t *testing.T) {
+	srv := newAuthTestServer(t, "")
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("refresh_token", "never-issued")
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	r := chi.NewRouter()
+	srv.Mount(r)
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+	var resp map[string]string
+	json.NewDecoder(rr.Body).Decode(&resp)
+	// Codex treats these specific error codes as terminal (manager.rs:1050+).
+	switch resp["error"] {
+	case "refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated":
+		// OK
+	default:
+		t.Errorf("error = %q; expected one of refresh_token_{expired,reused,invalidated}",
+			resp["error"])
+	}
+}
+
 func TestToken_TokenExchange_ReturnsBadRequest(t *testing.T) {
 	srv := newAuthTestServer(t, "")
 	form := url.Values{}

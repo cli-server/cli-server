@@ -99,9 +99,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	case "authorization_code":
 		s.handleTokenAuthorizationCode(w, r)
 	case "refresh_token":
-		// Implemented in B4 — stub for now.
-		writeOauthError(w, http.StatusBadRequest, "unsupported_grant_type",
-			"refresh_token grant not yet implemented")
+		s.handleTokenRefresh(w, r)
 	case "urn:ietf:params:oauth:grant-type:token-exchange":
 		// We don't have an OpenAI sk-... to give back. Codex tolerates the
 		// failure (login/src/server.rs:352-354).
@@ -194,6 +192,61 @@ func (s *Server) mintTokensFor(w http.ResponseWriter, r *http.Request, userID st
 		"id_token":      idTok,
 		"access_token":  access,
 		"refresh_token": refresh,
+		"token_type":    "Bearer",
+		"expires_in":    int(accessTokenTTL.Seconds()),
+	})
+}
+
+func (s *Server) handleTokenRefresh(w http.ResponseWriter, r *http.Request) {
+	raw := r.PostForm.Get("refresh_token")
+	if raw == "" {
+		writeOauthError(w, http.StatusBadRequest, "invalid_request",
+			"refresh_token required")
+		return
+	}
+	newRefresh := mustRandomHex(32)
+	userID, err := s.Store.RotateRefreshToken(r.Context(), raw,
+		HashToken(newRefresh), time.Now().Add(refreshTokenTTL))
+	if err != nil {
+		// Both "unknown token" and "already revoked (reuse)" surface as
+		// ErrRefreshTokenReuse from the store; codex treats the
+		// reuse/expired/invalidated codes as terminal (manager.rs:1050+).
+		writeOauthError(w, http.StatusUnauthorized, "refresh_token_expired", err.Error())
+		return
+	}
+
+	accessExp := time.Now().Add(accessTokenTTL)
+	email := s.lookupEmail(r.Context(), userID)
+	access, err := BuildAccessToken(s.SigningKey, s.SigningKid, IDTokenClaims{
+		Issuer:    s.IssuerURL,
+		Subject:   userID,
+		Email:     email,
+		ExpiresAt: accessExp,
+	})
+	if err != nil {
+		writeOauthError(w, http.StatusInternalServerError, "server_error",
+			"build access_token: "+err.Error())
+		return
+	}
+	if err := s.Store.InsertAccessToken(r.Context(), HashToken(access), userID, accessExp); err != nil {
+		writeOauthError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	}
+
+	idTok, err := BuildIDToken(s.SigningKey, s.SigningKid, IDTokenClaims{
+		Issuer:    s.IssuerURL,
+		Subject:   userID,
+		Email:     email,
+		ExpiresAt: accessExp,
+	})
+	if err != nil {
+		writeOauthError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id_token":      idTok,
+		"access_token":  access,
+		"refresh_token": newRefresh,
 		"token_type":    "Bearer",
 		"expires_in":    int(accessTokenTTL.Seconds()),
 	})
