@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -87,10 +88,55 @@ func (m *OIDCManager) ProviderNamesForHost(host string) []string {
 
 const (
 	stateCookieName = "agentserver-oauth-state"
+	nextCookieName  = "agentserver-oauth-next"
 	stateCookieTTL  = 10 * time.Minute
 )
 
+// safeNext validates a `next` redirect target. Returns it unchanged if safe,
+// or "" to reject (preventing open redirect). Accepts:
+//
+//   - relative paths starting with "/" but not "//" (protocol-relative);
+//   - absolute https URLs whose host matches the configured cookie domain
+//     (e.g. "https://codex-auth.agent.cs.ac.cn/..." when cookieDomain is
+//     ".agent.cs.ac.cn"). This is the only way device/PKCE flows on the
+//     codex-auth subdomain can bounce back after main-app OIDC login.
+//
+// Rejects control chars (CR/LF header injection), oversize strings, and
+// anything that doesn't fit one of the two shapes above.
+func safeNext(next string) string {
+	if next == "" || len(next) > 2048 {
+		return ""
+	}
+	for _, c := range next {
+		if c < 0x20 || c == 0x7f {
+			return ""
+		}
+	}
+	if strings.HasPrefix(next, "/") {
+		if strings.HasPrefix(next, "//") {
+			return ""
+		}
+		return next
+	}
+	u, err := url.Parse(next)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return ""
+	}
+	cd := cookieDomain()
+	if cd == "" {
+		return ""
+	}
+	// cd looks like ".agent.cs.ac.cn"; require Host ends with it,
+	// and isn't itself just the bare leading-dot (defensive).
+	if !strings.HasSuffix("."+u.Host, cd) {
+		return ""
+	}
+	return next
+}
+
 // HandleLogin redirects the user to the IdP authorization endpoint.
+// If the request carries `?next=<safe-relative-path>`, the path is stashed
+// in a short-lived cookie so HandleCallback can bounce there after login.
 func (m *OIDCManager) HandleLogin(w http.ResponseWriter, r *http.Request, providerName string) {
 	p, ok := m.providers[providerName]
 	if !ok {
@@ -111,6 +157,18 @@ func (m *OIDCManager) HandleLogin(w http.ResponseWriter, r *http.Request, provid
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(stateCookieTTL.Seconds()),
 	})
+
+	if next := safeNext(r.URL.Query().Get("next")); next != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     nextCookieName,
+			Value:    next,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(stateCookieTTL.Seconds()),
+		})
+	}
 
 	cfg := p.OAuth2Config()
 	http.Redirect(w, r, cfg.AuthCodeURL(state), http.StatusFound)
@@ -196,7 +254,22 @@ func (m *OIDCManager) HandleCallback(w http.ResponseWriter, r *http.Request, pro
 	}
 
 	SetTokenCookie(w, authToken)
-	http.Redirect(w, r, "/", http.StatusFound)
+
+	dest := "/"
+	if c, err := r.Cookie(nextCookieName); err == nil {
+		if next := safeNext(c.Value); next != "" {
+			dest = next
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     nextCookieName,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   true,
+		})
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
 }
 
 // resolveUser finds or creates a user for the given OIDC identity.

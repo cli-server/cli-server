@@ -12,7 +12,7 @@ import (
 
 const (
 	deviceCodeTTL      = 15 * time.Minute
-	devicePollInterval = 5
+	devicePollInterval = "5"
 )
 
 // userCodeAlphabet excludes I, O, 0, 1 to reduce read-aloud confusion.
