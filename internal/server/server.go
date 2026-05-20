@@ -92,6 +92,13 @@ type Server struct {
 	// flow / JWKS / Agent Identity). Mounted under /codex-auth/* when set.
 	CodexAuth *codexauth.Server
 
+	// CodexAuthIssuerURL is the public-facing issuer URL for the codex
+	// auth shim, e.g. "https://agent.cs.ac.cn/codex-auth". Mirrors the
+	// value used to construct CodexAuth.IssuerURL; surfaced separately so
+	// register-executor can build connect commands that point clients at
+	// the right `codex login --issuer` / token-refresh endpoints.
+	CodexAuthIssuerURL string
+
 	// OperationsRetention is the TTL for rows in the operations table.
 	// 0 disables the background retention loop. Configurable via
 	// AGENTSERVER_OPERATIONS_RETENTION_DAYS (default 90).

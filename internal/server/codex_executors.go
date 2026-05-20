@@ -7,6 +7,7 @@ import (
 	"regexp"
 
 	"github.com/agentserver/agentserver/internal/auth"
+	"github.com/agentserver/agentserver/internal/codexauth"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -34,7 +35,28 @@ type registerExecutorResp struct {
 	// ConnectCommand is the one-liner the user pastes on the machine
 	// they want to expose as an executor. Empty when the gateway public
 	// host isn't configured — the UI falls back to a generic template.
+	// Kept for backward compatibility with UI clients predating the
+	// 3-variant bundle (set to the Agent Identity command when codexAuth
+	// is enabled so old clients still get a working command).
 	ConnectCommand string `json:"connect_command,omitempty"`
+	// AgentIdentityJWT is the codex Agent Identity JWT minted alongside
+	// the bcrypt registration token. Present only when codexAuth is
+	// enabled (CODEX_AUTH_ISSUER_URL set).
+	AgentIdentityJWT string `json:"agent_identity_jwt,omitempty"`
+	// ConnectCommands is the 3-variant bundle surfaced by the Add
+	// Connector UI. Empty when codexAuth is disabled.
+	ConnectCommands ConnectCommands `json:"connect_commands,omitempty"`
+}
+
+// ConnectCommands is the 3-variant connect-command bundle returned by
+// the Add Connector API. Agent Identity is the recommended path for
+// unattended machines; ChatGPT browser is the recommended path for
+// developer laptops; ChatGPT device-auth covers the headless +
+// ChatGPT-account case.
+type ConnectCommands struct {
+	AgentIdentity     string `json:"agent_identity"`
+	ChatgptBrowser    string `json:"chatgpt_browser"`
+	ChatgptDeviceAuth string `json:"chatgpt_device_auth"`
 }
 
 // handleRegisterExecutor mints a new executor owned by the calling user
@@ -100,9 +122,34 @@ func (s *Server) handleRegisterExecutor(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Mint Agent Identity JWT alongside the legacy bearer registration.
+	// The exe_id is the agent_runtime_id (1-to-1 mapping). Best-effort
+	// email lookup — empty email is OK, JWT just won't carry it.
+	var aiResult *codexauth.MintAgentIdentityResult
+	if s.CodexAuth != nil {
+		var email string
+		if user, uerr := s.Auth.GetUserByID(userID); uerr == nil && user != nil {
+			email = user.Email
+		}
+		var mintErr error
+		aiResult, mintErr = s.CodexAuth.MintAgentIdentity(r.Context(),
+			codexauth.MintAgentIdentityArgs{
+				AgentRuntimeID: reg.ExeID,
+				UserID:         userID,
+				Email:          email,
+			})
+		if mintErr != nil {
+			http.Error(w, "mint agent identity: "+mintErr.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
 	resp := registerExecutorResp{
 		ExeID:             reg.ExeID,
 		RegistrationToken: reg.RegistrationToken,
+	}
+	if aiResult != nil {
+		resp.AgentIdentityJWT = aiResult.JWT
 	}
 	if s.CodexExecGatewayPublicHost != "" {
 		// Upstream codex `exec-server --remote` contract:
@@ -110,10 +157,31 @@ func (s *Server) handleRegisterExecutor(w http.ResponseWriter, r *http.Request) 
 		//   2. Server returns {executor_id, url}, codex then ws-dials url.
 		// Surface the user's `name` as codex's --name (visible in their
 		// shell + tracing) so it lines up with what the LLM sees.
-		resp.ConnectCommand = fmt.Sprintf(
-			"export CODEX_EXEC_SERVER_REMOTE_BEARER_TOKEN='%s' && \\\ncodex exec-server --remote 'https://%s' --executor-id '%s' --name '%s'",
-			reg.RegistrationToken, s.CodexExecGatewayPublicHost, reg.ExeID, req.Name,
-		)
+		gatewayURL := "https://" + s.CodexExecGatewayPublicHost
+		issuer := s.CodexAuthIssuerURL
+		if issuer == "" {
+			// codexAuth disabled — legacy bearer-only command (no Agent
+			// Identity, no ChatGPT login). Preserves pre-D3 behaviour.
+			resp.ConnectCommand = fmt.Sprintf(
+				"export CODEX_EXEC_SERVER_REMOTE_BEARER_TOKEN='%s'\ncodex exec-server --remote '%s' --executor-id '%s' --name '%s'",
+				reg.RegistrationToken, gatewayURL, reg.ExeID, req.Name)
+		} else {
+			// codexAuth enabled — surface all 3 variants. Keep the legacy
+			// single-string field populated with the Agent Identity
+			// command so unrevised UI clients still get a working paste.
+			resp.ConnectCommands = ConnectCommands{
+				AgentIdentity: fmt.Sprintf(
+					"export CODEX_ACCESS_TOKEN='%s'\nexport CODEX_AGENT_IDENTITY_AUTHAPI_BASE_URL='%s'\ncodex -c chatgpt.base_url='%s' exec-server --remote '%s' --executor-id '%s' --name '%s' --use-agent-identity-auth",
+					aiResult.JWT, issuer, issuer, gatewayURL, reg.ExeID, req.Name),
+				ChatgptBrowser: fmt.Sprintf(
+					"codex login --issuer %s\nexport CODEX_REFRESH_TOKEN_URL_OVERRIDE='%s/oauth/token'\ncodex exec-server --remote '%s' --executor-id '%s' --name '%s'",
+					issuer, issuer, gatewayURL, reg.ExeID, req.Name),
+				ChatgptDeviceAuth: fmt.Sprintf(
+					"codex login --device-auth --issuer %s\nexport CODEX_REFRESH_TOKEN_URL_OVERRIDE='%s/oauth/token'\ncodex exec-server --remote '%s' --executor-id '%s' --name '%s'",
+					issuer, issuer, gatewayURL, reg.ExeID, req.Name),
+			}
+			resp.ConnectCommand = resp.ConnectCommands.AgentIdentity
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

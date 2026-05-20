@@ -259,6 +259,7 @@ var serveCmd = &cobra.Command{
 				},
 				LoginRedirectURL: "/login",
 			}
+			srv.CodexAuthIssuerURL = issuer
 			log.Printf("codexauth: enabled (issuer=%s, kid=%s)", issuer, activeKey.Kid)
 		}
 
