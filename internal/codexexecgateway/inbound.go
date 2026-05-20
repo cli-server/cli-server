@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/agentserver/agentserver/internal/clientmeta"
 	"github.com/agentserver/agentserver/internal/relaypb"
 	"github.com/agentserver/agentserver/internal/wsbridge"
 	"github.com/go-chi/chi/v5"
@@ -58,10 +59,13 @@ func (s *Server) handleInbound(w http.ResponseWriter, r *http.Request) {
 		s.logger.Info("inbound: evicted prior conn", "exe_id", exeID)
 		evicted.close(nil)
 	}
-	if err := s.store.UpdateLastSeen(r.Context(), exeID); err != nil {
-		s.logger.Warn("inbound: update last_seen", "exe_id", exeID, "error", err)
+	clientIP := clientmeta.ClientIP(r)
+	clientUA := r.Header.Get("User-Agent")
+	codexVersion, osStr := clientmeta.ParseCodexUA(clientUA)
+	if err := s.store.MarkConnected(r.Context(), exeID, clientIP, clientUA, codexVersion, osStr); err != nil {
+		s.logger.Warn("inbound: mark connected", "exe_id", exeID, "error", err)
 	}
-	s.logger.Info("inbound: connected", "exe_id", exeID)
+	s.logger.Info("inbound: connected", "exe_id", exeID, "ip", clientIP, "ua", clientUA)
 
 	// 30s ws PING (control frame) is layered on TCP keepalive (15s) for
 	// middlebox idle-kill resistance.
@@ -78,8 +82,8 @@ func (s *Server) handleInbound(w http.ResponseWriter, r *http.Request) {
 	s.registry.Unregister(exeID, ic)
 	ic.close(nil)
 	bg := context.Background()
-	if err := s.store.UpdateLastSeen(bg, exeID); err != nil {
-		s.logger.Warn("inbound: final last_seen", "exe_id", exeID, "error", err)
+	if err := s.store.MarkDisconnected(bg, exeID); err != nil {
+		s.logger.Warn("inbound: mark disconnected", "exe_id", exeID, "error", err)
 	}
 	s.logger.Info("inbound: disconnected", "exe_id", exeID)
 }

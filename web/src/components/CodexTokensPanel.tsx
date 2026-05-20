@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Plus, Trash2, Copy, Check, X, Key } from 'lucide-react'
 import {
-  type CodexToken, type MintCodexTokenResponse,
-  listCodexTokens, mintCodexToken, revokeCodexToken,
+  type CodexBrowser, type MintCodexTokenResponse,
+  listCodexBrowsers, mintCodexToken, revokeCodexToken,
 } from '../lib/api'
 import { ConfirmModal } from './Modals'
+import { DeviceListPanel, type DeviceRow } from './DeviceListPanel'
 
 interface Props {
   workspaceId: string
@@ -13,7 +14,7 @@ interface Props {
 const TTL_OPTIONS = [1, 7, 30, 90, 180, 365] as const
 
 export default function CodexTokensPanel({ workspaceId }: Props) {
-  const [tokens, setTokens] = useState<CodexToken[]>([])
+  const [browsers, setBrowsers] = useState<CodexBrowser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showMint, setShowMint] = useState(false)
@@ -21,13 +22,12 @@ export default function CodexTokensPanel({ workspaceId }: Props) {
   const [newTTL, setNewTTL] = useState<number>(90)
   const [generated, setGenerated] = useState<MintCodexTokenResponse | null>(null)
   const [copied, setCopied] = useState(false)
-  const [revokeTarget, setRevokeTarget] = useState<CodexToken | null>(null)
+  const [revokeTarget, setRevokeTarget] = useState<CodexBrowser | null>(null)
 
   const refresh = useCallback(async () => {
-    setLoading(true)
     try {
-      const rows = await listCodexTokens(workspaceId)
-      setTokens(rows)
+      const rows = await listCodexBrowsers(workspaceId)
+      setBrowsers(rows)
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -36,7 +36,13 @@ export default function CodexTokensPanel({ workspaceId }: Props) {
     }
   }, [workspaceId])
 
-  useEffect(() => { void refresh() }, [refresh])
+  // Initial load + 10s poll so online state stays fresh while the user
+  // watches a codex --remote session connect / disconnect.
+  useEffect(() => {
+    void refresh()
+    const id = window.setInterval(() => { void refresh() }, 10_000)
+    return () => window.clearInterval(id)
+  }, [refresh])
 
   const onMint = async () => {
     if (!newName.trim()) return
@@ -73,94 +79,58 @@ export default function CodexTokensPanel({ workspaceId }: Props) {
     setTimeout(() => setCopied(false), 1500)
   }
 
+  const deviceRows: DeviceRow[] = browsers.map((b) => ({
+    id: b.id,
+    name: b.name,
+    is_online: b.is_online,
+    client_ip: b.client_ip,
+    os: b.os,
+    codex_version: b.codex_version,
+    connected_at: b.connected_at,
+    disconnected_at: b.disconnected_at,
+    lastSeenFallback: b.last_used_at,
+  }))
+
+  const findBrowser = (id: string) => browsers.find((b) => b.id === id)
+
   return (
-    <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--card)]">
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
-        <div className="flex items-center gap-2">
-          <Key size={14} className="text-blue-400" />
-          <span className="text-sm font-medium text-[var(--foreground)]">Codex Remote Access</span>
-          {!loading && tokens.length > 0 && (
-            <span className="rounded-full bg-[var(--secondary)] px-2 py-0.5 text-[10px] text-[var(--muted-foreground)]">
-              {tokens.length}
-            </span>
-          )}
-        </div>
-        <button
-          onClick={() => setShowMint(true)}
-          className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] transition-colors"
-        >
-          <Plus size={12} />
-          Generate token
-        </button>
-      </div>
-
-      <div className="px-5 py-4">
-        <p className="mb-3 text-xs text-[var(--muted-foreground)]">
-          Use these tokens with{' '}
-          <code className="rounded bg-[var(--background)] px-1 py-0.5 font-mono text-[11px] text-[var(--foreground)]">
-            codex --remote wss://codex-app.&lt;host&gt;:443 --remote-auth-token-env &lt;ENV_VAR&gt;
-          </code>
-        </p>
-
-        {error && (
-          <div className="mb-3 rounded-md border border-[var(--destructive)]/30 bg-[var(--destructive)]/10 px-3 py-2 text-xs text-[var(--destructive)]">
-            {error}
-          </div>
+    <>
+      <DeviceListPanel
+        title="Browsers"
+        icon={Key}
+        iconClassName="text-blue-400"
+        rows={deviceRows}
+        loading={loading}
+        error={error}
+        emptyMessage="No browsers yet — generate a token to enable a remote codex CLI."
+        description={
+          <>
+            Each browser is a <code className="rounded bg-[var(--background)] px-1 py-0.5 font-mono text-[11px] text-[var(--foreground)]">codex --remote wss://codex-app.&lt;host&gt;:443</code> client using this workspace's token. Online / OS / IP / codex version come from the live ws connection — they auto-update when a CLI connects or disconnects.
+          </>
+        }
+        headerAction={
+          <button
+            onClick={() => setShowMint(true)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] transition-colors"
+          >
+            <Plus size={12} />
+            Generate token
+          </button>
+        }
+        actions={(row) => (
+          <button
+            onClick={() => {
+              const b = findBrowser(row.id)
+              if (b) setRevokeTarget(b)
+            }}
+            className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--destructive)]"
+            aria-label="Revoke token"
+            title="Revoke token"
+          >
+            <Trash2 size={14} />
+          </button>
         )}
-
-        {loading ? (
-          <div className="text-xs text-[var(--muted-foreground)]">Loading…</div>
-        ) : tokens.length === 0 ? (
-          <div className="rounded-md border border-dashed border-[var(--border)] py-8 text-center text-xs italic text-[var(--muted-foreground)]">
-            No tokens yet — generate one to enable a remote codex CLI.
-          </div>
-        ) : (
-          <div className="overflow-hidden rounded-md border border-[var(--border)]">
-            <table className="w-full table-fixed border-collapse text-xs">
-              <thead className="bg-[var(--secondary)] text-[var(--muted-foreground)]">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Name</th>
-                  <th className="w-32 px-3 py-2 text-left font-medium">Created</th>
-                  <th className="w-32 px-3 py-2 text-left font-medium">Expires</th>
-                  <th className="w-44 px-3 py-2 text-left font-medium">Last used</th>
-                  <th className="w-16 px-3 py-2 text-right font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tokens.map((t, i) => (
-                  <tr
-                    key={t.id}
-                    className={`border-t border-[var(--border)] ${i % 2 === 1 ? 'bg-[var(--background)]/40' : ''}`}
-                  >
-                    <td className="truncate px-3 py-2 font-medium text-[var(--foreground)]">{t.name}</td>
-                    <td className="px-3 py-2 text-[11px] text-[var(--muted-foreground)]">
-                      {new Date(t.created_at).toLocaleDateString()}
-                    </td>
-                    <td className="px-3 py-2 text-[11px] text-[var(--muted-foreground)]">
-                      {new Date(t.expires_at).toLocaleDateString()}
-                    </td>
-                    <td className="px-3 py-2 text-[11px] text-[var(--muted-foreground)]">
-                      {t.last_used_at
-                        ? new Date(t.last_used_at).toLocaleString()
-                        : <span className="italic opacity-60">never</span>}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        onClick={() => setRevokeTarget(t)}
-                        className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--destructive)]"
-                        aria-label="Revoke token"
-                        title="Revoke token"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      />
 
       {showMint && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowMint(false)}>
@@ -273,6 +243,6 @@ codex --remote wss://codex-app.${typeof window !== 'undefined' ? window.location
           onCancel={() => setRevokeTarget(null)}
         />
       )}
-    </div>
+    </>
   )
 }

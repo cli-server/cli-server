@@ -187,7 +187,14 @@ func (s *Server) Routes() http.Handler {
 		r.Delete("/executors/{exe_id}", handlers.DeleteExecutor(s.store))
 		r.Route("/workspaces/{wid}/executors", func(r chi.Router) {
 			r.Post("/", handlers.PostBinding(s.store))
-			r.Get("/", handlers.ListBinding(s.store))
+			r.Get("/", handlers.ListBinding(s.store, func() map[string]struct{} {
+				ids := s.registry.ConnectedIDs()
+				set := make(map[string]struct{}, len(ids))
+				for _, id := range ids {
+					set[id] = struct{}{}
+				}
+				return set
+			}))
 			r.Delete("/{exe_id}", handlers.DeleteBinding(s.store))
 		})
 	})

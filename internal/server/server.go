@@ -239,6 +239,25 @@ func (s *Server) Router() http.Handler {
 		}
 		s.handleVerifyCodexToken(w, r)
 	})
+	// Browser-session lifecycle (PR #N): CXG calls open on ws accept and
+	// close on ws disconnect so the Browsers panel can render online state
+	// + client metadata per token.
+	r.Post("/api/internal/codex/tokens/session-open", func(w http.ResponseWriter, r *http.Request) {
+		secret := os.Getenv("INTERNAL_API_SECRET")
+		if secret != "" && r.Header.Get("X-Internal-Secret") != secret {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		s.handleCodexSessionOpen(w, r)
+	})
+	r.Post("/api/internal/codex/tokens/session-close", func(w http.ResponseWriter, r *http.Request) {
+		secret := os.Getenv("INTERNAL_API_SECRET")
+		if secret != "" && r.Header.Get("X-Internal-Secret") != secret {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		s.handleCodexSessionClose(w, r)
+	})
 
 	// Internal API for ModelServer token retrieval (no cookie auth).
 	r.Get("/internal/workspaces/{id}/modelserver-token", s.handleInternalModelserverToken)
@@ -520,6 +539,12 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/workspaces/{wid}/executors", s.handleRegisterExecutor)
 		r.Get("/api/workspaces/{wid}/executors", s.handleListExecutors)
 		r.Delete("/api/workspaces/{wid}/executors/{exe_id}", s.handleUnbindExecutor)
+
+		// Browsers: same per-workspace listing shape as Connectors above,
+		// but rows are codex_remote_tokens annotated with live session info
+		// (IsOnline / ClientIP / OS / CodexVersion) so the Browsers panel
+		// can render with the same DeviceListPanel component.
+		r.Get("/api/workspaces/{wid}/browsers", s.handleListCodexBrowsers)
 
 		// Admin routes
 		r.Route("/api/admin", func(r chi.Router) {

@@ -105,12 +105,19 @@ func (s *Store) GetExecutor(ctx context.Context, exeID string) (*Executor, error
 		       COALESCE(display_name, ''),
 		       COALESCE(description, ''),
 		       COALESCE(default_cwd, ''),
-		       registered_at, last_seen_at
+		       registered_at, last_seen_at,
+		       COALESCE(client_ip, ''),
+		       COALESCE(client_ua, ''),
+		       COALESCE(codex_version, ''),
+		       COALESCE(os, ''),
+		       connected_at, disconnected_at
 		FROM executors WHERE exe_id=$1`, exeID)
 	var e Executor
-	var lastSeen sql.NullTime
+	var lastSeen, connectedAt, disconnectedAt sql.NullTime
 	err := row.Scan(&e.ExeID, &e.UserID, &e.DisplayName, &e.Description, &e.DefaultCwd,
-		&e.RegisteredAt, &lastSeen)
+		&e.RegisteredAt, &lastSeen,
+		&e.ClientIP, &e.ClientUA, &e.CodexVersion, &e.OS,
+		&connectedAt, &disconnectedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -120,6 +127,14 @@ func (s *Store) GetExecutor(ctx context.Context, exeID string) (*Executor, error
 	if lastSeen.Valid {
 		t := lastSeen.Time
 		e.LastSeenAt = &t
+	}
+	if connectedAt.Valid {
+		t := connectedAt.Time
+		e.ConnectedAt = &t
+	}
+	if disconnectedAt.Valid {
+		t := disconnectedAt.Time
+		e.DisconnectedAt = &t
 	}
 	return &e, nil
 }
@@ -139,10 +154,49 @@ func (s *Store) GetRegistrationTokenHash(ctx context.Context, exeID string) (str
 }
 
 // UpdateLastSeen sets the last_seen_at timestamp to NOW().
+//
+// Kept for callers that just want to register liveness without metadata.
+// Inbound connect/disconnect now use MarkConnected / MarkDisconnected so
+// the UI can distinguish "currently online" from "last seen at".
 func (s *Store) UpdateLastSeen(ctx context.Context, exeID string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE executors SET last_seen_at=NOW() WHERE exe_id=$1`, exeID)
 	if err != nil {
 		return fmt.Errorf("update last_seen: %w", err)
+	}
+	return nil
+}
+
+// MarkConnected records a new inbound ws connect: bumps last_seen_at and
+// connected_at to NOW(), clears disconnected_at, and overwrites the
+// client-info columns. Empty strings for codexVersion / os are stored as
+// NULL so the UI can render "—" without further mapping.
+func (s *Store) MarkConnected(ctx context.Context, exeID, clientIP, clientUA, codexVersion, osStr string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE executors
+		   SET last_seen_at    = NOW(),
+		       connected_at    = NOW(),
+		       disconnected_at = NULL,
+		       client_ip       = NULLIF($2, ''),
+		       client_ua       = NULLIF($3, ''),
+		       codex_version   = NULLIF($4, ''),
+		       os              = NULLIF($5, '')
+		 WHERE exe_id = $1`,
+		exeID, clientIP, clientUA, codexVersion, osStr)
+	if err != nil {
+		return fmt.Errorf("mark connected: %w", err)
+	}
+	return nil
+}
+
+// MarkDisconnected records ws close: sets disconnected_at to NOW() but does
+// NOT bump last_seen_at — that field's job is "last evidence of life from
+// the executor", and the disconnect event isn't evidence. Without this fix
+// the frontend's old `last_seen_at < 90s` heuristic kept freshly-offline
+// executors as Online for 90s.
+func (s *Store) MarkDisconnected(ctx context.Context, exeID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE executors SET disconnected_at=NOW() WHERE exe_id=$1`, exeID)
+	if err != nil {
+		return fmt.Errorf("mark disconnected: %w", err)
 	}
 	return nil
 }
@@ -217,7 +271,13 @@ func (s *Store) ListWorkspaceExecutors(ctx context.Context, workspaceID string) 
 		       we.name,
 		       COALESCE(we.description, ''),
 		       we.is_default,
-		       e.last_seen_at
+		       e.last_seen_at,
+		       COALESCE(e.client_ip, ''),
+		       COALESCE(e.client_ua, ''),
+		       COALESCE(e.codex_version, ''),
+		       COALESCE(e.os, ''),
+		       e.connected_at,
+		       e.disconnected_at
 		FROM workspace_executors we
 		JOIN executors e ON e.exe_id = we.exe_id
 		WHERE we.workspace_id = $1
@@ -229,13 +289,23 @@ func (s *Store) ListWorkspaceExecutors(ctx context.Context, workspaceID string) 
 	var out []ConnectedExecutor
 	for rows.Next() {
 		var c ConnectedExecutor
-		var lastSeen sql.NullTime
-		if err := rows.Scan(&c.ExeID, &c.Name, &c.Description, &c.IsDefault, &lastSeen); err != nil {
+		var lastSeen, connectedAt, disconnectedAt sql.NullTime
+		if err := rows.Scan(&c.ExeID, &c.Name, &c.Description, &c.IsDefault, &lastSeen,
+			&c.ClientIP, &c.ClientUA, &c.CodexVersion, &c.OS,
+			&connectedAt, &disconnectedAt); err != nil {
 			return nil, err
 		}
 		if lastSeen.Valid {
 			t := lastSeen.Time
 			c.LastSeenAt = &t
+		}
+		if connectedAt.Valid {
+			t := connectedAt.Time
+			c.ConnectedAt = &t
+		}
+		if disconnectedAt.Valid {
+			t := disconnectedAt.Time
+			c.DisconnectedAt = &t
 		}
 		out = append(out, c)
 	}

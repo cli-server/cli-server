@@ -16,6 +16,7 @@ import (
 	"github.com/agentserver/agentserver/internal/codexappgateway/oplog"
 	"github.com/agentserver/agentserver/internal/codexappgateway/supervisor"
 	"github.com/agentserver/agentserver/internal/codexexecgateway/execmodel"
+	"github.com/agentserver/agentserver/internal/clientmeta"
 	"github.com/agentserver/agentserver/internal/shortid"
 	"github.com/agentserver/agentserver/internal/wsbridge"
 
@@ -287,11 +288,42 @@ func (s *Server) handleCodexAppWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing Bearer", http.StatusUnauthorized)
 		return
 	}
-	id, err := s.auth.Verify(r.Context(), tok)
+
+	// Prefer OpenSession when the authenticator supports it (RemoteVerifier
+	// in production). HMAC (local-test only) falls through to plain Verify
+	// and leaves sessionID empty so the deferred close is a no-op.
+	clientIP := clientmeta.ClientIP(r)
+	clientUA := r.Header.Get("User-Agent")
+	codexVersion, osStr := clientmeta.ParseCodexUA(clientUA)
+	var (
+		id        auth.Identity
+		sessionID string
+		err       error
+	)
+	if tracker, ok := s.auth.(auth.SessionTracker); ok {
+		id, sessionID, err = tracker.OpenSession(r.Context(), tok, clientIP, clientUA, codexVersion, osStr)
+	} else {
+		id, err = s.auth.Verify(r.Context(), tok)
+	}
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if sessionID != "" {
+		// Close session in the background — must not block ws shutdown.
+		defer func() {
+			go func(sid string) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if tracker, ok := s.auth.(auth.SessionTracker); ok {
+					if cerr := tracker.CloseSession(ctx, sid); cerr != nil {
+						s.logger.Warn("close session", "err", cerr, "session", sid)
+					}
+				}
+			}(sessionID)
+		}()
+	}
+
 	userWS, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		s.logger.Warn("ws accept failed", "err", err)

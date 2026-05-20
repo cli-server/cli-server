@@ -16,6 +16,11 @@ type BindingStore interface {
 	ListWorkspaceExecutors(ctx context.Context, workspaceID string) ([]execmodel.ConnectedExecutor, error)
 }
 
+// OnlineSet reports whether an exe_id has a live inbound ws right now. The
+// gateway's ConnRegistry satisfies this via a tiny adapter in server.go.
+// Defined here as a func type so the handler stays loosely coupled.
+type OnlineSet func() map[string]struct{}
+
 type bindRequest struct {
 	ExeID       string `json:"exe_id"`
 	Name        string `json:"name"`
@@ -63,8 +68,10 @@ func DeleteBinding(store BindingStore) http.HandlerFunc {
 	}
 }
 
-// ListBinding returns an http.HandlerFunc that lists all executors bound to a workspace.
-func ListBinding(store BindingStore) http.HandlerFunc {
+// ListBinding returns an http.HandlerFunc that lists all executors bound to a
+// workspace, annotated with IsOnline from the live registry so the UI doesn't
+// have to guess from last_seen_at.
+func ListBinding(store BindingStore, online OnlineSet) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		wid := chi.URLParam(r, "wid")
 		rows, err := store.ListWorkspaceExecutors(r.Context(), wid)
@@ -74,6 +81,16 @@ func ListBinding(store BindingStore) http.HandlerFunc {
 		}
 		if rows == nil {
 			rows = []execmodel.ConnectedExecutor{}
+		}
+		var onlineIDs map[string]struct{}
+		if online != nil {
+			onlineIDs = online()
+		}
+		for i := range rows {
+			if onlineIDs != nil {
+				_, ok := onlineIDs[rows[i].ExeID]
+				rows[i].IsOnline = ok
+			}
 		}
 		writeJSON(w, http.StatusOK, rows)
 	}

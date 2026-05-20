@@ -1038,6 +1038,40 @@ export interface RemoteExecutor {
   description: string
   is_default: boolean
   last_seen_at?: string
+  // Live online state from the gateway's in-memory registry. The old
+  // client-side `last_seen_at < 90s` heuristic showed freshly-disconnected
+  // executors as online for 90s; this is the authoritative replacement.
+  is_online: boolean
+  client_ip?: string
+  client_ua?: string
+  codex_version?: string
+  os?: string
+  connected_at?: string
+  disconnected_at?: string
+}
+
+// CodexBrowser parallels RemoteExecutor: same shape so the unified
+// DeviceListPanel can render both without per-type branches.
+export interface CodexBrowser {
+  id: string
+  name: string
+  workspace_id: string
+  created_at: string
+  expires_at: string
+  last_used_at?: string
+  is_online: boolean
+  client_ip?: string
+  client_ua?: string
+  codex_version?: string
+  os?: string
+  connected_at?: string
+  disconnected_at?: string
+}
+
+export async function listCodexBrowsers(workspaceId: string): Promise<CodexBrowser[]> {
+  const res = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/browsers`)
+  if (!res.ok) throw new Error('Failed to list codex browsers')
+  return res.json()
 }
 
 export interface RegisterExecutorRequest {

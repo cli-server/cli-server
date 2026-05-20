@@ -1,19 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Trash2, Copy, Check, X, Server, Circle } from 'lucide-react'
+import { Plus, Trash2, Copy, Check, X, Server } from 'lucide-react'
 import {
   type RemoteExecutor, type RegisterExecutorResponse, type ConnectCommands,
   listRemoteExecutors, registerRemoteExecutor, unbindRemoteExecutor,
 } from '../lib/api'
 import { ConfirmModal } from './Modals'
+import { DeviceListPanel, type DeviceRow } from './DeviceListPanel'
 
 interface Props {
   workspaceId: string
 }
-
-// Online threshold: gateway updates last_seen_at on every connection event.
-// "Online" if seen within the last 90s (allowing some clock skew + a slow
-// ping cycle on the executor side).
-const ONLINE_THRESHOLD_MS = 90 * 1000
 
 export default function RemoteExecutorsPanel({ workspaceId }: Props) {
   const [rows, setRows] = useState<RemoteExecutor[]>([])
@@ -37,7 +33,9 @@ export default function RemoteExecutorsPanel({ workspaceId }: Props) {
     }
   }, [workspaceId])
 
-  // Initial load + 10s poll for online status freshness.
+  // Initial load + 10s poll. Online state is authoritative from the API
+  // (is_online from the gateway's live registry); the poll just refreshes
+  // it on a reasonable cadence.
   useEffect(() => {
     void refresh()
     const id = window.setInterval(() => { void refresh() }, 10_000)
@@ -71,105 +69,60 @@ export default function RemoteExecutorsPanel({ workspaceId }: Props) {
     }
   }
 
-  const isOnline = (r: RemoteExecutor): boolean => {
-    if (!r.last_seen_at) return false
-    return Date.now() - new Date(r.last_seen_at).getTime() < ONLINE_THRESHOLD_MS
-  }
+  const deviceRows: DeviceRow[] = rows.map((r) => ({
+    id: r.exe_id,
+    name: r.name,
+    description: r.description,
+    is_online: r.is_online,
+    client_ip: r.client_ip,
+    os: r.os,
+    codex_version: r.codex_version,
+    connected_at: r.connected_at,
+    disconnected_at: r.disconnected_at,
+    lastSeenFallback: r.last_seen_at,
+  }))
+
+  const findRow = (id: string) => rows.find((r) => r.exe_id === id)
 
   return (
-    <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--card)]">
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
-        <div className="flex items-center gap-2">
-          <Server size={14} className="text-emerald-400" />
-          <span className="text-sm font-medium text-[var(--foreground)]">Connectors</span>
-          {!loading && rows.length > 0 && (
-            <span className="rounded-full bg-[var(--secondary)] px-2 py-0.5 text-[10px] text-[var(--muted-foreground)]">
-              {rows.length}
-            </span>
-          )}
-        </div>
-        <button
-          onClick={() => setShowRegister(true)}
-          className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] transition-colors"
-        >
-          <Plus size={12} />
-          Register connector
-        </button>
-      </div>
-
-      <div className="px-5 py-4">
-        <p className="mb-3 text-xs text-[var(--muted-foreground)]">
-          Register a machine to expose its shell to codex sessions in this workspace.
-          Run the printed <code className="rounded bg-[var(--background)] px-1 py-0.5 font-mono text-[11px] text-[var(--foreground)]">codex exec-server --remote ...</code> command on that machine to bring it online.
-        </p>
-
-        {error && (
-          <div className="mb-3 rounded-md border border-[var(--destructive)]/30 bg-[var(--destructive)]/10 px-3 py-2 text-xs text-[var(--destructive)]">
-            {error}
-          </div>
+    <>
+      <DeviceListPanel
+        title="Connectors"
+        icon={Server}
+        iconClassName="text-emerald-400"
+        rows={deviceRows}
+        loading={loading}
+        error={error}
+        emptyMessage="No connectors yet — register one to expose a machine to this workspace."
+        description={
+          <>
+            Register a machine to expose its shell to codex sessions in this workspace.
+            Run the printed <code className="rounded bg-[var(--background)] px-1 py-0.5 font-mono text-[11px] text-[var(--foreground)]">codex exec-server --remote ...</code> command on that machine to bring it online.
+          </>
+        }
+        headerAction={
+          <button
+            onClick={() => setShowRegister(true)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-1 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--secondary)] transition-colors"
+          >
+            <Plus size={12} />
+            Register connector
+          </button>
+        }
+        actions={(row) => (
+          <button
+            onClick={() => {
+              const r = findRow(row.id)
+              if (r) setUnbindTarget(r)
+            }}
+            className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--destructive)]"
+            aria-label="Unbind connector"
+            title="Unbind from workspace"
+          >
+            <Trash2 size={14} />
+          </button>
         )}
-
-        {loading ? (
-          <div className="text-xs text-[var(--muted-foreground)]">Loading…</div>
-        ) : rows.length === 0 ? (
-          <div className="rounded-md border border-dashed border-[var(--border)] py-8 text-center text-xs italic text-[var(--muted-foreground)]">
-            No connectors yet — register one to expose a machine to this workspace.
-          </div>
-        ) : (
-          <div className="overflow-hidden rounded-md border border-[var(--border)]">
-            <table className="w-full table-fixed border-collapse text-xs">
-              <thead className="bg-[var(--secondary)] text-[var(--muted-foreground)]">
-                <tr>
-                  <th className="w-16 px-3 py-2 text-left font-medium">Status</th>
-                  <th className="px-3 py-2 text-left font-medium">Name</th>
-                  <th className="px-3 py-2 text-left font-medium">Description</th>
-                  <th className="w-44 px-3 py-2 text-left font-medium">Last seen</th>
-                  <th className="w-16 px-3 py-2 text-right font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr
-                    key={r.exe_id}
-                    className={`border-t border-[var(--border)] ${i % 2 === 1 ? 'bg-[var(--background)]/40' : ''}`}
-                  >
-                    <td className="px-3 py-2">
-                      <span className="inline-flex items-center gap-1.5">
-                        <Circle
-                          size={8}
-                          className={isOnline(r) ? 'fill-emerald-500 text-emerald-500' : 'fill-gray-400 text-gray-400'}
-                        />
-                        <span className="text-[11px] text-[var(--muted-foreground)]">
-                          {isOnline(r) ? 'Online' : 'Offline'}
-                        </span>
-                      </span>
-                    </td>
-                    <td className="truncate px-3 py-2 font-medium text-[var(--foreground)]">{r.name}</td>
-                    <td className="truncate px-3 py-2 text-[var(--muted-foreground)]">
-                      {r.description || <span className="italic opacity-60">—</span>}
-                    </td>
-                    <td className="px-3 py-2 text-[11px] text-[var(--muted-foreground)]">
-                      {r.last_seen_at
-                        ? new Date(r.last_seen_at).toLocaleString()
-                        : <span className="italic opacity-60">never</span>}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        onClick={() => setUnbindTarget(r)}
-                        className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--destructive)]"
-                        aria-label="Unbind connector"
-                        title="Unbind from workspace"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      />
 
       {showRegister && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowRegister(false)}>
@@ -272,7 +225,7 @@ export default function RemoteExecutorsPanel({ workspaceId }: Props) {
           onCancel={() => setUnbindTarget(null)}
         />
       )}
-    </div>
+    </>
   )
 }
 

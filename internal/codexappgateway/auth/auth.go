@@ -32,6 +32,15 @@ type Authenticator interface {
 	Verify(ctx context.Context, token string) (Identity, error)
 }
 
+// SessionTracker is an optional capability for Authenticator implementations
+// that also record per-connection sessions (RemoteVerifier does, HMAC does
+// not). The handler in CXG type-asserts and prefers OpenSession when
+// available so the Browsers panel can show live online state + client info.
+type SessionTracker interface {
+	OpenSession(ctx context.Context, token, clientIP, clientUA, codexVersion, osStr string) (Identity, string, error)
+	CloseSession(ctx context.Context, sessionID string) error
+}
+
 // HMAC is the phase-1 Authenticator.
 type HMAC struct{ secret []byte }
 

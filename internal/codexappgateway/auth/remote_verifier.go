@@ -82,3 +82,75 @@ func (v *RemoteVerifier) Verify(ctx context.Context, token string) (Identity, er
 	}
 	return Identity{UserID: out.UserID, WorkspaceID: out.WorkspaceID}, nil
 }
+
+// OpenSession verifies the token AND inserts a browser-session row in
+// codex_browser_sessions, returning the session id so the caller can close
+// it on ws disconnect. Implements auth.SessionTracker.
+func (v *RemoteVerifier) OpenSession(ctx context.Context, token, clientIP, clientUA, codexVersion, osStr string) (Identity, string, error) {
+	body, err := json.Marshal(map[string]string{
+		"token":         token,
+		"client_ip":     clientIP,
+		"client_ua":     clientUA,
+		"codex_version": codexVersion,
+		"os":            osStr,
+	})
+	if err != nil {
+		return Identity{}, "", fmt.Errorf("marshal session-open body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.baseURL+"/api/internal/codex/tokens/session-open", bytes.NewReader(body))
+	if err != nil {
+		return Identity{}, "", fmt.Errorf("build session-open request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Secret", v.bearer)
+	resp, err := v.httpClient.Do(req)
+	if err != nil {
+		return Identity{}, "", fmt.Errorf("session-open call: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return Identity{}, "", ErrUnauthorized
+	}
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return Identity{}, "", fmt.Errorf("session-open call: status=%d body=%q", resp.StatusCode, b)
+	}
+	var out struct {
+		UserID      string `json:"user_id"`
+		WorkspaceID string `json:"workspace_id"`
+		SessionID   string `json:"session_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return Identity{}, "", fmt.Errorf("decode session-open response: %w", err)
+	}
+	return Identity{UserID: out.UserID, WorkspaceID: out.WorkspaceID}, out.SessionID, nil
+}
+
+// CloseSession stamps disconnected_at on the row. Best-effort — callers
+// invoke from a deferred goroutine with a short bg ctx so the ws close
+// path is never blocked on it. Implements auth.SessionTracker.
+func (v *RemoteVerifier) CloseSession(ctx context.Context, sessionID string) error {
+	if sessionID == "" {
+		return nil
+	}
+	body, err := json.Marshal(map[string]string{"session_id": sessionID})
+	if err != nil {
+		return fmt.Errorf("marshal session-close body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.baseURL+"/api/internal/codex/tokens/session-close", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build session-close request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Secret", v.bearer)
+	resp, err := v.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("session-close call: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("session-close call: status=%d body=%q", resp.StatusCode, b)
+	}
+	return nil
+}

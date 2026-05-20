@@ -53,11 +53,18 @@ type RegisterExecutorResponse struct {
 // Per v0.54.0, surfaced fields are binding-level (name + description)
 // from workspace_executors, not the executor row.
 type ListedExecutor struct {
-	ExeID       string     `json:"exe_id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	IsDefault   bool       `json:"is_default"`
-	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
+	ExeID          string     `json:"exe_id"`
+	Name           string     `json:"name"`
+	Description    string     `json:"description"`
+	IsDefault      bool       `json:"is_default"`
+	LastSeenAt     *time.Time `json:"last_seen_at,omitempty"`
+	ClientIP       string     `json:"client_ip,omitempty"`
+	ClientUA       string     `json:"client_ua,omitempty"`
+	CodexVersion   string     `json:"codex_version,omitempty"`
+	OS             string     `json:"os,omitempty"`
+	ConnectedAt    *time.Time `json:"connected_at,omitempty"`
+	DisconnectedAt *time.Time `json:"disconnected_at,omitempty"`
+	IsOnline       bool       `json:"is_online"`
 }
 
 // Register creates a new executor owned by userID and returns the raw
