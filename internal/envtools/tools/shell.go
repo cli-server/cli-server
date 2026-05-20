@@ -13,13 +13,15 @@ import (
 )
 
 // shellSchema is the JSON schema for the `shell` tool's arguments.
-// environment_id is required; cwd defaults to /tmp when omitted.
+// environment_id and command (argv) are required; cwd is the executor's
+// current directory when omitted (cross-platform safe — no /tmp default
+// that would break on Windows executors).
 var shellSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
     "environment_id": {"type": "string", "description": "Target environment's name from list_environments output (e.g. hpc-kunshan)"},
-    "command": {"type": "array", "items": {"type": "string"}, "description": "argv as a list of strings"},
-    "cwd": {"type": "string", "description": "Working directory; defaults to /tmp"},
+    "command": {"type": "array", "items": {"type": "string"}, "description": "argv as a list of strings; wrap shell commands with [\"sh\",\"-c\",...] or [\"cmd\",\"/c\",...] explicitly"},
+    "cwd": {"type": "string", "description": "Working directory; executor's current dir when omitted"},
     "timeout_ms": {"type": "integer", "description": "Per-call wait cap; defaults to 60000"}
   },
   "required": ["environment_id", "command"]
@@ -65,10 +67,9 @@ func (t *ShellTool) Call(ctx context.Context, raw json.RawMessage) (MCPCallToolR
 	if len(a.Command) == 0 {
 		return errResult("command must be a non-empty array"), nil
 	}
-	cwd := a.Cwd
-	if cwd == "" {
-		cwd = "/tmp"
-	}
+	// Pass cwd through verbatim — empty string lets exec-server pick its
+	// own current directory, which is the only sane cross-platform default
+	// (the prior /tmp default broke Windows executors).
 	exeID, err := t.resolver.Resolve(ctx, a.EnvironmentID)
 	if err != nil {
 		return errResult(err.Error()), nil
@@ -87,11 +88,14 @@ func (t *ShellTool) Call(ctx context.Context, raw json.RawMessage) (MCPCallToolR
 	}
 
 	pid := fmt.Sprintf("shell-%d", t.pidSeq.Add(1))
+	// Pass cwd + env through verbatim. Empty env means exec-server inherits
+	// its own environment, which is correct cross-platform behavior — the
+	// prior hardcoded POSIX PATH broke Windows executors.
 	startParams, _ := json.Marshal(bridge.ProcessStartParams{
 		ProcessID: pid,
 		Argv:      a.Command,
-		Cwd:       cwd,
-		Env:       map[string]string{"PATH": "/usr/bin:/bin:/usr/local/bin"},
+		Cwd:       a.Cwd,
+		Env:       nil,
 		TTY:       false,
 		PipeStdin: false,
 	})
@@ -136,6 +140,9 @@ func (t *ShellTool) Call(ctx context.Context, raw json.RawMessage) (MCPCallToolR
 		}
 	}
 
+	// Human-readable text fallback (for clients that don't read
+	// structuredContent). Programmatic clients should use the
+	// structuredContent fields below.
 	var text strings.Builder
 	if stdout.Len() > 0 {
 		text.WriteString(stdout.String())
@@ -155,10 +162,30 @@ func (t *ShellTool) Call(ctx context.Context, raw json.RawMessage) (MCPCallToolR
 		text.WriteString("\n[exec timed out without exit signal]")
 	}
 
-	isErr := failure != nil || (exitCode != nil && *exitCode != 0) || exitCode == nil
+	// Build structuredContent — the SDK reads exit_code / stdout / stderr
+	// directly from here, so non-zero exit must NOT be flagged as
+	// IsError. IsError is reserved for "tool itself failed" — failure to
+	// start the process, or the process never returned an exit signal
+	// (timed out). A program exiting 1 because a search found no matches
+	// is a legitimate result, not a tool error.
+	sc := map[string]any{
+		"stdout":    stdout.String(),
+		"stderr":    stderr.String(),
+		"exit_code": nil,
+	}
+	if exitCode != nil {
+		sc["exit_code"] = *exitCode
+	}
+	if failure != nil {
+		sc["failure"] = *failure
+	}
+	scRaw, _ := json.Marshal(sc)
+
+	isErr := failure != nil || exitCode == nil
 	return MCPCallToolResult{
-		Content: []MCPToolContent{{Type: "text", Text: text.String()}},
-		IsError: isErr,
+		Content:           []MCPToolContent{{Type: "text", Text: text.String()}},
+		StructuredContent: scRaw,
+		IsError:           isErr,
 	}, nil
 }
 

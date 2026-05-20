@@ -87,8 +87,15 @@ func (t *ReadFileTool) Call(ctx context.Context, raw json.RawMessage) (MCPCallTo
 	if a.Limit > 0 && a.Limit < len(data) {
 		data = data[:a.Limit]
 	}
+	// Return the file as base64 in both Content (so the SDK decoder finds
+	// it in items[].text) and structuredContent.encoding (so the decoder
+	// knows to decode). Returning `string(data)` for binary files corrupted
+	// any byte sequence not valid UTF-8 — base64 keeps the round-trip clean.
+	encoded := base64.StdEncoding.EncodeToString(data)
+	sc, _ := json.Marshal(map[string]any{"encoding": "base64", "path": a.Path})
 	return MCPCallToolResult{
-		Content: []MCPToolContent{{Type: "text", Text: string(data)}},
+		Content:           []MCPToolContent{{Type: "text", Text: encoded}},
+		StructuredContent: sc,
 	}, nil
 }
 

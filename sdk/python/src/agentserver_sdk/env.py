@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -68,10 +69,43 @@ class Env:
 
     # ---------- core typed wrappers ----------
 
-    async def shell(self, command: str, *, timeout: int | None = None) -> ShellResult:
-        args: dict[str, Any] = {"command": command}
+    async def shell(
+        self,
+        command: str | Sequence[str],
+        *,
+        timeout: float | None = None,
+        cwd: str | None = None,
+    ) -> ShellResult:
+        """Run a command on the executor and return its full output.
+
+        `command` is argv-style. Pass a list to exec directly without a
+        shell (`["hostname"]`, `["ls", "-la"]`). To get shell features
+        (pipes, redirects, env expansion) wrap the command yourself —
+        POSIX executor: `["sh", "-c", "ls | wc -l"]`,
+        Windows executor: `["cmd", "/c", "dir /b"]` or
+                          `["powershell", "-NoProfile", "-Command", "..."]`.
+
+        A bare string is treated as a single argv token (`"hostname"` →
+        `["hostname"]`). It is NOT shell-wrapped — multi-token strings
+        like `"ls -la"` will fail to exec.
+
+        `timeout` is in seconds (forwarded as `timeout_ms`). The exec-server
+        sees this as a soft cap on how long it waits for output, not a
+        hard kill — long-running commands that hit the timeout return
+        with `exit_code is None` and `failure` set.
+
+        A non-zero exit_code is NOT a tool error — `ShellResult` carries
+        it and the caller decides what to do.
+        """
+        if isinstance(command, str):
+            argv: list[str] = [command]
+        else:
+            argv = list(command)
+        args: dict[str, Any] = {"command": argv}
         if timeout is not None:
-            args["timeout_s"] = timeout
+            args["timeout_ms"] = int(timeout * 1000)
+        if cwd is not None:
+            args["cwd"] = cwd
         raw = await self.call("shell", args)
         return ShellResult.from_mcp(raw)
 

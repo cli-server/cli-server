@@ -16,9 +16,15 @@ type Tool interface {
 }
 
 // MCPCallToolResult is the response body of `tools/call`.
+//
+// StructuredContent carries machine-readable fields (e.g. shell's
+// stdout/stderr/exit_code) parallel to the human-readable Content text.
+// Per MCP spec it's an arbitrary JSON object; we use RawMessage so each
+// tool can shape it as needed without a wider schema.
 type MCPCallToolResult struct {
-	Content []MCPToolContent `json:"content"`
-	IsError bool             `json:"isError"`
+	Content           []MCPToolContent `json:"content"`
+	StructuredContent json.RawMessage  `json:"structuredContent,omitempty"`
+	IsError           bool             `json:"isError"`
 }
 
 type MCPToolContent struct {

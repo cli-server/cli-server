@@ -27,13 +27,75 @@ async def test_call_injects_environment_id(stub_client):
 
     async def tool(body, query):
         assert body["arguments"]["environment_id"] == "alpha"
-        assert body["arguments"]["command"] == "ls"
+        assert body["arguments"]["command"] == ["ls"]
         assert body["tool"] == "shell"
         return 200, {"isError": False, "content": [], "structuredContent": {}}
 
     stub.register("POST", "/api/sdk/envs/alpha/tool/call", tool)
     env = make_env(client, tools=[_tool("shell")])
-    await env.call("shell", {"command": "ls"})
+    await env.call("shell", {"command": ["ls"]})
+
+
+async def test_shell_str_wraps_as_single_argv(stub_client):
+    """A bare-string command must be sent as ["cmd"] — not the string itself —
+    so the server's argv contract holds. Multi-token strings are the caller's
+    responsibility to wrap with sh -c / cmd /c."""
+    client, stub = stub_client
+    received = {}
+
+    async def tool(body, query):
+        received.update(body)
+        return 200, {
+            "structuredContent": {"stdout": "out", "stderr": "", "exit_code": 0},
+            "content": [{"type": "text", "text": "out"}],
+            "isError": False,
+        }
+
+    stub.register("POST", "/api/sdk/envs/alpha/tool/call", tool)
+    env = make_env(client, tools=[_tool("shell")])
+    await env.shell("hostname")
+    assert received["arguments"]["command"] == ["hostname"]
+
+
+async def test_shell_list_passed_through_and_timeout_in_ms(stub_client):
+    client, stub = stub_client
+    received = {}
+
+    async def tool(body, query):
+        received.update(body)
+        return 200, {
+            "structuredContent": {"stdout": "", "stderr": "", "exit_code": 0},
+            "content": [{"type": "text", "text": ""}],
+            "isError": False,
+        }
+
+    stub.register("POST", "/api/sdk/envs/alpha/tool/call", tool)
+    env = make_env(client, tools=[_tool("shell")])
+    await env.shell(["sh", "-c", "ls | wc -l"], timeout=2.5, cwd="/work")
+    args = received["arguments"]
+    assert args["command"] == ["sh", "-c", "ls | wc -l"]
+    assert args["timeout_ms"] == 2500
+    assert args["cwd"] == "/work"
+
+
+async def test_shell_non_zero_exit_does_not_raise(stub_client):
+    """Server contract change in 0.61.5: non-zero exit ships in
+    ShellResult.exit_code with isError=False. Only failure-to-start /
+    timeout-without-exit get isError=True."""
+    client, stub = stub_client
+
+    async def tool(body, query):
+        return 200, {
+            "structuredContent": {"stdout": "", "stderr": "no match", "exit_code": 1},
+            "content": [{"type": "text", "text": "no match\n[exit_code=1]"}],
+            "isError": False,
+        }
+
+    stub.register("POST", "/api/sdk/envs/alpha/tool/call", tool)
+    env = make_env(client, tools=[_tool("shell")])
+    r = await env.shell(["grep", "x", "/etc/hosts"])
+    assert r.exit_code == 1
+    assert r.stderr == "no match"
 
 
 async def test_shell_returns_shell_result(stub_client):
