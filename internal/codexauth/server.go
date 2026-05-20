@@ -41,9 +41,7 @@ func (s *Server) Mount(r chi.Router) {
 
 // All handlers are stubs initially; subsequent tasks fill them in.
 // Returning a clear "not implemented" so tests can detect missing wiring.
-func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "authorize: not implemented", http.StatusNotImplemented)
-}
+// handleAuthorize is implemented in pkce.go.
 func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "token: not implemented", http.StatusNotImplemented)
 }
