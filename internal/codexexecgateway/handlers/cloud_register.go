@@ -10,15 +10,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentserver/agentserver/internal/clientmeta"
 	"github.com/go-chi/chi/v5"
 )
 
 // CloudRegisterStore is the subset of *codexexecgateway.Store the
 // upstream-compat /cloud/executor/{id}/register handler needs.
 // Ownership lookup is asserted via the ownerStore type-assertion in
-// assertExeOwnedByUser; pure CloudRegister callers only need the empty
-// interface here, which we keep as a sentinel for future shared methods.
+// assertExeOwnedByUser; the meta-update is optional and skipped if
+// the store doesn't implement clientMetaStore.
 type CloudRegisterStore interface{}
+
+// clientMetaStore is optionally implemented by CloudRegisterStore values
+// to receive codex client metadata captured at register time (UA, IP,
+// version, OS). The ws upgrade carries no UA, so this is the only place
+// to get it on the codex 0.132+ wire.
+type clientMetaStore interface {
+	UpdateClientMetaFromRegister(ctx context.Context, exeID, clientIP, clientUA, codexVersion, osStr string) error
+}
 
 // cloudRegisterResponse mirrors the upstream codex exec-server registry
 // response shape. Codex v0.130 expects {id, executor_id, url}; main has
@@ -103,6 +112,14 @@ func CloudRegister(store CloudRegisterStore, publicWSBaseURL string, validator A
 		if err := assertExeOwnedByUser(r.Context(), store, exeID, userID); err != nil {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 			return
+		}
+		if meta, ok := store.(clientMetaStore); ok {
+			ua := r.Header.Get("User-Agent")
+			version, osStr := clientmeta.ParseCodexUA(ua)
+			ip := clientmeta.ClientIP(r)
+			// Failure here is non-fatal — the row already exists and
+			// missing metadata just keeps the UI columns at "—".
+			_ = meta.UpdateClientMetaFromRegister(r.Context(), exeID, ip, ua, version, osStr)
 		}
 		ticket, err := MintWSTicket(exeID, wsTicketSecret)
 		if err != nil {

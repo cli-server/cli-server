@@ -2,11 +2,13 @@ package codexappgateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agentserver/agentserver/internal/codexappgateway/approvalfilter"
@@ -360,7 +362,33 @@ func (s *Server) handleCodexAppWS(w http.ResponseWriter, r *http.Request) {
 	defer childWS.Close(websocket.StatusNormalClosure, "gateway closing")
 
 	s.sup.Touch(key)
+	// Snoop the first client→server frame for JSON-RPC `initialize` so we
+	// can backfill codex_version / client_ua on the session row — codex's
+	// ws upgrade carries no UA, so the row inserted by OpenSession is
+	// otherwise blank. Best-effort; failures are logged and dropped.
+	var initOnce sync.Once
 	intc := wsbridge.Interceptor{
+		OnClientFrame: func(frame []byte) []byte {
+			initOnce.Do(func() {
+				if sessionID == "" {
+					return
+				}
+				updater, ok := s.auth.(auth.SessionMetaUpdater)
+				if !ok {
+					return
+				}
+				ua, version, osStr, ok := parseInitializeClientInfo(frame)
+				if !ok {
+					return
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if uerr := updater.UpdateSessionMeta(ctx, sessionID, ua, version, osStr); uerr != nil {
+					s.logger.Warn("session-meta update", "err", uerr, "session", sessionID)
+				}
+			})
+			return nil
+		},
 		OnServerFrame: func(frame []byte) []byte {
 			if resp, ok := approvalfilter.TryReply(frame); ok {
 				// Auto-accept: write the synthesized response back to upstream
@@ -379,5 +407,45 @@ func (s *Server) handleCodexAppWS(w http.ResponseWriter, r *http.Request) {
 	if err := wsbridge.RunProxyWithInterceptor(ctx, userWS, childWS, intc, func() { s.sup.Touch(key) }); err != nil {
 		s.logger.Info("proxy ended", "err", err, "key", key)
 	}
+}
+
+// parseInitializeClientInfo inspects a single ws frame and, if it's a
+// JSON-RPC `initialize` request with a clientInfo block, returns
+// ("<name>/<version>", "<version>", "", true). OS is not present in
+// codex's initialize protocol — that column stays empty without a
+// codex client patch.
+//
+// Tolerant on shape: anything that doesn't decode or doesn't look like
+// initialize returns ok=false so the caller silently skips.
+func parseInitializeClientInfo(frame []byte) (ua, version, osStr string, ok bool) {
+	var msg struct {
+		Method string `json:"method"`
+		Params struct {
+			ClientInfo struct {
+				Name    string `json:"name"`
+				Version string `json:"version"`
+			} `json:"clientInfo"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(frame, &msg); err != nil {
+		return "", "", "", false
+	}
+	if msg.Method != "initialize" {
+		return "", "", "", false
+	}
+	name := msg.Params.ClientInfo.Name
+	v := msg.Params.ClientInfo.Version
+	if name == "" && v == "" {
+		return "", "", "", false
+	}
+	ua = name
+	if v != "" {
+		if ua != "" {
+			ua += "/" + v
+		} else {
+			ua = v
+		}
+	}
+	return ua, v, "", true
 }
 

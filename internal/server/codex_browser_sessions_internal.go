@@ -101,6 +101,30 @@ type sessionCloseReq struct {
 	SessionID string `json:"session_id"`
 }
 
+type sessionUpdateReq struct {
+	SessionID    string `json:"session_id"`
+	ClientUA     string `json:"client_ua"`
+	CodexVersion string `json:"codex_version"`
+	OS           string `json:"os"`
+}
+
+// handleCodexSessionUpdate refreshes the meta columns on an existing
+// browser-session row (set by CXG after parsing the JSON-RPC initialize
+// frame). Idempotent — missing rows return 204 same as present.
+func (s *Server) handleCodexSessionUpdate(w http.ResponseWriter, r *http.Request) {
+	var req sessionUpdateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" {
+		http.Error(w, "session_id required", http.StatusBadRequest)
+		return
+	}
+	if err := s.DB.UpdateCodexBrowserSessionMeta(r.Context(), req.SessionID, req.ClientUA, req.CodexVersion, req.OS); err != nil {
+		log.Printf("session-update: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // handleCodexSessionClose stamps disconnected_at on the row. Idempotent.
 // Auth: X-Internal-Secret (same as the other internal endpoints) so any
 // agentserver-pod-local caller can close — no per-session capability is

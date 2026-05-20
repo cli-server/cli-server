@@ -138,6 +138,42 @@ func (v *RemoteVerifier) OpenSession(ctx context.Context, token, clientIP, clien
 	return Identity{UserID: out.UserID, WorkspaceID: out.WorkspaceID}, out.SessionID, nil
 }
 
+// UpdateSessionMeta calls agentserver's session-update endpoint to
+// backfill client_ua / codex_version / os on the row inserted at
+// OpenSession time. Implements auth.SessionMetaUpdater. A 404/405
+// response (agentserver older than this client) is treated as a
+// silent no-op so rolling deploys don't error.
+func (v *RemoteVerifier) UpdateSessionMeta(ctx context.Context, sessionID, clientUA, codexVersion, osStr string) error {
+	body, err := json.Marshal(map[string]string{
+		"session_id":    sessionID,
+		"client_ua":     clientUA,
+		"codex_version": codexVersion,
+		"os":            osStr,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal session-update body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.baseURL+"/api/internal/codex/tokens/session-update", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build session-update request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Secret", v.bearer)
+	resp, err := v.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("session-update call: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		return nil
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("session-update call: status=%d body=%q", resp.StatusCode, b)
+	}
+	return nil
+}
+
 // CloseSession stamps disconnected_at on the row. Best-effort — callers
 // invoke from a deferred goroutine with a short bg ctx so the ws close
 // path is never blocked on it. Implements auth.SessionTracker.

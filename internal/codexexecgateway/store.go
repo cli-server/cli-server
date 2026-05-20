@@ -142,6 +142,28 @@ func (s *Store) GetExecutor(ctx context.Context, exeID string) (*Executor, error
 	return &e, nil
 }
 
+// UpdateClientMetaFromRegister stamps client metadata captured at HTTP
+// register time. Codex's reqwest client carries a `codex_cli_rs/...`
+// User-Agent on that POST, but its `tokio_tungstenite::connect_async`
+// ws upgrade doesn't carry any UA, so the inbound handler has nothing
+// to parse. This method preserves the register-time values across
+// register → ws → register cycles by writing them once at register.
+// Empty values are stored as NULL so the UI can render "—".
+func (s *Store) UpdateClientMetaFromRegister(ctx context.Context, exeID, clientIP, clientUA, codexVersion, osStr string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE executors
+		   SET client_ip      = COALESCE(NULLIF($2, ''), client_ip),
+		       client_ua      = COALESCE(NULLIF($3, ''), client_ua),
+		       codex_version  = COALESCE(NULLIF($4, ''), codex_version),
+		       os             = COALESCE(NULLIF($5, ''), os)
+		 WHERE exe_id = $1`,
+		exeID, clientIP, clientUA, codexVersion, osStr)
+	if err != nil {
+		return fmt.Errorf("update client meta: %w", err)
+	}
+	return nil
+}
+
 // UpdateLastSeen sets the last_seen_at timestamp to NOW().
 //
 // Kept for callers that just want to register liveness without metadata.
@@ -156,19 +178,21 @@ func (s *Store) UpdateLastSeen(ctx context.Context, exeID string) error {
 }
 
 // MarkConnected records a new inbound ws connect: bumps last_seen_at and
-// connected_at to NOW(), clears disconnected_at, and overwrites the
-// client-info columns. Empty strings for codexVersion / os are stored as
-// NULL so the UI can render "—" without further mapping.
+// connected_at to NOW(), clears disconnected_at, and refreshes the
+// client-info columns. Empty inputs preserve the existing column value
+// (via COALESCE) instead of wiping it — codex 0.132's ws upgrade carries
+// no User-Agent, so the codex_version / os captured at HTTP register
+// time would otherwise be lost on the very next ws connect.
 func (s *Store) MarkConnected(ctx context.Context, exeID, clientIP, clientUA, codexVersion, osStr string) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE executors
 		   SET last_seen_at    = NOW(),
 		       connected_at    = NOW(),
 		       disconnected_at = NULL,
-		       client_ip       = NULLIF($2, ''),
-		       client_ua       = NULLIF($3, ''),
-		       codex_version   = NULLIF($4, ''),
-		       os              = NULLIF($5, '')
+		       client_ip       = COALESCE(NULLIF($2, ''), client_ip),
+		       client_ua       = COALESCE(NULLIF($3, ''), client_ua),
+		       codex_version   = COALESCE(NULLIF($4, ''), codex_version),
+		       os              = COALESCE(NULLIF($5, ''), os)
 		 WHERE exe_id = $1`,
 		exeID, clientIP, clientUA, codexVersion, osStr)
 	if err != nil {

@@ -37,6 +37,26 @@ func (db *DB) CreateCodexBrowserSession(ctx context.Context, s CodexBrowserSessi
 	return nil
 }
 
+// UpdateCodexBrowserSessionMeta refreshes the client-info columns on a
+// session row, preserving any existing value when the input is empty
+// (COALESCE+NULLIF). Used by CXG to backfill codex_version / client_ua
+// after snooping the JSON-RPC `initialize.clientInfo` from the first
+// frame — codex 0.132's ws upgrade carries no User-Agent, so the
+// session row inserted at OpenSession time has nothing to record.
+func (db *DB) UpdateCodexBrowserSessionMeta(ctx context.Context, sessionID, clientUA, codexVersion, osStr string) error {
+	_, err := db.ExecContext(ctx, `
+		UPDATE codex_browser_sessions
+		   SET client_ua     = COALESCE(NULLIF($2, ''), client_ua),
+		       codex_version = COALESCE(NULLIF($3, ''), codex_version),
+		       os            = COALESCE(NULLIF($4, ''), os)
+		 WHERE id = $1`,
+		sessionID, clientUA, codexVersion, osStr)
+	if err != nil {
+		return fmt.Errorf("update codex_browser_sessions meta: %w", err)
+	}
+	return nil
+}
+
 // CloseCodexBrowserSession stamps disconnected_at. Idempotent: a missing or
 // already-closed row is a no-op.
 func (db *DB) CloseCodexBrowserSession(ctx context.Context, id string) error {

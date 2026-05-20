@@ -41,6 +41,16 @@ type SessionTracker interface {
 	CloseSession(ctx context.Context, sessionID string) error
 }
 
+// SessionMetaUpdater is an optional capability for backfilling
+// client-info columns on the session row after the ws was already
+// opened. codex 0.132's ws upgrade carries no User-Agent, but the
+// first JSON-RPC frame is `initialize` and includes clientInfo
+// (name + version). The handler snoops that frame and calls this
+// method to fill the dashboard columns.
+type SessionMetaUpdater interface {
+	UpdateSessionMeta(ctx context.Context, sessionID, clientUA, codexVersion, osStr string) error
+}
+
 // HMAC is the phase-1 Authenticator.
 type HMAC struct{ secret []byte }
 

@@ -247,6 +247,14 @@ func (s *Server) Router() http.Handler {
 		}
 		s.handleCodexSessionClose(w, r)
 	})
+	r.Post("/api/internal/codex/tokens/session-update", func(w http.ResponseWriter, r *http.Request) {
+		secret := os.Getenv("INTERNAL_API_SECRET")
+		if secret != "" && r.Header.Get("X-Internal-Secret") != secret {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		s.handleCodexSessionUpdate(w, r)
+	})
 
 	// Internal API for ModelServer token retrieval (no cookie auth).
 	r.Get("/internal/workspaces/{id}/modelserver-token", s.handleInternalModelserverToken)
