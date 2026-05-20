@@ -18,14 +18,11 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"crypto/rand"
-	"encoding/hex"
 
 	"github.com/agentserver/agentserver/internal/auth"
 	"github.com/agentserver/agentserver/internal/codexauth"
 	"github.com/agentserver/agentserver/internal/crypto"
 	_ "github.com/agentserver/agentserver/internal/credentialproxy/k8s" // register k8s credential provider
-	"github.com/agentserver/agentserver/internal/bridge"
 	"github.com/agentserver/agentserver/internal/container"
 	"github.com/agentserver/agentserver/internal/db"
 	"github.com/agentserver/agentserver/internal/namespace"
@@ -227,8 +224,6 @@ var serveCmd = &cobra.Command{
 		srv.ModelserverOAuthIntrospectURL = os.Getenv("MODELSERVER_OAUTH_INTROSPECT_URL")
 		srv.ModelserverOAuthRedirectURI = os.Getenv("MODELSERVER_OAUTH_REDIRECT_URI")
 		srv.ModelserverProxyURL = os.Getenv("MODELSERVER_PROXY_URL")
-		srv.CCBrokerURL = os.Getenv("CC_BROKER_URL")
-		srv.ExecutorRegistryURL = os.Getenv("EXECUTOR_REGISTRY_URL")
 
 		// CODEX_EXEC_GATEWAY_INTERNAL_URL e.g. "http://release-codex-exec-gateway.namespace.svc:6060"
 		if u := os.Getenv("CODEX_EXEC_GATEWAY_INTERNAL_URL"); u != "" {
@@ -297,16 +292,6 @@ var serveCmd = &cobra.Command{
 			log.Printf("Hydra OAuth2: admin=%s public=%s", hydraAdminURL, hydraPublicURL)
 		}
 
-		// Bridge handler (CCR V2 compatible)
-		bridgeJWTSecret := os.Getenv("BRIDGE_JWT_SECRET")
-		if bridgeJWTSecret == "" {
-			b := make([]byte, 32)
-			rand.Read(b)
-			bridgeJWTSecret = hex.EncodeToString(b)
-			log.Println("Warning: BRIDGE_JWT_SECRET not set, using auto-generated secret (bridge sessions won't survive restart)")
-		}
-		srv.BridgeHandler = bridge.NewHandler(database, []byte(bridgeJWTSecret))
-
 		// Credential proxy integration.
 		if encKeyEnv := os.Getenv("CREDPROXY_ENCRYPTION_KEY"); encKeyEnv != "" {
 			encKey, err := crypto.LoadKeyFromEnv("CREDPROXY_ENCRYPTION_KEY")
@@ -334,10 +319,6 @@ var serveCmd = &cobra.Command{
 		healthCtx, healthCancel := context.WithCancel(context.Background())
 		healthMon := server.NewAgentHealthMonitor(database)
 		go healthMon.Run(healthCtx)
-
-		// Leak worker: cleans up stale active turns and responders.
-		lw := server.NewLeakWorker(srv, server.LeakWorkerConfig{})
-		go lw.Run(healthCtx)
 
 		// Operations retention background loop. Disabled when TTL is 0.
 		go srv.StartRetentionLoop(healthCtx, srv.OperationsRetention, time.Hour)

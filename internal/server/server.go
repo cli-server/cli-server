@@ -21,7 +21,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/agentserver/agentserver/internal/auth"
-	"github.com/agentserver/agentserver/internal/bridge"
 	"github.com/agentserver/agentserver/internal/codexauth"
 	"github.com/agentserver/agentserver/internal/db"
 	"github.com/agentserver/agentserver/internal/namespace"
@@ -68,17 +67,6 @@ type Server struct {
 	// Hydra OAuth2 (for agent Device Flow)
 	HydraClient    *auth.HydraClient
 	HydraPublicURL string // internal URL for reverse proxy (e.g. "http://hydra-public:4444")
-
-	// BridgeHandler provides CCR V2-compatible bridge API for agent sessions.
-	BridgeHandler *bridge.Handler
-
-	// CCBrokerURL is the base URL of the cc-broker service for stateless
-	// Claude Code sessions (e.g. "http://cc-broker:8090").
-	CCBrokerURL string
-
-	// ExecutorRegistryURL is the base URL of the executor-registry service
-	// (e.g. "http://executor-registry:8091"). Used by the /control agents command.
-	ExecutorRegistryURL string
 
 	// Credential proxy
 	EncryptionKey    []byte // AES-256 key for credential_bindings auth_blob
@@ -214,7 +202,8 @@ func (s *Server) Router() http.Handler {
 	// Internal API for LLM proxy token validation (no cookie auth).
 	r.Post("/internal/validate-proxy-token", s.handleValidateProxyToken)
 
-	// Internal API for cc-broker to obtain a workspace proxy token.
+	// Internal API for codex-app-gateway to obtain a workspace-scoped LLM
+	// proxy token for the codex subprocess it spawns.
 	// Auth: X-Internal-Secret matching INTERNAL_API_SECRET.
 	r.Post("/internal/workspace-token", func(w http.ResponseWriter, r *http.Request) {
 		secret := os.Getenv("INTERNAL_API_SECRET")
@@ -262,9 +251,6 @@ func (s *Server) Router() http.Handler {
 	// Internal API for ModelServer token retrieval (no cookie auth).
 	r.Get("/internal/workspaces/{id}/modelserver-token", s.handleInternalModelserverToken)
 
-	// Internal callback from cc-broker when a turn finishes (T19).
-	r.Post("/internal/sessions/{sid}/turn-finished", s.handleTurnFinished)
-
 	// Internal operation-log endpoints — POST from gateways (fire-and-forget),
 	// GET for SDK retrieval. Auth: X-Internal-Secret matching INTERNAL_API_SECRET.
 	r.Post("/internal/operations", func(w http.ResponseWriter, r *http.Request) {
@@ -295,20 +281,6 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/internal/nanoclaw/{id}/im/send", imbridgeProxy)
 		r.Post("/api/internal/nanoclaw/{id}/weixin/send", imbridgeProxy) // legacy alias
 	}
-
-	// Internal API — IM inbound handler (stateless CC sessions via cc-broker).
-	// Not behind user auth; validated by internal shared secret.
-	r.Post("/api/workspaces/{wid}/im/inbound", func(w http.ResponseWriter, r *http.Request) {
-		secret := os.Getenv("INTERNAL_API_SECRET")
-		if secret != "" {
-			auth := r.Header.Get("X-Internal-Secret")
-			if auth != secret {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-		}
-		s.handleIMInbound(w, r)
-	})
 
 	// Codex routing path: WeChat (and other channels) with routing_mode="codex"
 	// land here. Skipped when neither CODEX_APP_GATEWAY_REST_URL nor
@@ -530,7 +502,6 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/workspaces/{wid}/tasks", s.handleListTasks)
 		r.Get("/api/tasks/{id}", s.handleGetTask)
 		r.Post("/api/tasks/{id}/cancel", s.handleCancelTask)
-		r.Get("/api/tasks/{id}/stream", s.handleTaskStream)
 
 		// Agent interaction audit trail
 		r.Get("/api/workspaces/{wid}/agent-interactions", s.handleListInteractions)
@@ -573,62 +544,13 @@ func (s *Server) Router() http.Handler {
 		})
 	})
 
-	// TUI / agent CLI API: Bearer token auth (Hydra introspection) only.
-	// All endpoints reachable only when HydraClient is configured.
-	if s.HydraClient != nil {
-		r.Group(func(r chi.Router) {
-			r.Use(auth.BearerMiddleware(s.HydraClient))
+	// TUI agent API was removed along with the stateless-cc stack
+	// (cc-broker + executor-registry + agentserver-agent CLI).
 
-			// Workspace listing for the TUI to auto-resolve --workspace-id.
-			r.Get("/api/agents/workspaces", s.handleListWorkspaces)
-
-			// User-authenticated prompt submission for TUI sessions.
-			r.Post("/api/agents/workspaces/{wid}/inbound", s.handleTUIInbound)
-
-			// Agent-session management (create, attach, list).
-			r.Post("/api/agents/sessions", s.handleCreateAgentSession)
-			r.Post("/api/agents/sessions/{sid}/attach", s.handleAttachAgentSession)
-			r.Get("/api/agents/sessions", s.handleListAgentSessions)
-
-			// SSE event stream (live events + replay).
-			r.Get("/api/agents/sessions/{sid}/events", s.handleTUIEventStream)
-
-			// Control commands (model, permission, compact, cost, agents).
-			r.Post("/api/agents/sessions/{sid}/control", s.handleAgentSessionControl)
-
-			// Turn cancel + permission decision.
-			r.Post("/api/agents/sessions/{sid}/turns/{tid}/cancel", s.handleCancelTurn)
-			r.Post("/api/agents/sessions/{sid}/permissions/{pid}", s.handlePermissionDecision)
-
-			// Executor status.
-			r.Get("/api/agents/executors/{id}/status", s.handleExecutorStatus)
-		})
-	}
-
-	// Bridge API (CCR V2 compatible)
-	if s.BridgeHandler != nil {
-		r.Route("/v1/agent", func(r chi.Router) {
-			// Session lifecycle: proxy_token or cookie auth
-			r.Group(func(r chi.Router) {
-				r.Use(s.BridgeHandler.AgentOrUserAuthMiddleware(s.Auth.Middleware))
-				r.Post("/sessions", s.BridgeHandler.HandleCreateSession)
-				r.Post("/sessions/{sessionId}/bridge", s.BridgeHandler.HandleBridge)
-				r.Post("/sessions/{sessionId}/archive", s.BridgeHandler.HandleArchive)
-			})
-			// Worker endpoints: JWT auth
-			r.Route("/sessions/{sessionId}", func(r chi.Router) {
-				r.Use(s.BridgeHandler.WorkerAuthMiddleware)
-				r.Get("/worker/events/stream", s.BridgeHandler.HandleWorkerEventStream)
-				r.Post("/worker/events", s.BridgeHandler.HandleWorkerEvents)
-				r.Post("/worker/internal-events", s.BridgeHandler.HandleWorkerInternalEvents)
-				r.Post("/worker/events/delivery", s.BridgeHandler.HandleWorkerDelivery)
-				r.Put("/worker", s.BridgeHandler.HandleWorkerState)
-				r.Post("/worker/heartbeat", s.BridgeHandler.HandleWorkerHeartbeat)
-				r.Get("/worker", s.BridgeHandler.HandleGetWorker)
-				r.Get("/worker/internal-events", s.BridgeHandler.HandleGetInternalEvents)
-			})
-		})
-	}
+	// CCR V2 bridge API (/v1/agent/sessions/*) was removed along with the
+	// stateless-cc stack — workers no longer hit these endpoints. The
+	// codex-auth path's /v1/agent/{rid}/task/register is mounted
+	// separately by internal/codexauth, not via BridgeHandler.
 
 	// Static files
 	if s.StaticFS != nil {

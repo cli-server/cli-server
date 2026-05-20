@@ -41,42 +41,8 @@ postgres://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.pas
 {{- end -}}
 
 {{/*
-Construct the cc-broker DATABASE_URL.
-- Shared PG: same instance, separate database (default: ccbroker)
-- External: ccbroker.database.externalUrl
-
-`dig` is used for nil-safe nested access — helm v4 does not deep-merge a
-`--set ccbroker.enabled=true` onto the values.yaml defaults, so the nested
-`database` map can be absent at render time.
-*/}}
-{{- define "agentserver.ccbrokerDatabaseUrl" -}}
-{{- $extUrl := (dig "database" "externalUrl" "" .Values.ccbroker) -}}
-{{- $dbName := (dig "database" "name" "ccbroker" .Values.ccbroker) -}}
-{{- if $extUrl -}}
-{{ $extUrl }}
-{{- else -}}
-postgres://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}@{{ .Release.Name }}-postgresql:5432/{{ $dbName }}?sslmode=disable
-{{- end -}}
-{{- end -}}
-
-{{/*
-Construct the executor-registry DATABASE_URL.
-- Shared PG: same instance, separate database (default: executorregistry)
-- External: executorRegistry.database.externalUrl
-*/}}
-{{- define "agentserver.executorRegistryDatabaseUrl" -}}
-{{- $extUrl := (dig "database" "externalUrl" "" .Values.executorRegistry) -}}
-{{- $dbName := (dig "database" "name" "executorregistry" .Values.executorRegistry) -}}
-{{- if $extUrl -}}
-{{ $extUrl }}
-{{- else -}}
-postgres://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}@{{ .Release.Name }}-postgresql:5432/{{ $dbName }}?sslmode=disable
-{{- end -}}
-{{- end -}}
-
-{{/*
-Construct the codex-exec-gateway DATABASE_URL. Same shape as ccbroker /
-executor-registry: shared PG by default, override via externalUrl.
+Construct the codex-exec-gateway DATABASE_URL: shared PG by default,
+override via externalUrl.
 */}}
 {{- define "agentserver.codexExecGatewayDatabaseUrl" -}}
 {{- $extUrl := (dig "database" "externalUrl" "" .Values.codexExecGateway) -}}

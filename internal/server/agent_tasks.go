@@ -3,7 +3,6 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -85,17 +84,10 @@ func (s *Server) handleCreateTaskForWorkspace(w http.ResponseWriter, r *http.Req
 		"target_id": req.TargetID, "skill": req.Skill,
 	})
 
-	// Create a bridge session for the task if BridgeHandler is available.
+	// Per-task bridge session creation was tied to the stateless-cc
+	// BridgeHandler that's been removed; agent_tasks rows now have
+	// session_id NULL.
 	var sessionID string
-	if s.BridgeHandler != nil {
-		sessionID = "cse_" + uuid.New().String()
-		targetID := req.TargetID
-		if err := s.DB.CreateAgentSession(sessionID, &targetID, wid, fmt.Sprintf("Task: %s", taskID), nil); err != nil {
-			log.Printf("create task session: %v", err)
-		} else {
-			s.DB.Exec(`UPDATE agent_tasks SET session_id = $1 WHERE id = $2`, sessionID, taskID)
-		}
-	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -360,75 +352,6 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
 }
 
-// handleTaskStream proxies the task's bridge session SSE stream.
-// GET /api/tasks/{id}/stream
-func (s *Server) handleTaskStream(w http.ResponseWriter, r *http.Request) {
-	taskID := chi.URLParam(r, "id")
-	task, err := s.DB.GetAgentTask(taskID)
-	if err != nil || task == nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	if !task.SessionID.Valid || s.BridgeHandler == nil {
-		http.Error(w, "no session for this task", http.StatusNotFound)
-		return
-	}
-
-	sessionID := task.SessionID.String
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
-		return
-	}
-
-	// Parse from_sequence_num.
-	var fromSeq int64
-	if v := r.URL.Query().Get("from_sequence_num"); v != "" {
-		fmt.Sscanf(v, "%d", &fromSeq)
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
-
-	// Replay from DB.
-	events, _ := s.DB.GetAgentSessionEventsSince(sessionID, fromSeq, 1000)
-	for _, e := range events {
-		data, _ := json.Marshal(map[string]any{
-			"event_id":     e.EventID,
-			"sequence_num": e.ID,
-			"event_type":   e.EventType,
-			"source":       e.Source,
-			"payload":      e.Payload,
-			"created_at":   e.CreatedAt.Format(time.RFC3339Nano),
-		})
-		fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", e.EventType, e.ID, data)
-	}
-	flusher.Flush()
-
-	// Subscribe to live events.
-	sub := s.BridgeHandler.SSE.Subscribe(sessionID)
-	defer s.BridgeHandler.SSE.Unsubscribe(sessionID, sub)
-
-	keepalive := time.NewTicker(15 * time.Second)
-	defer keepalive.Stop()
-
-	for {
-		select {
-		case event := <-sub.Ch:
-			data, _ := json.Marshal(event)
-			fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", event.EventType, event.SequenceNum, data)
-			flusher.Flush()
-		case <-keepalive.C:
-			fmt.Fprint(w, ":keepalive\n\n")
-			flusher.Flush()
-		case <-sub.Done():
-			return
-		case <-r.Context().Done():
-			return
-		}
-	}
-}
+// handleTaskStream returned an SSE feed of bridge events for a task.
+// Removed along with the stateless-cc BridgeHandler — no caller in the
+// surviving codebase. Route un-wired in server.go.

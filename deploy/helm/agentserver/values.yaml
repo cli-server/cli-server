@@ -245,51 +245,6 @@ operations:
   # Bounded channel capacity inside the gateway. Drops on overflow.
   channelCapacity: 1024
 
-# cc-broker: runs Claude Code workers on demand and exposes the bridge +
-# MCP server used by stateless-CC sessions.
-ccbroker:
-  enabled: false
-  image:
-    repository: ghcr.io/agentserver/cc-broker
-    tag: latest
-    pullPolicy: Always
-  replicaCount: 1
-  port: 8085
-  logLevel: info
-  # Secret used to sign per-turn worker JWTs. Generated at install time if
-  # left empty; supply your own for stable values across re-installs.
-  jwtSecret: ""
-  database:
-    # Database name inside the shared PostgreSQL instance (ignored when
-    # externalUrl is set).
-    name: ccbroker
-    # Full DSN; overrides the shared PostgreSQL helper when set.
-    externalUrl: ""
-  # S3-compatible object store for per-workspace context persistence
-  # (CLAUDE.md, Memory, Skills, settings). One claude-home.tar.gz object
-  # per workspace. Required when ccbroker.enabled is true.
-  s3:
-    endpoint: ""           # required full URL, e.g. "https://s3.amazonaws.com" or "http://minio.minio.svc:9000"
-    region: ""             # required for AWS-style; "" is fine for MinIO
-    bucket: ""             # required
-    pathStyle: false       # true for MinIO / on-prem; false for AWS / OSS / COS
-    existingSecret: ""     # k8s secret with keys: access_key_id, secret_access_key
-  # Spawned CC workers need Anthropic credentials. They're read from the
-  # shared agentserver secret (see `models.anthropicApiKey` /
-  # `models.anthropicBaseUrl` / `models.anthropicAuthToken` above).
-  resources: {}
-
-# executor-registry: tracks local tool-executor agents and routes remote_*
-# tool calls to them over WebSocket + yamux tunnels.
-executorRegistry:
-  enabled: false
-  image:
-    repository: ghcr.io/agentserver/executor-registry
-    tag: latest
-    pullPolicy: Always
-  replicaCount: 1
-  port: 8084
-
 # codexGateway: shared secrets for the codex-app-gateway / codex-exec-gateway
 # pair. Both pods read from the same auto-generated k8s Secret so the cap
 # tokens app-gw mints are verifiable by exec-gw, and the internal API
