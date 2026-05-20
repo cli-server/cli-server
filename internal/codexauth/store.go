@@ -306,3 +306,94 @@ func (s *Store) GetAgentTask(ctx context.Context, taskID string) (*AgentTask, er
 	}
 	return &t, nil
 }
+
+// ----- Device Codes -----
+
+type DeviceCode struct {
+	DeviceAuthID      string
+	UserCode          string
+	CodeChallenge     string
+	CodeVerifier      string
+	AuthorizationCode string
+	Status            string
+	UserID            string
+	ExpiresAt         time.Time
+	ApprovedAt        *time.Time
+}
+
+func (s *Store) InsertDeviceCode(ctx context.Context, dc DeviceCode) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO codex_device_codes
+			(device_auth_id, user_code, code_challenge, code_verifier,
+			 authorization_code, status, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		dc.DeviceAuthID, dc.UserCode, dc.CodeChallenge, dc.CodeVerifier,
+		dc.AuthorizationCode, dc.Status, dc.ExpiresAt)
+	if err != nil {
+		return fmt.Errorf("insert device code: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetDeviceCodeByUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
+	var dc DeviceCode
+	var uid sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT device_auth_id, user_code, code_challenge, code_verifier,
+		       authorization_code, status, COALESCE(user_id, ''), expires_at
+		FROM codex_device_codes
+		WHERE user_code = $1 AND expires_at > NOW()`,
+		userCode).Scan(&dc.DeviceAuthID, &dc.UserCode, &dc.CodeChallenge,
+		&dc.CodeVerifier, &dc.AuthorizationCode, &dc.Status, &uid, &dc.ExpiresAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get device code: %w", err)
+	}
+	if uid.Valid {
+		dc.UserID = uid.String
+	}
+	return &dc, nil
+}
+
+func (s *Store) ApproveDeviceCode(ctx context.Context, userCode, userID string) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE codex_device_codes
+		SET status = 'approved', user_id = $2, approved_at = NOW()
+		WHERE user_code = $1 AND status = 'pending' AND expires_at > NOW()`,
+		userCode, userID)
+	if err != nil {
+		return fmt.Errorf("approve device code: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("user_code not found or not pending")
+	}
+	return nil
+}
+
+// ExchangeDeviceCode atomically returns the row and marks it 'exchanged'.
+// Only approved rows are returned; subsequent calls return nil.
+func (s *Store) ExchangeDeviceCode(ctx context.Context, deviceAuthID, userCode string) (*DeviceCode, error) {
+	var dc DeviceCode
+	var uid sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE codex_device_codes
+		SET status = 'exchanged'
+		WHERE device_auth_id = $1 AND user_code = $2 AND status = 'approved' AND expires_at > NOW()
+		RETURNING device_auth_id, user_code, code_challenge, code_verifier,
+		          authorization_code, status, COALESCE(user_id, ''), expires_at`,
+		deviceAuthID, userCode).Scan(&dc.DeviceAuthID, &dc.UserCode, &dc.CodeChallenge,
+		&dc.CodeVerifier, &dc.AuthorizationCode, &dc.Status, &uid, &dc.ExpiresAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("exchange device code: %w", err)
+	}
+	if uid.Valid {
+		dc.UserID = uid.String
+	}
+	return &dc, nil
+}

@@ -321,3 +321,63 @@ func TestStore_AgentTask_RoundTrip(t *testing.T) {
 		t.Errorf("got = %+v", got)
 	}
 }
+
+func TestStore_DeviceCode_PendingToApproved(t *testing.T) {
+	s, cleanup := newTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	uid := mustCreateTestUser(t, s.db)
+
+	dc := DeviceCode{
+		DeviceAuthID:      "dev-abc",
+		UserCode:          "BDWD-HQPK",
+		CodeChallenge:     "chall",
+		CodeVerifier:      "ver",
+		AuthorizationCode: "authcode-xyz",
+		Status:            "pending",
+		ExpiresAt:         time.Now().Add(15 * time.Minute),
+	}
+	if err := s.InsertDeviceCode(ctx, dc); err != nil {
+		t.Fatalf("InsertDeviceCode: %v", err)
+	}
+	// Initially pending.
+	got, _ := s.GetDeviceCodeByUserCode(ctx, "BDWD-HQPK")
+	if got == nil || got.Status != "pending" {
+		t.Fatalf("got = %+v", got)
+	}
+	// Approve.
+	if err := s.ApproveDeviceCode(ctx, "BDWD-HQPK", uid); err != nil {
+		t.Fatalf("ApproveDeviceCode: %v", err)
+	}
+	got2, _ := s.GetDeviceCodeByUserCode(ctx, "BDWD-HQPK")
+	if got2.Status != "approved" || got2.UserID != uid {
+		t.Errorf("after approve: %+v", got2)
+	}
+}
+
+func TestStore_DeviceCode_ExchangeOnceOnly(t *testing.T) {
+	s, cleanup := newTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	uid := mustCreateTestUser(t, s.db)
+
+	dc := DeviceCode{
+		DeviceAuthID:      "dev-only-once",
+		UserCode:          "ABCD-EFGH",
+		CodeChallenge:     "chall",
+		CodeVerifier:      "ver",
+		AuthorizationCode: "authcode-xyz",
+		Status:            "pending",
+		ExpiresAt:         time.Now().Add(15 * time.Minute),
+	}
+	s.InsertDeviceCode(ctx, dc)
+	s.ApproveDeviceCode(ctx, "ABCD-EFGH", uid)
+	got, err := s.ExchangeDeviceCode(ctx, "dev-only-once", "ABCD-EFGH")
+	if err != nil || got == nil {
+		t.Fatalf("first exchange: %v %+v", err, got)
+	}
+	got2, _ := s.ExchangeDeviceCode(ctx, "dev-only-once", "ABCD-EFGH")
+	if got2 != nil {
+		t.Error("second exchange should return nil (single-use)")
+	}
+}
