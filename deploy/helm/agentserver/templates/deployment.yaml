@@ -165,6 +165,11 @@ spec:
             {{- if .Values.codexExecGateway.enabled }}
             - name: CODEX_EXEC_GATEWAY_URL
               value: "http://{{ .Release.Name }}-codex-exec-gateway.{{ .Release.Namespace }}.svc:{{ .Values.codexExecGateway.port }}"
+            # serve.go reads this name (instead of CODEX_EXEC_GATEWAY_URL)
+            # to wire ExecutorsClient — without it /api/workspaces/.../executors
+            # returns []. Same URL, distinct name for clarity vs PUBLIC_HOST.
+            - name: CODEX_EXEC_GATEWAY_INTERNAL_URL
+              value: "http://{{ .Release.Name }}-codex-exec-gateway.{{ .Release.Namespace }}.svc:{{ .Values.codexExecGateway.port }}"
             {{- end }}
             {{- if .Values.codexAppGateway.enabled }}
             # REST base URL for /api/turns (codex routing path, e.g. WeChat).
