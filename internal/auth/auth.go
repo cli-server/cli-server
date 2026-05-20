@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +17,15 @@ const (
 	cookieName = "agentserver-token"
 	tokenTTL   = 7 * 24 * time.Hour
 )
+
+// cookieDomain returns the Domain attribute for the session cookie.
+// Empty (the default) means a host-only cookie scoped to the exact
+// host that set it. When set to e.g. ".agent.cs.ac.cn" it lets the
+// cookie cross subdomains — necessary for the codex-auth subdomain to
+// SSO with the main app session.
+func cookieDomain() string {
+	return os.Getenv("AGENTSERVER_COOKIE_DOMAIN")
+}
 
 type contextKey string
 
@@ -167,6 +177,7 @@ func SetTokenCookie(w http.ResponseWriter, token string) {
 		Name:     cookieName,
 		Value:    token,
 		Path:     "/",
+		Domain:   cookieDomain(),
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,

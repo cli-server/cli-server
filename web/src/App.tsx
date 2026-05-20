@@ -303,6 +303,18 @@ export default function App() {
     return (
       <Login
         onSuccess={() => {
+          // ?next= is set by codex-auth's PKCE / device-flow redirect
+          // when the user must log in to complete a codex login. After
+          // login succeeds, bounce back to the codex-auth URL so the
+          // PKCE handler can mint a code with the now-valid session.
+          // Use window.location.href (not setAuthed) because next is
+          // typically a different subdomain that SPA routing can't reach.
+          const params = new URLSearchParams(location.search)
+          const next = params.get('next')
+          if (next) {
+            window.location.href = next
+            return
+          }
           setAuthed(true)
           listWorkspaces().then((ws) => {
             setWorkspaces(ws)

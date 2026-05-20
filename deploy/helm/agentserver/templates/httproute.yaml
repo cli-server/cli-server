@@ -7,6 +7,8 @@ main gateway host. Operator can override via {codexAppGateway,codexExecGateway}.
 {{- if and .Values.codexAppGateway.enabled (not $codexAppHost) }}{{- $codexAppHost = printf "codex-app.%s" .Values.gateway.host }}{{- end }}
 {{- $codexExecHost := .Values.codexExecGateway.externalHost }}
 {{- if and .Values.codexExecGateway.enabled (not $codexExecHost) }}{{- $codexExecHost = printf "codex-exec.%s" .Values.gateway.host }}{{- end }}
+{{- $codexAuthHost := .Values.codexAuth.externalHost }}
+{{- if and .Values.codexAuth.enabled (not $codexAuthHost) }}{{- $codexAuthHost = printf "codex-auth.%s" .Values.gateway.host }}{{- end }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -66,6 +68,37 @@ spec:
       backendRefs:
         - name: {{ .Release.Name }}-codex-app-gateway
           port: {{ .Values.codexAppGateway.port }}
+{{- end }}
+{{- if .Values.codexAuth.enabled }}
+---
+# codex-auth subdomain. Rewrites the request path to /codex-auth/* before
+# forwarding to the agentserver service, where the codexauth subrouter
+# is mounted. Keeping the auth surface on a separate subdomain isolates
+# its cookie jar from the main app and gives codex a clean issuer URL
+# without a trailing /codex-auth path component.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-codex-auth
+spec:
+  parentRefs:
+    {{- toYaml .Values.gateway.parentRefs | nindent 4 }}
+  hostnames:
+    - {{ $codexAuthHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /codex-auth
+      backendRefs:
+        - name: {{ .Release.Name }}
+          port: {{ .Values.service.port }}
 {{- end }}
 {{- if .Values.codexExecGateway.enabled }}
 ---

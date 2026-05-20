@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -254,10 +255,22 @@ var serveCmd = &cobra.Command{
 				IssuerURL:  issuer,
 				SigningKey: priv,
 				SigningKid: activeKey.Kid,
+				// SessionResolve reads the agentserver session cookie
+				// directly (not via context) because the /codex-auth/*
+				// routes are mounted in the public group with no
+				// session middleware upstream. Cookies cross subdomains
+				// when AGENTSERVER_COOKIE_DOMAIN is set in the chart.
 				SessionResolve: func(r *http.Request) string {
-					return auth.UserIDFromContext(r.Context())
+					uid, _ := authSvc.ValidateRequest(r)
+					return uid
 				},
-				LoginRedirectURL: "/login",
+				// LoginRedirectURL must be absolute because /oauth/authorize
+				// is hit on the codex-auth subdomain; a relative "/login"
+				// would resolve to codex-auth.<domain>/login (rewritten to
+				// /codex-auth/login on agentserver — 404). Point at the
+				// main app root; the SPA's Login component shows when
+				// unauthenticated and reads ?next= to bounce back here.
+				LoginRedirectURL: loginRedirectFromIssuer(issuer),
 			}
 			srv.CodexAuthIssuerURL = issuer
 			log.Printf("codexauth: enabled (issuer=%s, kid=%s)", issuer, activeKey.Kid)
@@ -445,6 +458,23 @@ func parseCommaSeparated(s string) []string {
 		}
 	}
 	return parts
+}
+
+// loginRedirectFromIssuer derives the main-app login URL from the
+// codex-auth issuer URL. The issuer is the codex-auth subdomain, e.g.
+// "https://codex-auth.agent.cs.ac.cn". Strip the "codex-auth." prefix
+// to get the main app host "agent.cs.ac.cn"; the SPA's login screen
+// is at root /. Fallback to AGENTSERVER_LOGIN_URL env, or leave as-is.
+func loginRedirectFromIssuer(issuer string) string {
+	if override := os.Getenv("AGENTSERVER_LOGIN_URL"); override != "" {
+		return override
+	}
+	u, err := url.Parse(issuer)
+	if err != nil || u.Host == "" {
+		return issuer
+	}
+	host := strings.TrimPrefix(u.Host, "codex-auth.")
+	return u.Scheme + "://" + host + "/"
 }
 
 func init() {

@@ -228,8 +228,25 @@ spec:
               value: {{ .Values.codexExecGateway.publicHost | quote }}
             {{- end }}
             {{- if .Values.codexAuth.enabled }}
+            {{- /*
+            CODEX_AUTH_ISSUER_URL is the public-facing issuer URL codex
+            sees. It lives on its own subdomain (default
+            codex-auth.<platform.domain>) routed through Gateway/Ingress
+            to agentserver's /codex-auth/* mount. Operator can override
+            the subdomain via codexAuth.externalHost.
+            */}}
+            {{- $codexAuthHost := .Values.codexAuth.externalHost }}
+            {{- if not $codexAuthHost }}{{- $codexAuthHost = printf "codex-auth.%s" .Values.platform.domain }}{{- end }}
             - name: CODEX_AUTH_ISSUER_URL
-              value: {{ printf "https://%s/codex-auth" .Values.platform.domain | quote }}
+              value: {{ printf "https://%s" $codexAuthHost | quote }}
+            # Cookie Domain. When codexAuth is on, the session cookie
+            # set by /api/auth/login on <platform.domain> must also be
+            # readable on codex-auth.<platform.domain>, otherwise the
+            # codex login flow's SessionResolve always sees no session.
+            # ".<domain>" tells the browser to send the cookie to all
+            # subdomains.
+            - name: AGENTSERVER_COOKIE_DOMAIN
+              value: {{ printf ".%s" .Values.platform.domain | quote }}
             {{- end }}
             - name: OPENCODE_SUBDOMAIN_PREFIX
               value: {{ .Values.sandbox.opencode.subdomainPrefix | default "code" | quote }}

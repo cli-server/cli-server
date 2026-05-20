@@ -128,10 +128,17 @@ agentSandbox:
 
 codexAuth:
   # Self-hosted codex 0.132+ auth shim. When enabled, agentserver
-  # serves PKCE / device flow / JWKS / agent-identity endpoints under
-  # /codex-auth/* so `codex login --issuer https://<platform.domain>/codex-auth`
-  # works against this deployment.
+  # serves PKCE / device flow / JWKS / agent-identity endpoints on a
+  # dedicated subdomain (default codex-auth.<gateway.host or ingress.host>),
+  # routed through Gateway URLRewrite / Ingress rewrite-target back to
+  # the agentserver service's /codex-auth/* internal mount.
+  #
+  # User-facing issuer URL is the subdomain (no path), so:
+  #   codex login --issuer https://codex-auth.<your-domain>
   enabled: false
+  # Override the auto-derived subdomain when you need a different host
+  # (e.g. for a custom DNS scheme). Leave empty to use codex-auth.<gateway.host>.
+  externalHost: ""
 
 hydra:
   # Ory Hydra OAuth2 server for agent Device Flow registration.

@@ -724,10 +724,13 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// Cookie Domain must match the issuance side (auth.SetTokenCookie)
+	// or the browser won't actually clear the cross-subdomain cookie.
 	http.SetCookie(w, &http.Cookie{
 		Name:     "agentserver-token",
 		Value:    "",
 		Path:     "/",
+		Domain:   os.Getenv("AGENTSERVER_COOKIE_DOMAIN"),
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   true,

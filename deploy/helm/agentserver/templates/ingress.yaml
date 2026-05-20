@@ -8,6 +8,8 @@ cert-manager) can cover everything.
 {{- if and .Values.codexAppGateway.enabled (not $codexAppHost) }}{{- $codexAppHost = printf "codex-app.%s" .Values.ingress.host }}{{- end }}
 {{- $codexExecHost := .Values.codexExecGateway.externalHost }}
 {{- if and .Values.codexExecGateway.enabled (not $codexExecHost) }}{{- $codexExecHost = printf "codex-exec.%s" .Values.ingress.host }}{{- end }}
+{{- $codexAuthHost := .Values.codexAuth.externalHost }}
+{{- if and .Values.codexAuth.enabled (not $codexAuthHost) }}{{- $codexAuthHost = printf "codex-auth.%s" .Values.ingress.host }}{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -33,6 +35,9 @@ spec:
         {{- end }}
         {{- if .Values.codexExecGateway.enabled }}
         - {{ $codexExecHost | quote }}
+        {{- end }}
+        {{- if .Values.codexAuth.enabled }}
+        - {{ $codexAuthHost | quote }}
         {{- end }}
       secretName: {{ .Release.Name }}-tls
   {{- end }}
@@ -95,4 +100,42 @@ spec:
                 port:
                   number: {{ .Values.codexExecGateway.port }}
     {{- end }}
+{{- if .Values.codexAuth.enabled }}
+---
+# codex-auth subdomain has its own Ingress so the rewrite-target
+# annotation only applies here (the main {{ .Release.Name }} Ingress
+# doesn't rewrite, so we can't share its annotations). cert-manager
+# annotation + secretName are inherited from the existing wildcard /
+# SAN cert; this Ingress doesn't need its own TLS block when the main
+# one already covers $codexAuthHost in its hosts list.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-codex-auth
+  annotations:
+    {{- if .Values.ingress.tls }}
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    {{- end }}
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /codex-auth/$1
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    - hosts:
+        - {{ $codexAuthHost | quote }}
+      secretName: {{ .Release.Name }}-tls
+  {{- end }}
+  rules:
+    - host: {{ $codexAuthHost }}
+      http:
+        paths:
+          - path: /(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ .Release.Name }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}
 {{- end }}

@@ -31,7 +31,10 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 
 	userID := s.SessionResolve(r)
 	if userID == "" {
-		next := url.QueryEscape(r.URL.RequestURI())
+		// next must be ABSOLUTE because the login redirect crosses
+		// subdomains (codex-auth.<domain> → <domain> root). Browser
+		// resolves the absolute URL correctly after SPA login.
+		next := url.QueryEscape(absoluteRequestURL(r))
 		http.Redirect(w, r, s.LoginRedirectURL+"?next="+next, http.StatusFound)
 		return
 	}

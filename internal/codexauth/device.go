@@ -135,7 +135,7 @@ func (s *Server) handleDeviceVerifyPage(w http.ResponseWriter, r *http.Request) 
 	}
 	uid := s.SessionResolve(r)
 	if uid == "" {
-		next := url.QueryEscape(r.URL.RequestURI())
+		next := url.QueryEscape(absoluteRequestURL(r))
 		http.Redirect(w, r, s.LoginRedirectURL+"?next="+next, http.StatusFound)
 		return
 	}
