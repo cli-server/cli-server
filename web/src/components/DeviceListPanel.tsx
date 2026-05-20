@@ -74,15 +74,15 @@ export function DeviceListPanel({
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border border-[var(--border)]">
-            <table className="w-full table-fixed border-collapse text-xs">
+            <table className="w-full table-fixed border-collapse text-sm">
               <thead className="bg-[var(--secondary)] text-[var(--muted-foreground)]">
                 <tr>
                   <th className="w-20 px-3 py-2 text-left font-medium">Status</th>
                   <th className="px-3 py-2 text-left font-medium">Name</th>
                   <th className="w-24 px-3 py-2 text-left font-medium">OS</th>
                   <th className="w-24 px-3 py-2 text-left font-medium">Codex</th>
-                  <th className="w-36 px-3 py-2 text-left font-medium">IP</th>
-                  <th className="w-40 px-3 py-2 text-left font-medium">Last seen</th>
+                  <th className="w-72 px-3 py-2 text-left font-medium">IP</th>
+                  <th className="w-44 px-3 py-2 text-left font-medium">Last seen</th>
                   <th className="w-16 px-3 py-2 text-right font-medium">Actions</th>
                 </tr>
               </thead>
@@ -98,7 +98,7 @@ export function DeviceListPanel({
                           size={8}
                           className={r.is_online ? 'fill-emerald-500 text-emerald-500' : 'fill-gray-400 text-gray-400'}
                         />
-                        <span className="text-[11px] text-[var(--muted-foreground)]">
+                        <span className="text-[var(--muted-foreground)]">
                           {r.is_online ? 'Online' : 'Offline'}
                         </span>
                       </span>
@@ -106,7 +106,7 @@ export function DeviceListPanel({
                     <td className="px-3 py-2">
                       <div className="truncate font-medium text-[var(--foreground)]">{r.name}</div>
                       {r.description && (
-                        <div className="truncate text-[11px] text-[var(--muted-foreground)]">{r.description}</div>
+                        <div className="truncate text-xs text-[var(--muted-foreground)]">{r.description}</div>
                       )}
                     </td>
                     <td className="px-3 py-2 text-[var(--muted-foreground)]">
@@ -115,10 +115,10 @@ export function DeviceListPanel({
                     <td className="px-3 py-2 text-[var(--muted-foreground)]">
                       {r.codex_version || <span className="italic opacity-60">—</span>}
                     </td>
-                    <td className="px-3 py-2 font-mono text-[11px] text-[var(--muted-foreground)]">
+                    <td className="truncate px-3 py-2 font-mono text-[var(--muted-foreground)]" title={r.client_ip}>
                       {r.client_ip || <span className="font-sans italic opacity-60">—</span>}
                     </td>
-                    <td className="px-3 py-2 text-[11px] text-[var(--muted-foreground)]">
+                    <td className="px-3 py-2 text-[var(--muted-foreground)]">
                       {formatLastSeen(r)}
                     </td>
                     <td className="px-3 py-2 text-right">{actions(r)}</td>
