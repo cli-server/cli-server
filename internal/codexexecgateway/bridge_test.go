@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,7 +133,7 @@ func TestBridge_Rejects503WhenExecutorOffline(t *testing.T) {
 func TestBridge_RejectsRevokedTurn(t *testing.T) {
 	hs, srv := newBridgeNoDBServer(t)
 	// Register a fake inbound so the revocation check is reached.
-	srv.registry.Register("exe_rev", newInboundConn("exe_rev", nil, nil))
+	srv.registry.Register("exe_rev", newInboundConn("exe_rev", nil, nil, 0))
 	now := time.Now().Unix()
 	srv.revoked.Add("trn_revoked", now+60)
 	tok := mintBridgeToken(srv.config.CapTokenHMACSecret, CapPayload{
@@ -164,4 +165,140 @@ func TestBridge_RejectsRevokedTurn(t *testing.T) {
 //   - TestBridge_RejectsFirstFrameNonResume
 //   - TestBridge_TwoConcurrentBridgesShareInbound (in multiplex_e2e_test.go)
 //   - TestBridge_StreamIdCollisionEvictsFirst (in multiplex_e2e_test.go)
+
+// ---------- stream-cap test helpers ----------
+
+// dialBridgeWithStream opens a ws to /bridge/{exeID}, sends a Resume frame
+// with the given streamID, and returns the open ws (caller must close).
+// tok must be a valid cap-token for the server.
+func dialBridgeWithStream(t *testing.T, baseURL, exeID, streamID, tok string) *websocket.Conn {
+	t.Helper()
+	wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/bridge/" + exeID
+	c, _, err := websocket.Dial(context.Background(), wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + tok}},
+	})
+	if err != nil {
+		t.Fatalf("dialBridgeWithStream(%s): %v", streamID, err)
+	}
+	// Send Resume frame with the given streamID (reuse sendResume from multiplex_e2e_test.go).
+	sendResume(t, c, streamID)
+	return c
+}
+
+// dialBridgeHTTPOnly sends a WebSocket upgrade request to /bridge/{exeID}
+// but reads back the HTTP response instead of completing the handshake.
+// This lets the test inspect the status code when the server rejects the
+// request before upgrading (e.g. 503 for cap-exceeded).
+func dialBridgeHTTPOnly(t *testing.T, baseURL, exeID, tok string) *http.Response {
+	t.Helper()
+	url := baseURL + "/bridge/" + exeID
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+
+	// Use a plain http.Client — it will NOT follow the 101 upgrade and
+	// will return the raw response (including 4xx/5xx before upgrade).
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("dialBridgeHTTPOnly: %v", err)
+	}
+	return resp
+}
+
+// TestBridge_StreamCapEnforced verifies that when an executor already has
+// MaxStreamsPerExecutor concurrent bridge sessions, a new dial is rejected
+// with HTTP 503 + Retry-After header (Strategy A: pre-upgrade cap check).
+//
+// This test uses no database: it wires a fake inboundConn directly into
+// the registry and pre-fills its routes map to simulate "cap reached".
+// Because Strategy A rejects before websocket.Accept, the nil ws on the
+// fake inbound is never touched.
+//
+// TDD trace:
+//   - RED:  streamCount() doesn't exist → compile error; or cap check absent → 3rd dial succeeds (101).
+//   - GREEN: after adding streamCount() + pre-upgrade check in bridge.go → 503 returned.
+func TestBridge_StreamCapEnforced(t *testing.T) {
+	cfg := Config{
+		CapTokenHMACSecret:   []byte("k"),
+		InternalSharedSecret: "s",
+		MaxStreamsPerExecutor: 2,
+	}
+	srv, err := newServerNoStoreForTesting(cfg)
+	if err != nil {
+		t.Fatalf("newServerNoStoreForTesting: %v", err)
+	}
+	hs := httptest.NewServer(srv.Routes())
+	t.Cleanup(hs.Close)
+
+	exeID := "exe_cap"
+	// Build a fake inboundConn with 2 pre-registered routes (simulates cap reached).
+	fakeInbound := newInboundConn(exeID, nil, nil, 0)
+	fakeInbound.addRoute("stream-0", newBridgeSession("stream-0", fakeInbound, nil))
+	fakeInbound.addRoute("stream-1", newBridgeSession("stream-1", fakeInbound, nil))
+	srv.registry.Register(exeID, fakeInbound)
+
+	now := time.Now().Unix()
+	tok := mintBridgeToken(cfg.CapTokenHMACSecret, CapPayload{
+		TurnID: "trn_cap", WorkspaceID: "ws_1", IAT: now, EXP: now + 60,
+	})
+
+	// The dial must be rejected pre-upgrade: Strategy A → HTTP 503 + Retry-After.
+	resp := dialBridgeHTTPOnly(t, hs.URL, exeID, tok)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("got status %d, want 503", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Retry-After"); got == "" {
+		t.Errorf("missing Retry-After header on 503 response")
+	}
+}
+
+// TestBridge_StreamCapDisabledWhenZero verifies that MaxStreamsPerExecutor=0
+// means "disabled" — no cap is enforced even when the inbound already has routes.
+// Uses no database; the 503 path (cap check) is what we're verifying is absent.
+func TestBridge_StreamCapDisabledWhenZero(t *testing.T) {
+	cfg := Config{
+		CapTokenHMACSecret:   []byte("k"),
+		InternalSharedSecret: "s",
+		MaxStreamsPerExecutor: 0, // disabled
+	}
+	srv, err := newServerNoStoreForTesting(cfg)
+	if err != nil {
+		t.Fatalf("newServerNoStoreForTesting: %v", err)
+	}
+	hs := httptest.NewServer(srv.Routes())
+	t.Cleanup(hs.Close)
+
+	exeID := "exe_nocap"
+	// Build a fake inboundConn with routes already present.
+	fakeInbound := newInboundConn(exeID, nil, nil, 0)
+	fakeInbound.addRoute("stream-0", newBridgeSession("stream-0", fakeInbound, nil))
+	fakeInbound.addRoute("stream-1", newBridgeSession("stream-1", fakeInbound, nil))
+	srv.registry.Register(exeID, fakeInbound)
+
+	now := time.Now().Unix()
+	tok := mintBridgeToken(cfg.CapTokenHMACSecret, CapPayload{
+		TurnID: "trn_nocap", WorkspaceID: "ws_1", IAT: now, EXP: now + 60,
+	})
+
+	// With cap=0 (disabled), the request must NOT be rejected with 503.
+	// It will proceed to websocket.Accept — we send a proper ws dial so the
+	// server can upgrade, then read the response. Since the fake inbound ws
+	// is nil, the bridge will error out after upgrade, but we should NOT see
+	// a 503. A 101 (upgrade) or any non-503 error confirms the cap is off.
+	resp := dialBridgeHTTPOnly(t, hs.URL, exeID, tok)
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		t.Errorf("got 503 with cap=0 (disabled); cap should not be enforced")
+	}
+}
 

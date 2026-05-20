@@ -40,7 +40,7 @@ func TestInternalConnected_ReturnsIntersection(t *testing.T) {
 		store.CreateExecutor(context.Background(), e, "h")
 		store.BindWorkspaceExecutor(context.Background(), "ws_a", e.ExeID, e.ExeID, "", e.ExeID == "exe_on")
 	}
-	srv.registry.Register("exe_on", newInboundConn("exe_on", nil, nil))
+	srv.registry.Register("exe_on", newInboundConn("exe_on", nil, nil, 0))
 
 	req, _ := http.NewRequest(http.MethodGet,
 		hs.URL+"/api/exec-gateway/connected?workspace_id=ws_a", nil)

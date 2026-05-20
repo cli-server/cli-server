@@ -5,7 +5,11 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
+	"time"
 
+	"github.com/agentserver/agentserver/internal/relaypb"
+	"google.golang.org/protobuf/proto"
 	"nhooyr.io/websocket"
 )
 
@@ -38,9 +42,12 @@ type inboundConn struct {
 	closeErr  error
 }
 
-func newInboundConn(exeID string, ws *websocket.Conn, logger *slog.Logger) *inboundConn {
+func newInboundConn(exeID string, ws *websocket.Conn, logger *slog.Logger, maxFrameBytes int64) *inboundConn {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if ws != nil {
+		ws.SetReadLimit(maxFrameBytes)
 	}
 	return &inboundConn{
 		exeID:  exeID,
@@ -78,6 +85,15 @@ func (i *inboundConn) lookup(streamID string) (*bridgeSession, bool) {
 	defer i.routesMu.RUnlock()
 	b, ok := i.routes[streamID]
 	return b, ok
+}
+
+// streamCount returns the number of currently registered routes (i.e.
+// concurrent /bridge sessions for this executor). Used by the bridge
+// handler to enforce MaxStreamsPerExecutor.
+func (i *inboundConn) streamCount() int {
+	i.routesMu.RLock()
+	defer i.routesMu.RUnlock()
+	return len(i.routes)
 }
 
 // write sends a frame to the inbound under writeMu. Concurrent writers
@@ -120,18 +136,31 @@ type bridgeSession struct {
 
 	writeMu sync.Mutex // serialise bridgeWS.Write (inbound reader is the only writer today, but defends against future use)
 
+	// lastActivity tracks the most recent frame routed through this
+	// session (either direction) as unix nanos. Read by the idle reaper
+	// goroutine, written by inbound's reader and the bridge pump.
+	// atomic.Int64 makes both safe under `-race` without a mutex.
+	lastActivity atomic.Int64
+
 	closeOnce sync.Once
 	closed    chan struct{}
 	closeErr  error
 }
 
 func newBridgeSession(streamID string, inbound *inboundConn, bridgeWS *websocket.Conn) *bridgeSession {
-	return &bridgeSession{
+	b := &bridgeSession{
 		streamID: streamID,
 		inbound:  inbound,
 		bridgeWS: bridgeWS,
 		closed:   make(chan struct{}),
 	}
+	b.touch()
+	return b
+}
+
+// touch updates lastActivity to now. Safe for concurrent use.
+func (b *bridgeSession) touch() {
+	b.lastActivity.Store(time.Now().UnixNano())
 }
 
 func (b *bridgeSession) write(ctx context.Context, mt websocket.MessageType, data []byte) error {
@@ -148,4 +177,74 @@ func (b *bridgeSession) close(err error) {
 			_ = b.bridgeWS.Close(websocket.StatusNormalClosure, "bridge session closed")
 		}
 	})
+}
+
+// startIdleReaper runs until ctx is done or i.closed fires. Every
+// idleTimeout/4 (clamped to >= 50ms), it scans i.routes and closes any
+// session whose lastActivity is older than idleTimeout. On close, it
+// sends a RelayMessageFrame{Reset{reason:"idle-timeout"}} on the inbound
+// ws so the executor's relay layer can tear down its per-stream JSON-RPC
+// session, removes the route, and closes the bridge ws.
+//
+// idleTimeout <= 0 disables the reaper (returns immediately).
+func (i *inboundConn) startIdleReaper(ctx context.Context, idleTimeout time.Duration) {
+	if idleTimeout <= 0 {
+		return
+	}
+	tick := idleTimeout / 4
+	if tick < 50*time.Millisecond {
+		tick = 50 * time.Millisecond
+	}
+	t := time.NewTicker(tick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-i.closed:
+			return
+		case <-t.C:
+			i.reapIdle(ctx, idleTimeout)
+		}
+	}
+}
+
+// reapIdle scans the routes table for sessions whose lastActivity is
+// older than idleTimeout, then for each: sends a Reset frame to the
+// inbound (executor) ws, removes the route, and closes the bridge ws.
+//
+// The candidate list is collected under routesMu.RLock; the close work
+// happens after the lock is released to avoid holding routesMu across
+// blocking ws.Write calls.
+func (i *inboundConn) reapIdle(ctx context.Context, idleTimeout time.Duration) {
+	cutoff := time.Now().Add(-idleTimeout).UnixNano()
+	i.routesMu.RLock()
+	var candidates []*bridgeSession
+	for _, b := range i.routes {
+		if b.lastActivity.Load() < cutoff {
+			candidates = append(candidates, b)
+		}
+	}
+	i.routesMu.RUnlock()
+
+	for _, b := range candidates {
+		resetFrame := &relaypb.RelayMessageFrame{
+			Version:  1,
+			StreamId: b.streamID,
+			Body: &relaypb.RelayMessageFrame_Reset_{
+				Reset_: &relaypb.RelayReset{Reason: "idle-timeout"},
+			},
+		}
+		data, err := proto.Marshal(resetFrame)
+		if err != nil {
+			i.logger.Warn("reaper: marshal reset", "stream_id", b.streamID, "err", err)
+		} else {
+			if werr := i.write(ctx, websocket.MessageBinary, data); werr != nil {
+				i.logger.Warn("reaper: write reset to inbound", "stream_id", b.streamID, "err", werr)
+			}
+		}
+		i.removeRoute(b.streamID, b)
+		b.close(nil)
+		i.logger.Info("reaper: closed idle bridge", "stream_id", b.streamID, "timeout", idleTimeout)
+	}
 }

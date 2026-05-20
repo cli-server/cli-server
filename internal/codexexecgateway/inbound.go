@@ -51,9 +51,7 @@ func (s *Server) handleInbound(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("inbound: ws accept", "exe_id", exeID, "error", err)
 		return
 	}
-	ws.SetReadLimit(-1) // codex exec-server streams large process/read responses
-
-	ic := newInboundConn(exeID, ws, s.logger.With("exe_id", exeID))
+	ic := newInboundConn(exeID, ws, s.logger.With("exe_id", exeID), s.config.MaxFrameBytes)
 	if evicted := s.registry.Register(exeID, ic); evicted != nil {
 		s.logger.Info("inbound: evicted prior conn", "exe_id", exeID)
 		evicted.close(nil)
@@ -68,6 +66,11 @@ func (s *Server) handleInbound(w http.ResponseWriter, r *http.Request) {
 	keepAliveCtx, stopKeepAlive := context.WithCancel(r.Context())
 	defer stopKeepAlive()
 	go wsbridge.KeepAlive(keepAliveCtx, ws, 30*time.Second)
+
+	// Idle bridge reaper: per-stream timeout enforcement. Closes silent
+	// /bridge sessions after BridgeIdleTimeout and emits RelayReset to
+	// the executor's relay layer. Cancelled by r.Context() (ws close).
+	go ic.startIdleReaper(r.Context(), s.config.BridgeIdleTimeout)
 
 	// Reader loop: parse each binary frame as a RelayMessageFrame,
 	// route Data/Reset by stream_id, drop Ack/Resume/Heartbeat (those
@@ -115,6 +118,10 @@ func (s *Server) runInboundReader(ctx context.Context, ic *inboundConn) {
 			ic.logger.Debug("inbound: no route for stream", "stream_id", frame.StreamId)
 			continue
 		}
+		// Mark activity BEFORE the (potentially blocking) bridge write so
+		// the reaper doesn't false-positive a session that's actively
+		// pumping but momentarily slow.
+		b.touch()
 		if err := b.write(ctx, mt, data); err != nil {
 			ic.logger.Warn("inbound: bridge write failed; closing route", "stream_id", frame.StreamId, "error", err)
 			b.close(err)

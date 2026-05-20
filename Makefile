@@ -1,4 +1,4 @@
-.PHONY: dev build clean frontend backend agent agent-all llmproxy credentialproxy test docker docker-agent docker-llmproxy docker-credentialproxy docker-openclaw docker-all
+.PHONY: dev build clean frontend backend agent agent-all llmproxy credentialproxy test docker docker-agent docker-llmproxy docker-credentialproxy docker-openclaw docker-all codex-pin-check codex-pin-bump
 
 # Development: run frontend dev server + Go backend
 dev:
@@ -69,3 +69,10 @@ jupyter-image:
 jupyter-smoke: jupyter-image
 	mkdir -p notebook/smoke-workspace
 	docker compose -f notebook/docker-compose.smoke.yml up --build
+
+codex-pin-check:
+	go run ./cmd/check-codex-pin
+
+codex-pin-bump:
+	@if [ -z "$(TAG)" ]; then echo "usage: make codex-pin-bump TAG=rust-v0.x.y"; exit 2; fi
+	@scripts/codex-pin-bump.sh $(TAG)

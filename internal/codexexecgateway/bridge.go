@@ -88,6 +88,20 @@ func (s *Server) handleBridge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 4b. Per-executor stream cap (PR 1 Gap 3): Strategy A — pre-upgrade HTTP 503.
+	// We do the check before websocket.Accept to fail-fast on capacity-exceeded
+	// dials. The check is intentionally not atomic with the eventual addRoute;
+	// concurrent dials slipping past will succeed at addRoute. Acceptable: the
+	// cap is a guardrail, not a strict invariant. Bridge dials are typically
+	// sequential per env-mcp. cap=0 means disabled (no enforcement).
+	if cap := s.config.MaxStreamsPerExecutor; cap > 0 && inbound.streamCount() >= cap {
+		s.logger.Warn("bridge: stream cap exceeded",
+			"exe_id", exeID, "cap", cap, "current", inbound.streamCount())
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, "executor stream cap exceeded", http.StatusServiceUnavailable)
+		return
+	}
+
 	// 5. Upgrade caller to ws.
 	bridgeWS, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true, // auth already enforced above
@@ -96,7 +110,7 @@ func (s *Server) handleBridge(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("bridge: ws accept", "exe_id", exeID, "error", err)
 		return
 	}
-	bridgeWS.SetReadLimit(-1)
+	bridgeWS.SetReadLimit(s.config.MaxFrameBytes)
 
 	// 6. Peek the Resume frame — env-mcp's BridgeClient always sends it
 	// first on dial; that's where we learn the stream_id for routing.
@@ -186,6 +200,9 @@ func (s *Server) runBridgePump(ctx context.Context, session *bridgeSession) {
 			}
 			return
 		}
+		// Mark activity on every read from the bridge, even non-binary or
+		// wrong-stream_id ones — the connection IS being used.
+		session.touch()
 		if mt != websocket.MessageBinary {
 			continue
 		}

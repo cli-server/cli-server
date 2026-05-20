@@ -6,7 +6,7 @@ import (
 )
 
 func newFakeInbound(exeID string) *inboundConn {
-	return newInboundConn(exeID, nil, nil) // ws=nil is fine for identity-only tests
+	return newInboundConn(exeID, nil, nil, 0) // ws=nil is fine for identity-only tests
 }
 
 func TestConnRegistry_RegisterAndLookup(t *testing.T) {

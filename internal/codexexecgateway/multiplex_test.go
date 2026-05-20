@@ -9,7 +9,7 @@ import (
 // of the same stream_id from multiple goroutines. No panics, final
 // map state matches the last writer.
 func TestInboundConn_AddRemoveRouteRace(t *testing.T) {
-	i := newInboundConn("exe_x", nil, nil)
+	i := newInboundConn("exe_x", nil, nil, 0)
 	a := &bridgeSession{streamID: "s1", closed: make(chan struct{})}
 	b := &bridgeSession{streamID: "s1", closed: make(chan struct{})}
 
@@ -44,7 +44,7 @@ func TestInboundConn_AddRemoveRouteRace(t *testing.T) {
 // TestInboundConn_AddRouteEvictsPrior: a second addRoute for the same
 // stream_id returns the prior session so the caller can close it.
 func TestInboundConn_AddRouteEvictsPrior(t *testing.T) {
-	i := newInboundConn("exe_x", nil, nil)
+	i := newInboundConn("exe_x", nil, nil, 0)
 	a := &bridgeSession{streamID: "s1", closed: make(chan struct{})}
 	b := &bridgeSession{streamID: "s1", closed: make(chan struct{})}
 
@@ -63,7 +63,7 @@ func TestInboundConn_AddRouteEvictsPrior(t *testing.T) {
 // TestInboundConn_CloseIdempotent: multiple close() calls don't panic
 // and only run cleanup once (closed channel close + route fan-out).
 func TestInboundConn_CloseIdempotent(t *testing.T) {
-	i := newInboundConn("exe_x", nil, nil)
+	i := newInboundConn("exe_x", nil, nil, 0)
 	// Don't add real bridge sessions (they'd try to close nil ws). The
 	// idempotency check is just that close() doesn't double-close
 	// channels or panic.

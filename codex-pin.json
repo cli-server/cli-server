@@ -1,0 +1,25 @@
+{
+  "upstream_repo": "openai/codex",
+  "tag": "rust-v0.131.0-alpha.22",
+  "sha": "9b8cf56cdefb09f54564ccc295fd42f6647f558f",
+  "tracked_files": {
+    "codex-rs/exec-server/src/proto/codex.exec_server.relay.v1.proto": "44959c98baa1b6400a1e8757e58f74f34be89f29b52cbfb314e1312a5014835c",
+    "codex-rs/app-server-protocol/src/protocol/v1.rs": "bad23c6a31e0b65123f5643c9c9223a62d8fb9a93954f5f2a3ea15eea45de4fb",
+    "codex-rs/app-server-protocol/src/protocol/v2/item.rs": "ea27c007b73d569a6d8392afb533240ad44dd3c8d048bfe37659e56e0ed02a3d",
+    "codex-rs/app-server-protocol/src/protocol/v2/mcp.rs": "3cf6bc25e9fd9656e589ff838bf99a1c9a6cc35cdb61372ef6907c34f311bf51"
+  },
+  "normalized_equivalent_files": {
+    "internal/relaypb/relay.proto": {
+      "upstream_path": "codex-rs/exec-server/src/proto/codex.exec_server.relay.v1.proto",
+      "normalized_sha256": "44959c98baa1b6400a1e8757e58f74f34be89f29b52cbfb314e1312a5014835c",
+      "comment": "Strip Go-only `option go_package = \"...\";` directive and collapse runs of 2+ consecutive newlines to one blank line, then compare schemas. Required because agentserver's protoc-gen-go needs this directive; upstream's prost (Rust) doesn't. Must stay in sync with cmd/check-codex-pin/verify.go::normalize()."
+    }
+  },
+  "approval_methods": [
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/permissions/requestApproval",
+    "item/tool/requestUserInput",
+    "mcpServer/elicitation/request"
+  ]
+}
